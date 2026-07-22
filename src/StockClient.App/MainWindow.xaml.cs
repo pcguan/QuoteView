@@ -186,7 +186,7 @@ public partial class MainWindow : FluentWindow
         var dialog = new Wpf.Ui.Controls.MessageBox
         {
             Title = "发现新版本",
-            Content = $"当前 v{check.Current}  →  最新 {release.TagName}{notes}\n\n是否现在更新？下载完成后会自动重启。",
+            Content = $"当前 v{check.Current}  →  最新 {release.DisplayName}（{release.Source}）{notes}\n\n是否现在更新？下载完成后会自动重启。",
             PrimaryButtonText = "立即更新",
             PrimaryButtonAppearance = ControlAppearance.Primary,
             CloseButtonText = "稍后",
@@ -197,7 +197,7 @@ public partial class MainWindow : FluentWindow
         await ApplyUpdateAsync(release);
     }
 
-    private async Task ApplyUpdateAsync(GithubRelease release)
+    private async Task ApplyUpdateAsync(ReleaseInfo release)
     {
         var original = UpdateButton.Content;
         UpdateButton.IsEnabled = false;

@@ -12,3 +12,6 @@ dist/
 
 # Local diagnostics
 panel.log
+
+# Release mirror staging (versioned exe + manifest; served by NAS nginx, synced there)
+release/

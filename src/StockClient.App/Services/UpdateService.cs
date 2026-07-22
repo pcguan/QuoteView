@@ -11,32 +11,34 @@ namespace StockClient.App.Services;
 public sealed record UpdateCheck
 {
     public required Version Current { get; init; }
-    public GithubRelease? Release { get; init; }
-    public Version? Latest { get; init; }
 
-    /// <summary>True when a newer release with a downloadable exe exists.</summary>
-    public bool HasUpdate =>
-        Release is not null && Latest is not null && Latest > Current && Release.ExeUrl is not null;
+    /// <summary>The resolved release from whichever source answered, or null.</summary>
+    public ReleaseInfo? Release { get; init; }
+
+    /// <summary>True when a newer release with a download URL exists.</summary>
+    public bool HasUpdate => Release is not null && Release.Version > Current;
 }
 
 /// <summary>
-/// Online version check + self-update against GitHub Releases.
+/// Online version check + self-update. Checks the domestic mirror (NAS) first and
+/// falls back to GitHub, so it's fast in China but still works if the NAS is down.
 ///
-/// Update swap uses the Windows trick of renaming the *running* exe (allowed — the
-/// image is held by handle, the directory entry is free to move) out to a `.old`
-/// name, dropping the freshly downloaded exe into the original path, then
-/// restarting. Leftover `.old` files are swept on the next launch.
+/// The swap uses the Windows trick of renaming the *running* exe (allowed — the
+/// image is held by handle) to a `.old` name, dropping the freshly downloaded exe
+/// into the original path, then restarting. Leftover `.old` files are swept next launch.
 /// </summary>
 public sealed class UpdateService
 {
     private readonly HttpClient _http;
-    private readonly GithubReleaseClient _client;
+    private readonly DomesticReleaseClient _domestic;
+    private readonly GithubReleaseClient _github;
 
     public UpdateService()
     {
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("QuoteView-Updater");
-        _client = new GithubReleaseClient(_http);
+        _domestic = new DomesticReleaseClient(_http);
+        _github = new GithubReleaseClient(_http);
     }
 
     /// <summary>The running app's version (from the assembly).</summary>
@@ -47,33 +49,41 @@ public sealed class UpdateService
 
     public async Task<UpdateCheck> CheckAsync(CancellationToken cancellationToken = default)
     {
-        var release = await _client.GetLatestAsync(cancellationToken);
-        return new UpdateCheck
+        // Domestic first, with a short timeout so a dead NAS doesn't stall the fallback.
+        var release = await TryAsync(ct => _domestic.GetLatestAsync(ct), TimeSpan.FromSeconds(8), cancellationToken)
+                      ?? await TryAsync(ct => _github.GetLatestAsync(ct), TimeSpan.FromSeconds(15), cancellationToken);
+
+        return new UpdateCheck { Current = Current, Release = release };
+    }
+
+    private static async Task<ReleaseInfo?> TryAsync(
+        Func<CancellationToken, Task<ReleaseInfo?>> op, TimeSpan timeout, CancellationToken outer)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(outer);
+        cts.CancelAfter(timeout);
+        try
         {
-            Current = Current,
-            Release = release,
-            Latest = release?.Version,
-        };
+            return await op(cts.Token);
+        }
+        catch
+        {
+            return null; // unreachable / bad response — let the caller fall through
+        }
     }
 
     /// <summary>
     /// Downloads the release's exe and swaps it in, then restarts. On success the
-    /// process exits (the caller's UI thread won't return here). Throws on failure,
-    /// leaving the current install untouched.
+    /// process exits. Throws on failure, leaving the current install untouched.
     /// </summary>
     public async Task DownloadAndApplyAsync(
-        GithubRelease release, IProgress<double>? progress, CancellationToken cancellationToken = default)
+        ReleaseInfo release, IProgress<double>? progress, CancellationToken cancellationToken = default)
     {
-        if (release.ExeUrl is null) throw new InvalidOperationException("该版本没有可下载的 exe");
-
         var exe = Environment.ProcessPath
                   ?? throw new InvalidOperationException("无法定位当前程序路径");
         var newPath = exe + ".new";
 
-        await DownloadAsync(release.ExeUrl, newPath, progress, cancellationToken);
+        await DownloadAsync(release.DownloadUrl, newPath, progress, cancellationToken);
 
-        // Swap: move the running exe aside (unique name so a locked leftover can't
-        // block us), then the new exe into place.
         var old = $"{exe}.{DateTime.Now:yyyyMMddHHmmss}.old";
         File.Move(exe, old);
         try
@@ -82,8 +92,7 @@ public sealed class UpdateService
         }
         catch
         {
-            // Roll back so the app still starts next time.
-            File.Move(old, exe);
+            File.Move(old, exe); // roll back so the app still starts
             throw;
         }
 
