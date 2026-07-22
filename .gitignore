@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+dist/
+[Dd]ebug/
+[Rr]elease/
+
+# IDE / user
+.vs/
+*.user
+*.suo
+
+# Local diagnostics
+panel.log
