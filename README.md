@@ -59,5 +59,7 @@ dotnet publish src/StockClient.App -c Release -r win-x64 --self-contained false 
 
 ## 📄 更多
 
+- 更新日志：见 [`CHANGELOG.md`](CHANGELOG.md)
 - 实现细节、设计取舍、踩过的坑：见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- 发布与更新流程：见 [`docs/RELEASE.md`](docs/RELEASE.md)
 - 各数据源接口字段枚举：见 [`docs/data-source-fields.md`](docs/data-source-fields.md)
