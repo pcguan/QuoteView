@@ -3,7 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:views="clr-namespace:StockClient.App.Views"
-                 Title="合约查询" Height="760" Width="1500"
+                 Title="QuoteView" Height="760" Width="1500"
                  MinHeight="520" MinWidth="900"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="None"
@@ -19,7 +19,7 @@
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
 
-    <ui:TitleBar Grid.Row="0" Title="行情终端" ShowMaximize="True">
+    <ui:TitleBar Grid.Row="0" Title="QuoteView" ShowMaximize="True">
       <ui:TitleBar.Icon>
         <ui:SymbolIcon Symbol="DataTrending24" />
       </ui:TitleBar.Icon>

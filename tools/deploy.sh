@@ -17,9 +17,9 @@ say() { printf '\n=== %s ===\n' "$1"; }
 # stealth panel looked like it "just vanished" mid-use.
 stop_running() {
   local host=$1
-  if ssh "$host" "tasklist /fi \"imagename eq StockClient.exe\" | find /i \"StockClient.exe\"" >/dev/null 2>&1; then
-    printf '  ! %s 上 StockClient 正在运行，已停止以便覆盖 exe（部署后需手动重开）\n' "$host"
-    ssh "$host" "taskkill /f /im StockClient.exe" >/dev/null 2>&1 || true
+  if ssh "$host" "tasklist /fi \"imagename eq QuoteView.exe\" | find /i \"QuoteView.exe\"" >/dev/null 2>&1; then
+    printf '  ! %s 上 QuoteView 正在运行，已停止以便覆盖 exe（部署后需手动重开）\n' "$host"
+    ssh "$host" "taskkill /f /im QuoteView.exe" >/dev/null 2>&1 || true
   fi
 }
 
@@ -42,18 +42,18 @@ fi
 
 say "同步 exe 到两台桌面"
 # 编译机自己的桌面
-ssh "$BUILD_HOST" "powershell -NoProfile -Command \"\$d=[Environment]::GetFolderPath('Desktop'); Copy-Item C:\\work\\stock\\dist\\StockClient.exe \$d\\StockClient.exe -Force\""
+ssh "$BUILD_HOST" "powershell -NoProfile -Command \"\$d=[Environment]::GetFolderPath('Desktop'); Copy-Item C:\\work\\stock\\dist\\QuoteView.exe \$d\\QuoteView.exe -Force\""
 
 # 用户机：只经桌面落地，不留源码
 TMP=$(mktemp -d)
-scp -q "$BUILD_HOST:$REMOTE/dist/StockClient.exe" "$TMP/StockClient.exe"
+scp -q "$BUILD_HOST:$REMOTE/dist/QuoteView.exe" "$TMP/QuoteView.exe"
 USER_DESKTOP=$(ssh "$USER_HOST" "powershell -NoProfile -Command \"[Environment]::GetFolderPath('Desktop')\"" | tr -d '\r')
 stop_running "$USER_HOST"
-scp -q "$TMP/StockClient.exe" "$USER_HOST:${USER_DESKTOP//\\//}/StockClient.exe"
+scp -q "$TMP/QuoteView.exe" "$USER_HOST:${USER_DESKTOP//\\//}/QuoteView.exe"
 rm -rf "$TMP"
 
 say "结果（两台哈希必须一致，否则是传输被截断）"
 for h in "$BUILD_HOST" "$USER_HOST"; do
   printf '%-10s ' "$h"
-  ssh "$h" "powershell -NoProfile -Command \"\$f=[Environment]::GetFolderPath('Desktop')+'\\StockClient.exe'; \$i=Get-Item \$f; '{0}  {1:N1} MB  {2:yyyy-MM-dd HH:mm:ss}' -f \$i.FullName, (\$i.Length/1MB), \$i.LastWriteTime\"" | tr -d '\r'
+  ssh "$h" "powershell -NoProfile -Command \"\$f=[Environment]::GetFolderPath('Desktop')+'\\QuoteView.exe'; \$i=Get-Item \$f; '{0}  {1:N1} MB  {2:yyyy-MM-dd HH:mm:ss}' -f \$i.FullName, (\$i.Length/1MB), \$i.LastWriteTime\"" | tr -d '\r'
 done
