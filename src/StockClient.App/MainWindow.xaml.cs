@@ -3,10 +3,12 @@ using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using StockClient.App.Services;
 using StockClient.App.ViewModels;
 using StockClient.App.Views;
 using StockClient.Core.Contracts;
 using StockClient.Core.Quotes;
+using StockClient.Core.Updates;
 using Wpf.Ui.Controls;
 
 namespace StockClient.App;
@@ -36,6 +38,7 @@ public partial class MainWindow : FluentWindow
     private readonly KlineRepository _klineRepo;
     private readonly EastMoneyTrendClient _trendClient;
     private readonly TrendRepository _trendRepo;
+    private readonly UpdateService _updates = new();
 
     // Chart windows are ownerless (so activating one doesn't drag the main window
     // to the front), so they're tracked here to be closed when the app closes —
@@ -45,6 +48,9 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+
+        // Sweep any leftover *.old from a previous self-update.
+        UpdateService.CleanupOld();
 
         _vm = new MainViewModel(Dispatcher);
         DataContext = _vm;
@@ -75,6 +81,9 @@ public partial class MainWindow : FluentWindow
             // can search by name without a second data source.
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
+
+            // Quiet background update check; only speaks up if there's a newer release.
+            _ = CheckForUpdatesAsync(manual: false);
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -139,6 +148,81 @@ public partial class MainWindow : FluentWindow
     }
 
     private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e) =>
+        await CheckForUpdatesAsync(manual: true);
+
+    /// <summary>
+    /// Checks GitHub for a newer release. Silent unless there's an update (or the
+    /// user asked manually), so the startup check never nags.
+    /// </summary>
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        UpdateCheck check;
+        try
+        {
+            check = await _updates.CheckAsync();
+        }
+        catch (Exception ex)
+        {
+            if (manual) await InfoDialog("检查更新", "检查失败：" + ex.Message);
+            return;
+        }
+
+        if (!check.HasUpdate)
+        {
+            if (manual)
+                await InfoDialog("检查更新", check.Release is null
+                    ? $"当前版本 v{check.Current}\n暂无发布版本。"
+                    : $"已是最新版本 v{check.Current}。");
+            return;
+        }
+
+        var release = check.Release!;
+        var notes = string.IsNullOrWhiteSpace(release.Notes)
+            ? ""
+            : "\n\n" + (release.Notes.Length > 400 ? release.Notes[..400] + "…" : release.Notes);
+
+        var dialog = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = "发现新版本",
+            Content = $"当前 v{check.Current}  →  最新 {release.TagName}{notes}\n\n是否现在更新？下载完成后会自动重启。",
+            PrimaryButtonText = "立即更新",
+            PrimaryButtonAppearance = ControlAppearance.Primary,
+            CloseButtonText = "稍后",
+        };
+
+        if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        await ApplyUpdateAsync(release);
+    }
+
+    private async Task ApplyUpdateAsync(GithubRelease release)
+    {
+        var original = UpdateButton.Content;
+        UpdateButton.IsEnabled = false;
+        var progress = new Progress<double>(p => UpdateButton.Content = $"下载中 {p * 100:0}%");
+
+        try
+        {
+            // On success the app restarts and shuts down — this call won't return.
+            await _updates.DownloadAndApplyAsync(release, progress);
+        }
+        catch (Exception ex)
+        {
+            UpdateButton.IsEnabled = true;
+            UpdateButton.Content = original;
+            await InfoDialog("更新失败", ex.Message);
+        }
+    }
+
+    private static async Task InfoDialog(string title, string content) =>
+        await new Wpf.Ui.Controls.MessageBox
+        {
+            Title = title,
+            Content = content,
+            CloseButtonText = "知道了",
+        }.ShowDialogAsync();
 
     /// <summary>Opens a K-line window for a contract row (contract-search grid).</summary>
     private void ResultGrid_DoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
