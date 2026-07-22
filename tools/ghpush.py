@@ -9,7 +9,7 @@ Usage:  GITHUB_TOKEN=<pat> python3 tools/ghpush.py "commit message"
 """
 import os, sys, json, base64, urllib.request, urllib.error
 
-OWNER, REPO, BRANCH = "pcguan", "win-stock", "main"
+OWNER, REPO, BRANCH = "pcguan", "QuoteView", "main"
 API = "https://api.github.com"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKEN = os.environ.get("GITHUB_TOKEN") or sys.exit("set GITHUB_TOKEN")
