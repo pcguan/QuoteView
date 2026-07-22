@@ -1,0 +1,328 @@
+<UserControl x:Class="StockClient.App.Views.QuotesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             PreviewMouseDown="Root_PreviewMouseDown">
+  <Grid Margin="16,4,16,8">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="210" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="0">
+      <DockPanel>
+        <Grid DockPanel.Dock="Top" Margin="14,12,10,10">
+          <TextBlock Text="分组" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+          <ui:Button HorizontalAlignment="Right" Height="28" Width="30" Padding="0"
+                     Icon="{ui:SymbolIcon Add24}" Click="AddGroup_Click" ToolTip="新建分组" />
+        </Grid>
+        <StackPanel DockPanel.Dock="Bottom">
+          <Grid Margin="14,4,14,4">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <ui:Button Grid.Column="0" Content="导入" FontSize="11" Height="26" Margin="0,0,3,0"
+                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                       Click="Import_Click" ToolTip="从文件导入分组（替换当前全部）" />
+            <ui:Button Grid.Column="1" Content="导出" FontSize="11" Height="26" Margin="3,0,0,0"
+                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                       Click="Export_Click" ToolTip="导出全部分组到文件" />
+          </Grid>
+          <TextBlock Margin="14,4,14,12" FontSize="10"
+                     Foreground="{StaticResource Faint}" TextWrapping="Wrap"
+                     Text="只有激活的分组会轮询行情。双击重命名，拖拽排序。" />
+        </StackPanel>
+        <ListBox x:Name="GroupList" ItemsSource="{Binding Groups}"
+                 Background="Transparent" BorderThickness="0"
+                 HorizontalContentAlignment="Stretch"
+                 SelectionChanged="GroupList_SelectionChanged"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Grid Height="30">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0"
+                          IsChecked="{Binding InPanel, Mode=TwoWay}" Click="GroupInPanel_Click"
+                          ToolTip="加入简洁面板（切分组时轮到它）" />
+                <Ellipse Grid.Column="1" Width="7" Height="7" Margin="0,0,8,0" VerticalAlignment="Center">
+                  <Ellipse.Style>
+                    <Style TargetType="Ellipse">
+                      <Setter Property="Fill" Value="#394152" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsActive}" Value="True">
+                          <Setter Property="Fill" Value="#3DD68C" />
+                          <DataTrigger.EnterActions>
+                            <BeginStoryboard x:Name="Pulse">
+                              <Storyboard>
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.2"
+                                                 Duration="0:0:1" AutoReverse="True" RepeatBehavior="Forever" />
+                              </Storyboard>
+                            </BeginStoryboard>
+                          </DataTrigger.EnterActions>
+                          <DataTrigger.ExitActions><StopStoryboard BeginStoryboardName="Pulse" /></DataTrigger.ExitActions>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </Ellipse.Style>
+                </Ellipse>
+                <TextBlock Grid.Column="2" Text="{Binding Name}" VerticalAlignment="Center"
+                           Background="Transparent" ToolTip="双击重命名"
+                           TextTrimming="CharacterEllipsis" MouseDown="GroupName_MouseDown" />
+                <Border Grid.Column="3" Style="{StaticResource TagChip}" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Count}" FontSize="10" Foreground="{StaticResource Muted}" />
+                </Border>
+                <ui:Button Grid.Column="4" Height="24" Width="26" Padding="0" Margin="2,0,0,0"
+                           Icon="{ui:SymbolIcon Delete24}" Click="RemoveGroup_Click" ToolTip="删除分组" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </DockPanel>
+    </Border>
+
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
+
+      <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,8">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="{Binding ActiveGroup.Name, FallbackValue=无分组}" FontSize="17"
+                       FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
+            <Border Style="{StaticResource Badge}" Margin="12,0,0,0" Padding="8,2">
+              <StackPanel Orientation="Horizontal">
+                <Ellipse Width="7" Height="7" Fill="#3DD68C" VerticalAlignment="Center">
+                  <Ellipse.Triggers>
+                    <EventTrigger RoutedEvent="Loaded">
+                      <BeginStoryboard>
+                        <Storyboard>
+                          <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.2"
+                                           Duration="0:0:1" AutoReverse="True" RepeatBehavior="Forever" />
+                        </Storyboard>
+                      </BeginStoryboard>
+                    </EventTrigger>
+                  </Ellipse.Triggers>
+                </Ellipse>
+                <TextBlock Text="{Binding Status}" Margin="7,0,0,0" FontSize="11"
+                           Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <ui:TextBox Grid.Column="0" x:Name="CodeBox" Height="36"
+                        PlaceholderText="添加合约：输入编码或名称，如 SH600519 / 茅台 / gzmt"
+                        Icon="{ui:SymbolIcon Search24}" ClearButtonEnabled="True"
+                        Text="{Binding NewCode, UpdateSourceTrigger=PropertyChanged}"
+                        KeyDown="CodeBox_KeyDown" GotKeyboardFocus="CodeBox_GotFocus"
+                        IsEnabled="{Binding HasGroup}" />
+            <ui:Button Grid.Column="1" Margin="10,0,0,0" Height="36" Content="添加"
+                       Appearance="Primary" Click="AddCode_Click" IsEnabled="{Binding CanAddCode}" />
+          </Grid>
+
+          <Popup x:Name="SuggestPopup" PlacementTarget="{Binding ElementName=CodeBox}"
+                 Placement="Bottom" AllowsTransparency="True" StaysOpen="True"
+                 HorizontalOffset="0" VerticalOffset="4">
+            <Border Background="#1B2029" BorderBrush="#2C3547" BorderThickness="1"
+                    CornerRadius="6" Padding="4"
+                    Width="{Binding ActualWidth, ElementName=CodeBox}">
+              <ListBox x:Name="SuggestList" ItemsSource="{Binding Suggestions}"
+                       Background="Transparent" BorderThickness="0" MaxHeight="240"
+                       HorizontalContentAlignment="Stretch"
+                       PreviewMouseLeftButtonUp="Suggest_Click"
+                       KeyDown="SuggestList_KeyDown">
+                <ListBox.ItemContainerStyle>
+                  <!-- WPF UI's default item padding is what made these rows tall;
+                       shrinking the inner Grid alone had no effect. -->
+                  <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                    <Setter Property="Padding" Value="6,0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="MinHeight" Value="0" />
+                    <Setter Property="Height" Value="26" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                  </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Height="24">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="{Binding Code}" FontFamily="Consolas"
+                                 Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="{Binding Name}" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis" />
+                      <Border Grid.Column="2" Style="{StaticResource TagChip}" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding TypeDisplay}" FontSize="10" Foreground="#9FC2FF" />
+                      </Border>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Border>
+          </Popup>
+
+          <TextBlock Text="{Binding Error}" Foreground="#FCA5A5" FontSize="11" Margin="0,8,0,0"
+                     TextWrapping="Wrap"
+                     Visibility="{Binding HasError, Converter={StaticResource BoolToVisibility}}" />
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+        <DataGrid x:Name="QuoteGrid" ItemsSource="{Binding Quotes}"
+                  SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                  AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
+                  GridLinesVisibility="None" Background="Transparent" BorderThickness="0"
+                  RowHeight="30" CanUserAddRows="False" SelectionMode="Single"
+                  MouseDoubleClick="QuoteGrid_DoubleClick"
+                  Loaded="QuoteGrid_Loaded">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="代码" Binding="{Binding Code}" Width="108" MinWidth="88">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="190" MinWidth="70">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="FontWeight" Value="Medium" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="最新价" Binding="{Binding Now, Converter={StaticResource Price}}" Width="100" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="FontWeight" Value="SemiBold" /><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="VerticalAlignment" Value="Center" />
+                  <Setter Property="Foreground" Value="{Binding Percent, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="涨跌" Binding="{Binding Change, Converter={StaticResource Signed}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="FontFamily" Value="Consolas" /><Setter Property="VerticalAlignment" Value="Center" />
+                  <Setter Property="Foreground" Value="{Binding Percent, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="涨跌幅" Binding="{Binding Percent, Converter={StaticResource Pct}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="FontFamily" Value="Consolas" /><Setter Property="VerticalAlignment" Value="Center" />
+                  <Setter Property="Foreground" Value="{Binding Percent, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="今开" Binding="{Binding Open, Converter={StaticResource Price}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="最高" Binding="{Binding High, Converter={StaticResource Price}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#EF5350" />
+                  <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="最低" Binding="{Binding Low, Converter={StaticResource Price}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="#26A69A" />
+                  <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="昨收" Binding="{Binding Yesterday, Converter={StaticResource Price}}" Width="90" MinWidth="76">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Faint}" />
+                  <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="FontFamily" Value="Consolas" />
+                  <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="行业" Binding="{Binding Industry}" Width="110" MinWidth="70">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="VerticalAlignment" Value="Center" /><Setter Property="FontSize" Value="12" />
+                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                  <Setter Property="ToolTip" Value="{Binding Industry}" />
+                  <Style.Triggers>
+                    <Trigger Property="Text" Value=""><Setter Property="ToolTip" Value="{x:Null}" /></Trigger>
+                  </Style.Triggers>
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="地区" Binding="{Binding Region}" Width="100" MinWidth="64">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="VerticalAlignment" Value="Center" /><Setter Property="FontSize" Value="12" />
+                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                  <Setter Property="ToolTip" Value="{Binding Region}" />
+                  <Style.Triggers>
+                    <Trigger Property="Text" Value=""><Setter Property="ToolTip" Value="{x:Null}" /></Trigger>
+                  </Style.Triggers>
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="概念" Binding="{Binding Concepts}" Width="*" MinWidth="120">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="VerticalAlignment" Value="Center" /><Setter Property="FontSize" Value="12" />
+                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                  <Setter Property="ToolTip" Value="{Binding Concepts}" />
+                  <Style.Triggers>
+                    <!-- No hover popup for markets that report no concepts (HK/US/KR). -->
+                    <Trigger Property="Text" Value=""><Setter Property="ToolTip" Value="{x:Null}" /></Trigger>
+                  </Style.Triggers>
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTemplateColumn Header="" Width="52" MinWidth="52">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <ui:Button Height="24" Width="26" Padding="0" Icon="{ui:SymbolIcon Delete24}"
+                             Click="RemoveCode_Click" ToolTip="从分组移除" />
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+          </DataGrid.Columns>
+        </DataGrid>
+      </Border>
+
+      <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,8,0,0"
+              Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="{Binding SelectedRow.Name}" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding SelectedRow.Code}" Margin="8,0,0,0"
+                       Foreground="{StaticResource Faint}" FontFamily="Consolas" />
+            <TextBlock Text="{Binding SelectedRow.Time}" Margin="12,0,0,0" FontSize="11"
+                       Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
+            <TextBlock Text="· 该市场返回的字段" Margin="8,0,0,0" FontSize="11"
+                       Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
+          </StackPanel>
+          <ItemsControl ItemsSource="{Binding SelectedRow.Extras}">
+            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Style="{StaticResource Badge}" Margin="0,0,8,6">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Faint}" />
+                    <TextBlock Text="{Binding Value}" FontSize="12" FontWeight="SemiBold" Margin="7,0,0,0"
+                               Foreground="{StaticResource Accent}" FontFamily="Consolas" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>

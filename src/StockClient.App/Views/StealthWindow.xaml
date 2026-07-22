@@ -1,0 +1,47 @@
+<Window x:Class="StockClient.App.Views.StealthWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="行情" WindowStyle="None" AllowsTransparency="True"
+        Topmost="True" ShowInTaskbar="False" ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight" Background="Transparent"
+        FontFamily="Microsoft YaHei"
+        MouseLeftButtonDown="Root_Drag">
+  <!--
+    Background is #01000000, not Transparent: a fully transparent surface isn't
+    hit-testable, so the panel could be neither dragged nor right-clicked.
+    One alpha step is invisible but still catches the mouse.
+  -->
+  <!--
+    No MouseDoubleClick -> restore, deliberately.
+
+    Restoring closes this panel, and double-click was far too easy to hit by
+    accident: single click is swallowed whole by DragMove below, which gives no
+    visible feedback at all — the panel doesn't highlight, doesn't move, nothing
+    happens. So a click that doesn't appear to register invites a second one,
+    both land inside the 500ms double-click window, and the ticker vanishes.
+    From the outside that reads as "one click killed it".
+
+    Restore already has two explicit, unambiguous paths: the right-click menu's
+    还原主窗口 and double-clicking the tray icon. A panel whose entire purpose is
+    to sit there unobtrusively must not be one stray click from disappearing.
+  -->
+  <!--
+    No ToolTip here, deliberately.
+
+    The panel is one 20px line and lives at the bottom of the screen, so a
+    tooltip has no room to open downward and Windows flips it up — a 288x104 box
+    landing exactly on top of the 179x20 ticker. Touching the panel then hid the
+    quotes behind a help bubble, which is the opposite of what a always-on-top
+    ticker is for. (It also read as the panel "turning into two lines" while
+    being dragged.) The right-click menu carries the same shortcuts.
+  -->
+  <Border x:Name="Root" Background="#01000000" CornerRadius="4" Padding="9,2">
+    <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+      <!-- Intraday sparkline of the current contract; the child is set in code and
+           this host stays collapsed unless the trend option is on. -->
+      <Border x:Name="SparkHost" Visibility="Collapsed" Margin="0,1,0,3" />
+      <!-- One StackPanel row per contract; each row is filled with field TextBlocks in Render. -->
+      <StackPanel x:Name="Rows" Orientation="Vertical" VerticalAlignment="Center" />
+    </StackPanel>
+  </Border>
+</Window>

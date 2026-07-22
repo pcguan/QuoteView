@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms is here only for NotifyIcon: WPF has no tray icon of its own. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>StockClient</AssemblyName>
+    <RootNamespace>StockClient.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!--
+      Framework-dependent, not self-contained. Bundling the runtime made a 168MB
+      exe, and corp-win is only reachable through a port forwarder whose
+      downstream measures 0.54 MB/s — so every deploy spent ~7 minutes dragging
+      the runtime back through it. Both targets already have the .NET 8 desktop
+      runtime (corp-win 8.0.27, pc-guan 8.0.11).
+    -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      UseWindowsForms drags System.Windows.Forms and System.Drawing into the
+      implicit usings, where Application/Color/Brush collide with their WPF
+      namesakes. NotifyIcon is referenced fully-qualified instead.
+    -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StockClient.Core\StockClient.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Fluent/Win11 control templates and the Mica backdrop. -->
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+</Project>

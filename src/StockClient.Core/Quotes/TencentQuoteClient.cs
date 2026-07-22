@@ -1,0 +1,215 @@
+using System.Globalization;
+using System.Text;
+using StockClient.Core.Contracts;
+
+namespace StockClient.Core.Quotes;
+
+/// <summary>
+/// Tencent batch quotes: every code in ONE request, which is what makes a 1s
+/// refresh viable without getting rate-limited.
+///
+///   https://qt.gtimg.cn/q=sh600519,hk00700,usAAPL,kr005930
+///
+/// Response is GBK, one row per code, terminated by ";\n":
+///   v_sh600519="1~贵州茅台~600519~1251.06~1214.88~...";
+/// </summary>
+public sealed class TencentQuoteClient
+{
+    private readonly HttpClient _http;
+
+    public TencentQuoteClient(HttpClient http)
+    {
+        _http = http;
+        GbkText.EnsureRegistered();
+    }
+
+    public async Task<IReadOnlyList<Quote>> GetQuotesAsync(
+        IReadOnlyList<string> codes, CancellationToken cancellationToken)
+    {
+        if (codes.Count == 0) return Array.Empty<Quote>();
+
+        var apiCodes = codes.Select(ToApiCode).ToArray();
+        var url = "https://qt.gtimg.cn/q=" + string.Join(",", apiCodes);
+
+        var body = await GbkText.GetAsync(_http, url, cancellationToken);
+        return Parse(codes, apiCodes, body);
+    }
+
+    /// <summary>SH600519 -> sh600519, USAAPL -> usAAPL, BJ920992 -> bj920992.</summary>
+    public static string ToApiCode(string code)
+    {
+        if (!CodeMapper.TryParse(code, out var market, out var number))
+            throw new ArgumentException($"无法识别的合约代码: {code}", nameof(code));
+
+        return market.ToLowerInvariant() + number;
+    }
+
+    /// <summary>Split from the request so it can be unit tested offline.</summary>
+    public static IReadOnlyList<Quote> Parse(
+        IReadOnlyList<string> codes, IReadOnlyList<string> apiCodes, string body)
+    {
+        // Index rows by api code: a reordered or missing row must not shift every
+        // later quote onto the wrong instrument.
+        var rows = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in body.Split(";\n", StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = row.IndexOf('=');
+            if (eq < 0) continue;
+
+            var key = row[..eq].Trim();
+            if (key.StartsWith("v_", StringComparison.OrdinalIgnoreCase)) key = key[2..];
+            rows[key] = row[(eq + 1)..];
+        }
+
+        var result = new List<Quote>(codes.Count);
+        for (var i = 0; i < codes.Count; i++)
+        {
+            result.Add(rows.TryGetValue(apiCodes[i], out var raw)
+                ? ParseRow(codes[i], raw) ?? Quote.Missing(codes[i])
+                : Quote.Missing(codes[i]));
+        }
+
+        return result;
+    }
+
+    private static Quote? ParseRow(string code, string raw)
+    {
+        var p = raw.Replace("\"", "").Split('~');
+        if (p.Length <= 34) return null;
+
+        var name = At(p, 1);
+        if (name.Length == 0) return null;
+
+        CodeMapper.TryParse(code, out var market, out _);
+
+        return new Quote
+        {
+            Code = code.ToUpperInvariant(),
+            Name = name,
+            Now = Num(p, 3),
+            Yesterday = Num(p, 4),
+            Open = Num(p, 5),
+            Change = Num(p, 31),
+            Percent = Num(p, 32),
+            High = Num(p, 33),
+            Low = Num(p, 34),
+            Time = At(p, 30),
+            Extras = Extras(market, p),
+        };
+    }
+
+    /// <summary>
+    /// Per-market extras. Deliberately NOT one shared table: indices past ~45
+    /// mean different things per market. [46] is 市净率 for A-shares but the
+    /// English name for HK/US; [48]/[49] are 涨跌停价/量比 for A-shares but
+    /// 52-week high/low for HK/US/KR. A shared table renders plausible-looking
+    /// nonsense without erroring.
+    /// </summary>
+    private static IReadOnlyList<QuoteField> Extras(string market, string[] p)
+    {
+        var fields = new List<QuoteField>();
+
+        void Add(string label, int index, string suffix = "")
+        {
+            var v = At(p, index);
+            if (v.Length == 0 || v == "0" || v == "0.00") return;
+            fields.Add(new QuoteField(label, v + suffix));
+        }
+
+        switch (market)
+        {
+            case "SH" or "SZ" or "BJ":
+                Add("成交量(手)", 6);
+                Add("成交额(万)", 37);
+                Add("换手率", 38, "%");
+                Add("市盈率TTM", 39);
+                Add("振幅", 43, "%");
+                Add("流通市值(亿)", 44);
+                Add("总市值(亿)", 45);
+                Add("市净率", 46);
+                Add("涨停价", 47);
+                Add("跌停价", 48);
+                Add("量比", 49);
+                Add("均价", 51);
+                Add("外盘", 7);
+                Add("内盘", 8);
+                break;
+
+            case "HK":
+                Add("成交量(股)", 6);
+                Add("成交额", 37);
+                Add("市盈率TTM", 39);
+                Add("振幅", 43, "%");
+                Add("流通市值(亿)", 44);
+                Add("总市值(亿)", 45);
+                // [48]/[49] are the 52-week range here, not 涨跌停/量比.
+                Add("52周最高", 48);
+                Add("52周最低", 49);
+                Add("市盈率静", 57);
+                Add("股息率", 59, "%");
+                Add("每手股数", 60);
+                Add("货币", 75);
+                break;
+
+            case "US":
+                Add("成交量(股)", 6);
+                Add("成交额", 37);
+                Add("换手率", 38, "%");
+                Add("市盈率TTM", 39);
+                Add("振幅", 43, "%");
+                Add("流通市值(亿)", 44);
+                Add("总市值(亿)", 45);
+                Add("52周最高", 48);
+                Add("52周最低", 49);
+                Add("货币", 35);
+                break;
+
+            case "KR":
+                // Korea reports almost nothing: 16 of 72 fields carry a value.
+                Add("成交量", 6);
+                Add("总市值", 45);
+                Add("52周最高", 48);
+                Add("52周最低", 49);
+                break;
+        }
+
+        return fields;
+    }
+
+    private static string At(string[] p, int i) => i < p.Length ? p[i].Trim() : "";
+
+    private static double Num(string[] p, int i) =>
+        double.TryParse(At(p, i), NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : 0;
+}
+
+/// <summary>
+/// The quote endpoint answers in GBK. .NET Core ships only a few code pages, so
+/// GBK must be registered explicitly or every Chinese name decodes to mojibake.
+/// </summary>
+public static class GbkText
+{
+    private static readonly Encoding Gbk;
+
+    static GbkText()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Gbk = Encoding.GetEncoding("GBK");
+    }
+
+    public static void EnsureRegistered()
+    {
+        // Touching the class runs the static ctor.
+    }
+
+    public static async Task<string> GetAsync(
+        HttpClient http, string url, CancellationToken cancellationToken)
+    {
+        using var response = await http.GetAsync(url, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return Gbk.GetString(bytes);
+    }
+}

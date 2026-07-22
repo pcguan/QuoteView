@@ -1,0 +1,47 @@
+<Window x:Class="StockClient.App.Views.StealthSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="简洁面板设置" Width="380" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="#12161F" FontFamily="Microsoft YaHei" FontSize="13"
+        TextOptions.TextFormattingMode="Display">
+  <StackPanel Margin="18,16">
+    <Grid Margin="0,0,0,6">
+      <TextBlock Text="显示行数" VerticalAlignment="Center" Foreground="#EDF1F7" />
+      <TextBlock x:Name="RowsValue" HorizontalAlignment="Right" VerticalAlignment="Center"
+                 Foreground="#8B93A3" />
+    </Grid>
+    <Slider x:Name="RowsSlider" Minimum="1" Maximum="20"
+            TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,16" />
+
+    <Grid Margin="0,0,0,6">
+      <TextBlock Text="行距" VerticalAlignment="Center" Foreground="#EDF1F7" />
+      <TextBlock x:Name="RowGapValue" HorizontalAlignment="Right" VerticalAlignment="Center"
+                 Foreground="#8B93A3" />
+    </Grid>
+    <Slider x:Name="RowGapSlider" Minimum="0" Maximum="20"
+            TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,8" />
+
+    <!-- Live preview: the sample rows take the current gap so the setting is visible. -->
+    <Border Background="#0F1420" CornerRadius="4" Padding="10,7" Margin="0,0,0,16">
+      <StackPanel x:Name="GapPreview" />
+    </Border>
+
+    <Grid Margin="0,0,0,6">
+      <TextBlock Text="透明度" VerticalAlignment="Center" Foreground="#EDF1F7" />
+      <TextBlock x:Name="ShadeValue" HorizontalAlignment="Right" VerticalAlignment="Center"
+                 Foreground="#8B93A3" />
+    </Grid>
+    <Slider x:Name="ShadeSlider" Minimum="0" Maximum="10"
+            TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,14" />
+
+    <CheckBox x:Name="TrendCheck" Content="显示分时缩略图（当前合约）"
+              Foreground="#EDF1F7" Margin="0,0,0,18" />
+
+    <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,10" />
+    <StackPanel x:Name="FieldsPanel" />
+
+    <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+               Text="改动即时生效，自动保存。至少保留一个字段。" />
+  </StackPanel>
+</Window>
