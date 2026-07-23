@@ -46,7 +46,7 @@ public static class QuoteColumns
         // AFTER Restore so applying the saved layout doesn't trigger a save.
         foreach (var column in grid.Columns)
         {
-            if (string.IsNullOrEmpty(column.Header?.ToString())) continue;
+            if (column.Header is not string { Length: > 0 }) continue;
 
             DependencyPropertyDescriptor
                 .FromProperty(DataGridColumn.WidthProperty, typeof(DataGridColumn))
@@ -73,7 +73,7 @@ public static class QuoteColumns
 
         foreach (var column in grid.Columns)
         {
-            var key = column.Header?.ToString();
+            var key = column.Header as string;
             if (string.IsNullOrEmpty(key) || !byKey.TryGetValue(key, out var state)) continue;
 
             if (state.Width > 0) column.Width = new DataGridLength(state.Width);
@@ -88,7 +88,7 @@ public static class QuoteColumns
             var index = 0;
             foreach (var state in saved.OrderBy(s => s.Order))
             {
-                var column = grid.Columns.FirstOrDefault(c => c.Header?.ToString() == state.Key);
+                var column = grid.Columns.FirstOrDefault(c => c.Header as string == state.Key);
                 if (column is not null && index < grid.Columns.Count) column.DisplayIndex = index++;
             }
         }
@@ -104,7 +104,7 @@ public static class QuoteColumns
 
         foreach (var column in grid.Columns)
         {
-            var key = column.Header?.ToString();
+            var key = column.Header as string;
             if (string.IsNullOrEmpty(key)) continue;
 
             saved.Add(new QuoteColumnState

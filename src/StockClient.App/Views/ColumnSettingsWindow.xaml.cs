@@ -3,8 +3,10 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace StockClient.App.Views;
 
@@ -39,8 +41,10 @@ public partial class ColumnSettingsWindow : Window
         InitializeComponent();
         _grid = grid;
 
+        // String headers only — the gear-button header of the delete column is
+        // an object, and must not show up as a chip.
         foreach (var column in grid.Columns
-                     .Where(c => !string.IsNullOrEmpty(c.Header?.ToString()))
+                     .Where(c => c.Header is string { Length: > 0 })
                      .OrderBy(c => c.DisplayIndex))
             _chips.Add(new Chip(column));
 
@@ -50,6 +54,11 @@ public partial class ColumnSettingsWindow : Window
         Chips.PreviewMouseMove += OnMove;
         Chips.PreviewMouseLeftButtonUp += OnUp;
         Chips.DragOver += OnDragOver;
+
+        // Window-wide DragOver keeps the ghost gliding even when the cursor
+        // leaves the chip area (e.g. over the buttons row).
+        AllowDrop = true;
+        DragOver += OnWindowDragOver;
     }
 
     private void All_Click(object sender, RoutedEventArgs e)
@@ -69,6 +78,9 @@ public partial class ColumnSettingsWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
+    private GhostAdorner? _ghost;
+    private Point _grabOffset; // press point within the chip, so the ghost doesn't jump to the cursor tip
+
     private void OnDown(object sender, MouseButtonEventArgs e)
     {
         _pressPoint = e.GetPosition(Chips);
@@ -77,6 +89,9 @@ public partial class ColumnSettingsWindow : Window
         // here would double-toggle on the way back up.
         _armed = _pressIndex >= 0 && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject);
         _dragging = false;
+
+        if (_armed && Container(_pressIndex) is { } c)
+            _grabOffset = e.GetPosition(c);
     }
 
     private void OnMove(object sender, MouseEventArgs e)
@@ -89,12 +104,16 @@ public partial class ColumnSettingsWindow : Window
             return;
 
         _dragging = true;
+        ShowGhost(_pressIndex);
         DragDrop.DoDragDrop(Chips, new DataObject(DragFormat, _pressIndex), DragDropEffects.Move);
-        ApplyOrder(); // commit whatever the live reorder ended on (drop or cancel)
+
+        // Drag ended (drop or cancel): commit the live order, drop the ghost.
+        RemoveGhost();
+        ApplyOrder();
         _armed = false;
     }
 
-    /// <summary>Live reorder: the chip follows the cursor while dragging.</summary>
+    /// <summary>Live reorder: chips make way while the ghost follows the cursor.</summary>
     private void OnDragOver(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DragFormat)) return;
@@ -105,9 +124,62 @@ public partial class ColumnSettingsWindow : Window
         var over = IndexAt(e.GetPosition(Chips));
         // Once moved, the cursor sits over the dragged chip itself (from == over),
         // which is what keeps this from oscillating.
-        if (from < 0 || over < 0 || over == from) return;
+        if (from >= 0 && over >= 0 && over != from) _chips.Move(from, over);
 
-        _chips.Move(from, over);
+        DimDragged();
+    }
+
+    /// <summary>The ghost follows the cursor anywhere in the window.</summary>
+    private void OnWindowDragOver(object sender, DragEventArgs e)
+    {
+        if (_ghost is null || !e.Data.GetDataPresent(DragFormat)) return;
+
+        var p = e.GetPosition(Chips);
+        _ghost.SetPosition(new Point(p.X - _grabOffset.X, p.Y - _grabOffset.Y));
+        e.Effects = DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// A floating snapshot of the dragged chip. A bitmap, not a VisualBrush: the
+    /// live reorder regenerates containers mid-drag, and a brush bound to a
+    /// recycled visual goes blank.
+    /// </summary>
+    private void ShowGhost(int index)
+    {
+        if (Container(index) is not { } c || c.ActualWidth < 1) return;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var rtb = new RenderTargetBitmap(
+            (int)Math.Ceiling(c.ActualWidth * dpi.DpiScaleX),
+            (int)Math.Ceiling(c.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+
+        // Render through a DrawingVisual so the element's layout offset doesn't
+        // shift it out of the bitmap.
+        var dv = new DrawingVisual();
+        using (var ctx = dv.RenderOpen())
+            ctx.DrawRectangle(new VisualBrush(c), null, new Rect(new Size(c.ActualWidth, c.ActualHeight)));
+        rtb.Render(dv);
+
+        _ghost = new GhostAdorner(Chips, rtb, new Size(c.ActualWidth, c.ActualHeight));
+        _ghost.SetPosition(new Point(_pressPoint.X - _grabOffset.X, _pressPoint.Y - _grabOffset.Y));
+        AdornerLayer.GetAdornerLayer(Chips)?.Add(_ghost);
+    }
+
+    private void RemoveGhost()
+    {
+        if (_ghost is null) return;
+        AdornerLayer.GetAdornerLayer(Chips)?.Remove(_ghost);
+        _ghost = null;
+    }
+
+    /// <summary>The in-flight chip stays dimmed in place; the ghost is "it".</summary>
+    private void DimDragged()
+    {
+        for (var i = 0; i < _chips.Count; i++)
+            if (Container(i) is { } c)
+                c.Opacity = _chips[i].Dragging ? 0.3 : 1.0;
     }
 
     private void OnUp(object sender, MouseButtonEventArgs e)
@@ -141,6 +213,7 @@ public partial class ColumnSettingsWindow : Window
     private void ApplyOrder()
     {
         foreach (var chip in _chips) chip.Dragging = false;
+        DimDragged(); // restore all opacities
 
         try
         {
@@ -153,11 +226,14 @@ public partial class ColumnSettingsWindow : Window
         }
     }
 
+    private FrameworkElement? Container(int index) =>
+        Chips.ItemContainerGenerator.ContainerFromIndex(index) as FrameworkElement;
+
     private int IndexAt(Point p)
     {
         for (var i = 0; i < _chips.Count; i++)
         {
-            if (Chips.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement c) continue;
+            if (Container(i) is not { } c) continue;
 
             var bounds = new Rect(c.TranslatePoint(new Point(0, 0), Chips), c.RenderSize);
             if (bounds.Contains(p)) return i;
@@ -205,4 +281,29 @@ public partial class ColumnSettingsWindow : Window
 
         public event PropertyChangedEventHandler? PropertyChanged;
     }
+}
+
+/// <summary>The bitmap snapshot of the dragged chip, gliding with the cursor.</summary>
+internal sealed class GhostAdorner : Adorner
+{
+    private readonly ImageSource _image;
+    private readonly Size _size;
+    private Point _pos;
+
+    public GhostAdorner(UIElement adorned, ImageSource image, Size size) : base(adorned)
+    {
+        _image = image;
+        _size = size;
+        IsHitTestVisible = false;
+        Opacity = 0.85;
+    }
+
+    public void SetPosition(Point p)
+    {
+        _pos = p;
+        InvalidateVisual();
+    }
+
+    protected override void OnRender(DrawingContext dc) =>
+        dc.DrawImage(_image, new Rect(_pos, _size));
 }

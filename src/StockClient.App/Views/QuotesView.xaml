@@ -99,8 +99,7 @@
 
       <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,8">
         <StackPanel>
-          <Grid Margin="0,0,0,10">
-          <StackPanel Orientation="Horizontal">
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
             <TextBlock Text="{Binding ActiveGroup.Name, FallbackValue=无分组}" FontSize="17"
                        FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
             <Border Style="{StaticResource Badge}" Margin="12,0,0,0" Padding="8,2">
@@ -122,10 +121,6 @@
               </StackPanel>
             </Border>
           </StackPanel>
-          <ui:Button HorizontalAlignment="Right" Height="28" Width="32" Padding="0"
-                     Icon="{ui:SymbolIcon ColumnTriple24}" Click="ColumnSettings_Click"
-                     ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
-          </Grid>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <ui:TextBox Grid.Column="0" x:Name="CodeBox" Height="36"
@@ -365,7 +360,15 @@
                 </Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
-            <DataGridTemplateColumn Header="" Width="52" MinWidth="52">
+            <!-- Pinned last; its header carries the column-settings gear so the
+                 button sits at the end of the header row itself. Non-string
+                 header = excluded from persistence and the settings chips. -->
+            <DataGridTemplateColumn Width="52" MinWidth="52">
+              <DataGridTemplateColumn.Header>
+                <ui:Button Height="24" Width="30" Padding="0"
+                           Icon="{ui:SymbolIcon Settings24}" Click="ColumnSettings_Click"
+                           ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
+              </DataGridTemplateColumn.Header>
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <ui:Button Height="24" Width="26" Padding="0" Icon="{ui:SymbolIcon Delete24}"

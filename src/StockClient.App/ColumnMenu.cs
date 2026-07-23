@@ -104,7 +104,7 @@ public static class ColumnMenu
 
         foreach (var column in grid.Columns)
         {
-            var header = column.Header?.ToString();
+            var header = column.Header as string;
             if (string.IsNullOrWhiteSpace(header)) continue;
 
             var item = new MenuItem
