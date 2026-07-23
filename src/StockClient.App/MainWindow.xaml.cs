@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using StockClient.App.Services;
 using StockClient.App.ViewModels;
 using StockClient.App.Views;
@@ -39,6 +40,7 @@ public partial class MainWindow : FluentWindow
     private readonly EastMoneyTrendClient _trendClient;
     private readonly TrendRepository _trendRepo;
     private readonly UpdateService _updates = new();
+    private DispatcherTimer? _updateTimer;
 
     // Chart windows are ownerless (so activating one doesn't drag the main window
     // to the front), so they're tracked here to be closed when the app closes —
@@ -82,8 +84,16 @@ public partial class MainWindow : FluentWindow
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
 
-            // Quiet background update check; only speaks up if there's a newer release.
+            // Quiet background update check at startup, then on a timer; only pops
+            // the bottom bar when there's a newer release.
             _ = CheckForUpdatesAsync(manual: false);
+
+            _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromHours(3),
+            };
+            _updateTimer.Tick += (_, _) => _ = CheckForUpdatesAsync(manual: false);
+            _updateTimer.Start();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -152,9 +162,14 @@ public partial class MainWindow : FluentWindow
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e) =>
         await CheckForUpdatesAsync(manual: true);
 
+    private ReleaseInfo? _pendingRelease;
+
+    /// <summary>Version the user dismissed from the bar; auto-checks won't re-nag for it.</summary>
+    private Version? _dismissedVersion;
+
     /// <summary>
-    /// Checks GitHub for a newer release. Silent unless there's an update (or the
-    /// user asked manually), so the startup check never nags.
+    /// Checks for a newer release (domestic first, GitHub fallback). Found → shows
+    /// the bottom update bar. Silent otherwise, unless the user asked manually.
     /// </summary>
     private async Task CheckForUpdatesAsync(bool manual)
     {
@@ -169,49 +184,55 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        if (!check.HasUpdate)
+        if (check.HasUpdate)
         {
-            if (manual)
-                await InfoDialog("检查更新", check.Release is null
-                    ? $"当前版本 v{check.Current}\n暂无发布版本。"
-                    : $"已是最新版本 v{check.Current}。");
+            // An auto-check doesn't re-pop a version the user already closed; a
+            // manual check always shows it.
+            if (!manual && _dismissedVersion == check.Release!.Version) return;
+            ShowUpdateBar(check);
             return;
         }
 
-        var release = check.Release!;
-        var notes = string.IsNullOrWhiteSpace(release.Notes)
-            ? ""
-            : "\n\n" + (release.Notes.Length > 400 ? release.Notes[..400] + "…" : release.Notes);
-
-        var dialog = new Wpf.Ui.Controls.MessageBox
-        {
-            Title = "发现新版本",
-            Content = $"当前 v{check.Current}  →  最新 {release.DisplayName}（{release.Source}）{notes}\n\n是否现在更新？下载完成后会自动重启。",
-            PrimaryButtonText = "立即更新",
-            PrimaryButtonAppearance = ControlAppearance.Primary,
-            CloseButtonText = "稍后",
-        };
-
-        if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
-
-        await ApplyUpdateAsync(release);
+        if (manual)
+            await InfoDialog("检查更新", check.Release is null
+                ? $"当前版本 v{check.Current}\n暂无发布版本。"
+                : $"已是最新版本 v{check.Current}。");
     }
 
-    private async Task ApplyUpdateAsync(ReleaseInfo release)
+    private void ShowUpdateBar(UpdateCheck check)
     {
-        var original = UpdateButton.Content;
-        UpdateButton.IsEnabled = false;
-        var progress = new Progress<double>(p => UpdateButton.Content = $"下载中 {p * 100:0}%");
+        var release = check.Release!;
+        _pendingRelease = release;
+
+        UpdateBarText.Text = $"发现新版本 {release.DisplayName}（{release.Source}）　当前 v{check.Current}";
+        UpdateBarText.ToolTip = string.IsNullOrWhiteSpace(release.Notes) ? null : release.Notes;
+        UpdateBarUpdate.Content = "更新";
+        UpdateBarUpdate.IsEnabled = true;
+        UpdateBar.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateBar_Dismiss(object sender, RoutedEventArgs e)
+    {
+        _dismissedVersion = _pendingRelease?.Version;
+        UpdateBar.Visibility = Visibility.Collapsed;
+    }
+
+    private async void UpdateBar_Update(object sender, RoutedEventArgs e)
+    {
+        if (_pendingRelease is null) return;
+
+        UpdateBarUpdate.IsEnabled = false;
+        var progress = new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
 
         try
         {
             // On success the app restarts and shuts down — this call won't return.
-            await _updates.DownloadAndApplyAsync(release, progress);
+            await _updates.DownloadAndApplyAsync(_pendingRelease, progress);
         }
         catch (Exception ex)
         {
-            UpdateButton.IsEnabled = true;
-            UpdateButton.Content = original;
+            UpdateBarUpdate.IsEnabled = true;
+            UpdateBarUpdate.Content = "更新";
             await InfoDialog("更新失败", ex.Message);
         }
     }

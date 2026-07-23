@@ -17,6 +17,7 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <ui:TitleBar Grid.Row="0" Title="QuoteView" ShowMaximize="True">
@@ -292,5 +293,23 @@
         </Grid>
       </TabItem>
     </TabControl>
+
+    <!-- Bottom status bar: update prompt. Collapsed until a newer version is found. -->
+    <Border x:Name="UpdateBar" Grid.Row="2" Visibility="Collapsed"
+            Background="#1B2233" BorderBrush="#2C3547" BorderThickness="0,1,0,0" Padding="16,8">
+      <Grid>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <ui:SymbolIcon Symbol="ArrowSync24" Foreground="#4C8DFF" VerticalAlignment="Center" />
+          <TextBlock x:Name="UpdateBarText" Margin="9,0,0,0" VerticalAlignment="Center"
+                     Foreground="#EDF1F7" FontSize="12" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+          <ui:Button x:Name="UpdateBarUpdate" Content="更新" Appearance="Primary"
+                     Height="28" Padding="16,0" FontSize="12" Click="UpdateBar_Update" />
+          <ui:Button Content="关闭" Height="28" Padding="12,0" Margin="8,0,0,0" FontSize="12"
+                     Click="UpdateBar_Dismiss" />
+        </StackPanel>
+      </Grid>
+    </Border>
   </Grid>
 </ui:FluentWindow>
