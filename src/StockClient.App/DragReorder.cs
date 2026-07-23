@@ -125,28 +125,34 @@ public static class DragReorder
         var y = e.GetPosition(control).Y;
         var count = control.Items.Count;
 
-        var firstIdx = -1;
-        var lastIdx = -1;
-        double firstTop = 0, lastBottom = 0;
+        // Compare the cursor against each row's MIDLINE, not its bounds: every Y
+        // then maps to a slot, so a cursor in the gap between two rows still snaps
+        // to the nearer boundary instead of falling through to "the end".
+        var insert = -1;
+        double lineY = 0;
+        double lastBottom = 0;
+        var anyRealized = false;
 
         for (var i = 0; i < count; i++)
         {
             if (control.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement row) continue;
 
+            anyRealized = true;
             var top = row.TranslatePoint(new Point(0, 0), control).Y;
             var h = row.ActualHeight;
-
-            if (firstIdx < 0) { firstIdx = i; firstTop = top; }
-            lastIdx = i;
             lastBottom = top + h;
 
-            if (y >= top && y < top + h)
-                return y < top + h / 2 ? (i, top) : (i + 1, top + h);
+            // First row whose midline sits below the cursor → drop before it.
+            if (insert < 0 && y < top + h / 2)
+            {
+                insert = i;
+                lineY = top;
+            }
         }
 
-        if (firstIdx < 0) return (count, control.ActualHeight); // nothing realized
-        if (y < firstTop) return (firstIdx, firstTop);          // above all rows
-        return (lastIdx + 1, lastBottom);                       // below all rows
+        if (!anyRealized) return (count, control.ActualHeight);
+        if (insert < 0) return (count, lastBottom); // below every midline → the end
+        return (insert, lineY);
     }
 
     /// <summary>The item container (DataGridRow / ListBoxItem) an element sits in, or null.</summary>
