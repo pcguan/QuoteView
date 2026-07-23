@@ -38,7 +38,7 @@ public sealed class DomesticReleaseClient
             DownloadUrl = dto.Url!,
             DisplayName = "v" + version,
             Notes = dto.Notes ?? "",
-            Source = "国内(NAS)",
+            Source = "国内源", // internal only; the UI deliberately doesn't show it
         };
     }
 

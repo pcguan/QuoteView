@@ -232,7 +232,9 @@ public partial class MainWindow : FluentWindow
         var release = check.Release!;
         _pendingRelease = release;
 
-        UpdateBarText.Text = $"发现新版本 {release.DisplayName}（{release.Source}）　当前 v{check.Current}";
+        // No source label here (was "国内(NAS)"/"GitHub"): the bar is visible to
+        // anyone glancing at the screen, and the mirror's identity is private infra.
+        UpdateBarText.Text = $"发现新版本 {release.DisplayName}　当前 v{check.Current}";
         UpdateBarText.ToolTip = string.IsNullOrWhiteSpace(release.Notes) ? null : release.Notes;
         UpdateBarUpdate.Content = "更新";
         UpdateBarUpdate.IsEnabled = true;
