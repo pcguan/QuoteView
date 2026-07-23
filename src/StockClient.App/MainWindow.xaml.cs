@@ -88,9 +88,11 @@ public partial class MainWindow : FluentWindow
             // the bottom bar when there's a newer release.
             _ = CheckForUpdatesAsync(manual: false);
 
+            // 30 minutes, not hours: a longer interval meant a release published
+            // shortly after the app started went unnoticed until a manual check.
             _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
-                Interval = TimeSpan.FromHours(3),
+                Interval = TimeSpan.FromMinutes(30),
             };
             _updateTimer.Tick += (_, _) => _ = CheckForUpdatesAsync(manual: false);
             _updateTimer.Start();

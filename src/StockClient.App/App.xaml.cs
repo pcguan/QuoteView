@@ -22,7 +22,26 @@ public partial class App : Application
         // desktop (reading as one doubled line), and the second copy's
         // RegisterHotKey silently lost to the first — so Ctrl+arrows appeared
         // dead on whichever panel was on top.
-        _single = new Mutex(true, @"Local\StockClient.SingleInstance", out var isFirst);
+        //
+        // An update relaunch (--updated) is the one case that must WAIT for the
+        // mutex instead of yielding: the updater starts the new copy and only
+        // then shuts the old one down, so for a moment both are alive — and the
+        // freshly installed version used to judge itself "a second instance" and
+        // exit, which read as "update never restarted".
+        _single = new Mutex(false, @"Local\StockClient.SingleInstance");
+        var wait = e.Args.Contains("--updated") ? TimeSpan.FromSeconds(15) : TimeSpan.Zero;
+        bool isFirst;
+        try
+        {
+            isFirst = _single.WaitOne(wait);
+        }
+        catch (AbandonedMutexException)
+        {
+            // The previous owner exited without releasing (normal for a process
+            // that just shut down); ownership has passed to us.
+            isFirst = true;
+        }
+
         if (!isFirst)
         {
             // Don't just vanish. Silently exiting meant clicking the icon looked

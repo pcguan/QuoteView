@@ -96,7 +96,10 @@ public sealed class UpdateService
             throw;
         }
 
-        Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true });
+        // --updated: we're still alive for a beat after Process.Start, and the
+        // single-instance mutex would make the new copy yield to us and exit.
+        // The flag tells it to wait for the mutex instead.
+        Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
         Application.Current.Shutdown();
     }
 
