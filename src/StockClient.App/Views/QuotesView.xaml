@@ -176,6 +176,7 @@
 
       <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
         <DataGrid x:Name="QuoteGrid" ItemsSource="{Binding Quotes}"
+                  Sorting="QuoteGrid_Sorting"
                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                   AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                   GridLinesVisibility="None" Background="Transparent" BorderThickness="0"

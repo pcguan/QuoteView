@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -22,10 +24,65 @@ public partial class QuotesView : UserControl
         };
 
         // Drag to reorder — groups in the list, contracts in the grid. Vm is read
-        // lazily so it doesn't matter that the DataContext isn't set yet.
+        // lazily so it doesn't matter that the DataContext isn't set yet. The grid
+        // only accepts drags in "原序" (unsorted) state, since a sorted view's order
+        // doesn't match the underlying list.
         DragReorder.Enable(GroupList, (from, to) => Vm?.MoveGroup(from, to));
-        DragReorder.Enable(QuoteGrid, (from, to) => Vm?.MoveCode(from, to));
+        DragReorder.Enable(QuoteGrid, (from, to) => Vm?.MoveCode(from, to), () => IsManualOrder);
     }
+
+    // Three-state column sort: click cycles 正序 → 反序 → 原序 (the user's manual
+    // drag order). "原序" clears the sort so the grid shows Quotes as-ordered, and
+    // drag-reorder is re-enabled.
+    private string? _sortPath;
+    private ListSortDirection? _sortDir;
+
+    /// <summary>True when no column sort is active, i.e. the manual drag order is shown.</summary>
+    private bool IsManualOrder => _sortDir is null;
+
+    private void QuoteGrid_Sorting(object sender, DataGridSortingEventArgs e)
+    {
+        e.Handled = true; // take over the default two-state sort
+
+        var path = PathOf(e.Column);
+        if (string.IsNullOrEmpty(path)) return; // e.g. the delete column
+
+        if (path == _sortPath)
+        {
+            _sortDir = _sortDir switch
+            {
+                ListSortDirection.Ascending => ListSortDirection.Descending,
+                ListSortDirection.Descending => null, // → 原序
+                _ => ListSortDirection.Ascending,
+            };
+        }
+        else
+        {
+            _sortPath = path;
+            _sortDir = ListSortDirection.Ascending;
+        }
+
+        if (_sortDir is null) _sortPath = null;
+
+        var view = CollectionViewSource.GetDefaultView(QuoteGrid.ItemsSource);
+        if (view is not null)
+            using (view.DeferRefresh())
+            {
+                view.SortDescriptions.Clear();
+                if (_sortPath is not null && _sortDir is { } d)
+                    view.SortDescriptions.Add(new SortDescription(_sortPath, d));
+            }
+
+        // Reflect state in the header glyph (null clears it → 原序 shows no arrow).
+        foreach (var c in QuoteGrid.Columns) c.SortDirection = null;
+        e.Column.SortDirection = _sortDir;
+    }
+
+    /// <summary>The property to sort by: the column's SortMemberPath, else its binding path.</summary>
+    private static string? PathOf(DataGridColumn column) =>
+        !string.IsNullOrEmpty(column.SortMemberPath) ? column.SortMemberPath
+        : column is DataGridBoundColumn { Binding: Binding b } ? b.Path?.Path
+        : null;
 
     private async void Import_Click(object sender, RoutedEventArgs e)
     {

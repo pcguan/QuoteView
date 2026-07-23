@@ -19,7 +19,12 @@ public static class DragReorder
 {
     private const string Format = "StockClient.ReorderIndex";
 
-    public static void Enable(ItemsControl control, Action<int, int> onMove)
+    /// <param name="canDrag">
+    /// Optional gate: when it returns false, dragging is disabled. Used to block
+    /// reordering while the grid is showing a sorted view (the displayed order
+    /// wouldn't match the underlying list, so a drag would move the wrong item).
+    /// </param>
+    public static void Enable(ItemsControl control, Action<int, int> onMove, Func<bool>? canDrag = null)
     {
         var start = default(Point);
         var armed = false;
@@ -30,7 +35,7 @@ public static class DragReorder
         {
             start = e.GetPosition(control);
             var source = e.OriginalSource as DependencyObject;
-            armed = ContainerIndex(control, source) >= 0 && !OnButton(source);
+            armed = (canDrag?.Invoke() ?? true) && ContainerIndex(control, source) >= 0 && !OnButton(source);
         };
 
         control.PreviewMouseMove += (_, e) =>
