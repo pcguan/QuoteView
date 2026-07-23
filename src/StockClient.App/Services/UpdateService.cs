@@ -47,11 +47,24 @@ public sealed class UpdateService
             ? new Version(v.Major, v.Minor, v.Build < 0 ? 0 : v.Build)
             : new Version(0, 0, 0);
 
-    public async Task<UpdateCheck> CheckAsync(CancellationToken cancellationToken = default)
+    private DateTime _lastGithubTry = DateTime.MinValue;
+
+    /// <param name="force">
+    /// True for a manual check: always allowed to hit the GitHub fallback. Auto
+    /// checks throttle it to once per 5 minutes — at 30s polling with the NAS
+    /// down, an unthrottled fallback would burn GitHub's 60/hr anonymous quota.
+    /// </param>
+    public async Task<UpdateCheck> CheckAsync(bool force = false, CancellationToken cancellationToken = default)
     {
-        // Domestic first, with a short timeout so a dead NAS doesn't stall the fallback.
-        var release = await TryAsync(ct => _domestic.GetLatestAsync(ct), TimeSpan.FromSeconds(8), cancellationToken)
-                      ?? await TryAsync(ct => _github.GetLatestAsync(ct), TimeSpan.FromSeconds(15), cancellationToken);
+        // Domestic first; 10s cap per source so a dead one is skipped quickly.
+        var release = await TryAsync(ct => _domestic.GetLatestAsync(ct), TimeSpan.FromSeconds(10), cancellationToken);
+
+        if (release is null &&
+            (force || DateTime.UtcNow - _lastGithubTry >= TimeSpan.FromMinutes(5)))
+        {
+            _lastGithubTry = DateTime.UtcNow;
+            release = await TryAsync(ct => _github.GetLatestAsync(ct), TimeSpan.FromSeconds(10), cancellationToken);
+        }
 
         return new UpdateCheck { Current = Current, Release = release };
     }

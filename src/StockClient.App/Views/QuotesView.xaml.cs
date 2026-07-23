@@ -266,8 +266,33 @@ public partial class QuotesView : UserControl
         if (_columnsAttached || sender is not System.Windows.Controls.DataGrid grid) return;
         _columnsAttached = true;
 
-        ColumnMenu.Attach(grid);
+        // The header right-click opens the tiled column-settings window instead of
+        // the old per-column checkbox menu: with ~20 columns that vertical menu
+        // outgrew the screen and couldn't scroll.
+        var menu = new ContextMenu();
+        var settings = new System.Windows.Controls.MenuItem { Header = "列设置…" };
+        settings.Click += (_, _) => OpenColumnSettings();
+        menu.Items.Add(settings);
+
+        ColumnMenu.Attach(grid, menu);
         if (Vm is { } vm) QuoteColumns.Attach(grid, vm.QuoteColumns, vm.SaveConfig);
+    }
+
+    private ColumnSettingsWindow? _columnSettings;
+
+    private void ColumnSettings_Click(object sender, RoutedEventArgs e) => OpenColumnSettings();
+
+    private void OpenColumnSettings()
+    {
+        if (_columnSettings is { } open)
+        {
+            open.Activate();
+            return;
+        }
+
+        _columnSettings = new ColumnSettingsWindow(QuoteGrid) { Owner = Window.GetWindow(this) };
+        _columnSettings.Closed += (_, _) => _columnSettings = null;
+        _columnSettings.Show();
     }
 
     /// <summary>

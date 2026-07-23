@@ -54,6 +54,11 @@ public static class QuoteColumns
             DependencyPropertyDescriptor
                 .FromProperty(DataGridColumn.VisibilityProperty, typeof(DataGridColumn))
                 ?.AddValueChanged(column, (_, _) => Schedule());
+            // ColumnReordered only fires for header drags; the column-settings
+            // window reorders by assigning DisplayIndex, which needs the DP watch.
+            DependencyPropertyDescriptor
+                .FromProperty(DataGridColumn.DisplayIndexProperty, typeof(DataGridColumn))
+                ?.AddValueChanged(column, (_, _) => Schedule());
         }
     }
 

@@ -99,7 +99,8 @@
 
       <Border Grid.Row="0" Style="{StaticResource Card}" Margin="0,0,0,8">
         <StackPanel>
-          <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+          <Grid Margin="0,0,0,10">
+          <StackPanel Orientation="Horizontal">
             <TextBlock Text="{Binding ActiveGroup.Name, FallbackValue=无分组}" FontSize="17"
                        FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
             <Border Style="{StaticResource Badge}" Margin="12,0,0,0" Padding="8,2">
@@ -121,6 +122,10 @@
               </StackPanel>
             </Border>
           </StackPanel>
+          <ui:Button HorizontalAlignment="Right" Height="28" Width="32" Padding="0"
+                     Icon="{ui:SymbolIcon ColumnTriple24}" Click="ColumnSettings_Click"
+                     ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
+          </Grid>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <ui:TextBox Grid.Column="0" x:Name="CodeBox" Height="36"

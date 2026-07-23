@@ -77,25 +77,16 @@ public partial class MainWindow : FluentWindow
 
         Loaded += async (_, _) =>
         {
+            // Update loop first — its 1.5s first check must not wait behind the
+            // multi-second contract load.
+            _ = RunUpdateLoopAsync();
+
             await _vm.LoadAsync();
 
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
-
-            // Quiet background update check at startup, then on a timer; only pops
-            // the bottom bar when there's a newer release.
-            _ = CheckForUpdatesAsync(manual: false);
-
-            // 30 minutes, not hours: a longer interval meant a release published
-            // shortly after the app started went unnoticed until a manual check.
-            _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
-            {
-                Interval = TimeSpan.FromMinutes(30),
-            };
-            _updateTimer.Tick += (_, _) => _ = CheckForUpdatesAsync(manual: false);
-            _updateTimer.Start();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -164,6 +155,41 @@ public partial class MainWindow : FluentWindow
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e) =>
         await CheckForUpdatesAsync(manual: true);
 
+    private bool _updateCheckBusy;
+
+    /// <summary>
+    /// The background cadence: a quiet first check 1.5s after startup, then a
+    /// 30-second poll. Each check reads NAS first, GitHub as fallback (10s per
+    /// source, throttled inside UpdateService).
+    /// </summary>
+    private async Task RunUpdateLoopAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+        await AutoCheckAsync();
+
+        _updateTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(30),
+        };
+        _updateTimer.Tick += (_, _) => _ = AutoCheckAsync();
+        _updateTimer.Start();
+    }
+
+    /// <summary>Reentrancy guard: a slow check (both sources timing out) outlives the 30s tick.</summary>
+    private async Task AutoCheckAsync()
+    {
+        if (_updateCheckBusy) return;
+        _updateCheckBusy = true;
+        try
+        {
+            await CheckForUpdatesAsync(manual: false);
+        }
+        finally
+        {
+            _updateCheckBusy = false;
+        }
+    }
+
     private ReleaseInfo? _pendingRelease;
 
     /// <summary>Version the user dismissed from the bar; auto-checks won't re-nag for it.</summary>
@@ -178,7 +204,7 @@ public partial class MainWindow : FluentWindow
         UpdateCheck check;
         try
         {
-            check = await _updates.CheckAsync();
+            check = await _updates.CheckAsync(force: manual);
         }
         catch (Exception ex)
         {

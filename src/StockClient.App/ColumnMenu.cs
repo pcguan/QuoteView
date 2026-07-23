@@ -17,9 +17,14 @@ namespace StockClient.App;
 /// </summary>
 public static class ColumnMenu
 {
-    public static void Attach(System.Windows.Controls.DataGrid grid)
+    /// <param name="menu">
+    /// Optional replacement for the built-in per-column checkbox menu — the quote
+    /// grid passes its own (opening the tiled column-settings window) because its
+    /// ~20 columns outgrow a vertical menu.
+    /// </param>
+    public static void Attach(System.Windows.Controls.DataGrid grid, ContextMenu? menu = null)
     {
-        var menu = BuildMenu(grid);
+        menu ??= BuildMenu(grid);
 
         // Resolved against the real resource tree, so it picks up whatever the
         // merged theme actually installed.
