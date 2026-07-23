@@ -114,28 +114,39 @@ public static class DragReorder
 
     /// <summary>
     /// The drop slot (0..count) and the y (in control coords) to draw the line at:
-    /// top half of a row → before it, bottom half → after it, empty area → the end.
+    /// top half of a row → before it, bottom half → after it, above/below all → ends.
+    ///
+    /// Decided by the cursor's Y against each row's bounds, NOT by e.OriginalSource:
+    /// during a drag the source often lands on an element not tied to any row (cell
+    /// gaps, presenters, the grid itself), which made the line jump to the last row.
     /// </summary>
     private static (int Insert, double LineY) InsertAt(ItemsControl control, DragEventArgs e)
     {
-        var container = Container(control, e.OriginalSource as DependencyObject);
         var y = e.GetPosition(control).Y;
+        var count = control.Items.Count;
 
-        if (container is not null)
+        var firstIdx = -1;
+        var lastIdx = -1;
+        double firstTop = 0, lastBottom = 0;
+
+        for (var i = 0; i < count; i++)
         {
-            var idx = control.ItemContainerGenerator.IndexFromContainer(container);
-            var top = container.TranslatePoint(new Point(0, 0), control).Y;
-            var h = container.ActualHeight;
-            return y < top + h / 2 ? (idx, top) : (idx + 1, top + h);
+            if (control.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement row) continue;
+
+            var top = row.TranslatePoint(new Point(0, 0), control).Y;
+            var h = row.ActualHeight;
+
+            if (firstIdx < 0) { firstIdx = i; firstTop = top; }
+            lastIdx = i;
+            lastBottom = top + h;
+
+            if (y >= top && y < top + h)
+                return y < top + h / 2 ? (i, top) : (i + 1, top + h);
         }
 
-        // Past the last row / empty area → append at the end, line under the last row.
-        var count = control.Items.Count;
-        var lineY = control.ActualHeight;
-        if (count > 0 &&
-            control.ItemContainerGenerator.ContainerFromIndex(count - 1) is FrameworkElement last)
-            lineY = last.TranslatePoint(new Point(0, last.ActualHeight), control).Y;
-        return (count, lineY);
+        if (firstIdx < 0) return (count, control.ActualHeight); // nothing realized
+        if (y < firstTop) return (firstIdx, firstTop);          // above all rows
+        return (lastIdx + 1, lastBottom);                       // below all rows
     }
 
     /// <summary>The item container (DataGridRow / ListBoxItem) an element sits in, or null.</summary>
