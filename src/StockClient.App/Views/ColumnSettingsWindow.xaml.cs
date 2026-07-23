@@ -12,11 +12,17 @@ namespace StockClient.App.Views;
 
 /// <summary>
 /// Column chooser for the live-quote grid: every column as a flat chip — the
-/// checkbox controls visibility, dragging a chip reorders the columns. Replaces
-/// the old vertical header context menu, which grew past the screen with ~20
-/// columns and couldn't scroll. Changes apply to the grid immediately;
-/// persistence rides the existing QuoteColumns watchers (visibility and
-/// display-index are both observed there).
+/// checkbox (or a click anywhere on the chip) toggles visibility, dragging a chip
+/// reorders the columns. Replaces the old vertical header context menu, which
+/// grew past the screen with ~20 columns and couldn't scroll.
+///
+/// The drag is mouse-capture based, NOT OLE DoDragDrop: OLE's DragOver events
+/// arrive at a throttled, target-dependent rate, which left the ghost freezing
+/// while the cursor moved. With capture, MouseMove arrives at full input rate and
+/// the ghost glides pixel-for-pixel.
+///
+/// Changes apply to the grid immediately; persistence rides the existing
+/// QuoteColumns watchers (visibility and display-index are both observed there).
 /// </summary>
 public partial class ColumnSettingsWindow : Window
 {
@@ -24,25 +30,25 @@ public partial class ColumnSettingsWindow : Window
     private static readonly string[] DefaultVisible =
         { "代码", "名称", "最新价", "涨跌幅", "涨跌", "行业" };
 
-    private const string DragFormat = "QuoteView.ColumnChip";
-
     private readonly DataGrid _grid;
     private readonly ObservableCollection<Chip> _chips = new();
 
-    // Drag state: index pressed on, and whether it turned into a drag (a press
-    // that never moves past the threshold is a click and toggles the chip).
+    // Drag state. A press that never crosses the threshold is a click (toggle);
+    // past it, the chip is picked up: ghost follows the cursor, siblings make way.
     private Point _pressPoint;
+    private Point _grabOffset; // press point within the chip, so the ghost doesn't snap to the cursor tip
     private int _pressIndex = -1;
+    private int _dragIndex = -1;
     private bool _armed;
     private bool _dragging;
+    private GhostAdorner? _ghost;
 
     public ColumnSettingsWindow(DataGrid grid)
     {
         InitializeComponent();
         _grid = grid;
 
-        // String headers only — the gear-button header of the delete column is
-        // an object, and must not show up as a chip.
+        // String headers only — the delete column's header is not a real column name.
         foreach (var column in grid.Columns
                      .Where(c => c.Header is string { Length: > 0 })
                      .OrderBy(c => c.DisplayIndex))
@@ -53,12 +59,7 @@ public partial class ColumnSettingsWindow : Window
         Chips.PreviewMouseLeftButtonDown += OnDown;
         Chips.PreviewMouseMove += OnMove;
         Chips.PreviewMouseLeftButtonUp += OnUp;
-        Chips.DragOver += OnDragOver;
-
-        // Window-wide DragOver keeps the ghost gliding even when the cursor
-        // leaves the chip area (e.g. over the buttons row).
-        AllowDrop = true;
-        DragOver += OnWindowDragOver;
+        Chips.LostMouseCapture += (_, _) => EndDrag();
     }
 
     private void All_Click(object sender, RoutedEventArgs e)
@@ -78,9 +79,6 @@ public partial class ColumnSettingsWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
-    private GhostAdorner? _ghost;
-    private Point _grabOffset; // press point within the chip, so the ghost doesn't jump to the cursor tip
-
     private void OnDown(object sender, MouseButtonEventArgs e)
     {
         _pressPoint = e.GetPosition(Chips);
@@ -96,48 +94,59 @@ public partial class ColumnSettingsWindow : Window
 
     private void OnMove(object sender, MouseEventArgs e)
     {
-        if (!_armed || _dragging || e.LeftButton != MouseButtonState.Pressed) return;
+        if (!_armed || e.LeftButton != MouseButtonState.Pressed) return;
 
         var p = e.GetPosition(Chips);
-        if (Math.Abs(p.X - _pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(p.Y - _pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
-            return;
 
-        _dragging = true;
-        ShowGhost(_pressIndex);
-        DragDrop.DoDragDrop(Chips, new DataObject(DragFormat, _pressIndex), DragDropEffects.Move);
+        if (!_dragging)
+        {
+            if (Math.Abs(p.X - _pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(p.Y - _pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
 
-        // Drag ended (drop or cancel): commit the live order, drop the ghost.
-        RemoveGhost();
-        ApplyOrder();
+            _dragging = true;
+            _dragIndex = _pressIndex;
+            _chips[_dragIndex].Dragging = true;
+            ShowGhost(_dragIndex);
+            Chips.CaptureMouse(); // moves keep coming even outside the chip area
+        }
+
+        _ghost?.SetPosition(new Point(p.X - _grabOffset.X, p.Y - _grabOffset.Y));
+
+        var over = IndexAt(p);
+        if (over >= 0 && over != _dragIndex)
+        {
+            _chips.Move(_dragIndex, over);
+            _dragIndex = over;
+            DimDragged();
+        }
+    }
+
+    private void OnUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_dragging)
+        {
+            Chips.ReleaseMouseCapture(); // EndDrag runs via LostMouseCapture
+        }
+        else if (_armed && _pressIndex >= 0 && IndexAt(e.GetPosition(Chips)) == _pressIndex)
+        {
+            // A click (no drag) anywhere on the chip toggles it — the label text
+            // behaves like a normal checkbox label.
+            _chips[_pressIndex].Visible = !_chips[_pressIndex].Visible;
+        }
+
         _armed = false;
     }
 
-    /// <summary>Live reorder: chips make way while the ghost follows the cursor.</summary>
-    private void OnDragOver(object sender, DragEventArgs e)
+    /// <summary>Commits the drag; also runs when capture is lost for any reason.</summary>
+    private void EndDrag()
     {
-        if (!e.Data.GetDataPresent(DragFormat)) return;
-        e.Effects = DragDropEffects.Move;
-        e.Handled = true;
+        if (!_dragging) return;
 
-        var from = CurrentDragIndex();
-        var over = IndexAt(e.GetPosition(Chips));
-        // Once moved, the cursor sits over the dragged chip itself (from == over),
-        // which is what keeps this from oscillating.
-        if (from >= 0 && over >= 0 && over != from) _chips.Move(from, over);
-
-        DimDragged();
-    }
-
-    /// <summary>The ghost follows the cursor anywhere in the window.</summary>
-    private void OnWindowDragOver(object sender, DragEventArgs e)
-    {
-        if (_ghost is null || !e.Data.GetDataPresent(DragFormat)) return;
-
-        var p = e.GetPosition(Chips);
-        _ghost.SetPosition(new Point(p.X - _grabOffset.X, p.Y - _grabOffset.Y));
-        e.Effects = DragDropEffects.Move;
-        e.Handled = true;
+        _dragging = false;
+        _dragIndex = -1;
+        RemoveGhost();
+        ApplyOrder();
     }
 
     /// <summary>
@@ -180,33 +189,6 @@ public partial class ColumnSettingsWindow : Window
         for (var i = 0; i < _chips.Count; i++)
             if (Container(i) is { } c)
                 c.Opacity = _chips[i].Dragging ? 0.3 : 1.0;
-    }
-
-    private void OnUp(object sender, MouseButtonEventArgs e)
-    {
-        // A click (no drag) anywhere on the chip toggles it — so the label text
-        // behaves like a normal checkbox label.
-        if (_armed && !_dragging && _pressIndex >= 0 &&
-            IndexAt(e.GetPosition(Chips)) == _pressIndex)
-            _chips[_pressIndex].Visible = !_chips[_pressIndex].Visible;
-
-        _armed = false;
-    }
-
-    /// <summary>Where the dragged chip currently sits (it moves during the drag).</summary>
-    private int CurrentDragIndex()
-    {
-        for (var i = 0; i < _chips.Count; i++)
-            if (_chips[i].Dragging) return i;
-
-        // First DragOver: mark the pressed chip as the one in flight.
-        if (_pressIndex >= 0 && _pressIndex < _chips.Count)
-        {
-            _chips[_pressIndex].Dragging = true;
-            return _pressIndex;
-        }
-
-        return -1;
     }
 
     /// <summary>Pushes the chip order onto the columns' DisplayIndex.</summary>
@@ -259,7 +241,7 @@ public partial class ColumnSettingsWindow : Window
         public Chip(DataGridColumn column)
         {
             Column = column;
-            Header = column.Header?.ToString() ?? "";
+            Header = column.Header as string ?? "";
         }
 
         public DataGridColumn Column { get; }

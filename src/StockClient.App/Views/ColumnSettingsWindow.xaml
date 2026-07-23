@@ -11,7 +11,7 @@
                Foreground="#8B93A3" FontSize="11" Margin="0,0,0,10" />
 
     <!-- ItemsControl, not ListBox: no selection visuals to fight with the chips. -->
-    <ItemsControl x:Name="Chips" AllowDrop="True">
+    <ItemsControl x:Name="Chips" Background="Transparent">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
       </ItemsControl.ItemsPanel>

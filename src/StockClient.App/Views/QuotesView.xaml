@@ -184,6 +184,7 @@
       </Border>
 
       <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+        <Grid>
         <DataGrid x:Name="QuoteGrid" ItemsSource="{Binding Quotes}"
                   Sorting="QuoteGrid_Sorting"
                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
@@ -360,15 +361,7 @@
                 </Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
-            <!-- Pinned last; its header carries the column-settings gear so the
-                 button sits at the end of the header row itself. Non-string
-                 header = excluded from persistence and the settings chips. -->
-            <DataGridTemplateColumn Width="52" MinWidth="52">
-              <DataGridTemplateColumn.Header>
-                <ui:Button Height="24" Width="30" Padding="0"
-                           Icon="{ui:SymbolIcon Settings24}" Click="ColumnSettings_Click"
-                           ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
-              </DataGridTemplateColumn.Header>
+            <DataGridTemplateColumn Header="" Width="52" MinWidth="52">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate>
                   <ui:Button Height="24" Width="26" Padding="0" Icon="{ui:SymbolIcon Delete24}"
@@ -378,6 +371,14 @@
             </DataGridTemplateColumn>
           </DataGrid.Columns>
         </DataGrid>
+        <!-- Floats over the right end of the header row: unlike a real header
+             cell it stays glued to the viewport edge however the window and
+             column widths change. -->
+        <ui:Button Height="24" Width="30" Padding="0"
+                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,6,0"
+                   Icon="{ui:SymbolIcon Settings24}" Click="ColumnSettings_Click"
+                   ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
+        </Grid>
       </Border>
 
       <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,8,0,0"
