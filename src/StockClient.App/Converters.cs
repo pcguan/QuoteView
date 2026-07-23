@@ -111,6 +111,44 @@ public sealed class SignedConverter : IValueConverter
         throw new NotSupportedException();
 }
 
+/// <summary>
+/// Formats the structured quote numerics. Null (market doesn't report it) and 0
+/// both render "--". ConverterParameter picks the shape:
+///   scale — 进位显示: 3110123 → 311.01万, 1.66e12 → 1.66万亿 (grid columns;
+///           the detail badges below the grid keep the raw values)
+///   pct   — 0.85 → 0.85% (already a percentage, not a fraction)
+///   num   — plain 0.00 (量比 / 市盈 / 市净)
+///   raw   — thousands-grouped raw value, for cell tooltips
+/// </summary>
+public sealed class NumConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not double v || v == 0) return "--";
+
+        return parameter as string switch
+        {
+            "pct" => v.ToString("0.00", CultureInfo.InvariantCulture) + "%",
+            "num" => v.ToString("0.00", CultureInfo.InvariantCulture),
+            "raw" => v.ToString("#,##0.##", CultureInfo.InvariantCulture),
+            _ => Scale(v),
+        };
+    }
+
+    private static string Scale(double v)
+    {
+        var sign = v < 0 ? "-" : "";
+        var a = Math.Abs(v);
+        return a >= 1e12 ? sign + (a / 1e12).ToString("0.00", CultureInfo.InvariantCulture) + "万亿"
+            : a >= 1e8 ? sign + (a / 1e8).ToString("0.00", CultureInfo.InvariantCulture) + "亿"
+            : a >= 1e4 ? sign + (a / 1e4).ToString("0.00", CultureInfo.InvariantCulture) + "万"
+            : v.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    public object ConvertBack(object value, Type t, object p, CultureInfo c) =>
+        throw new NotSupportedException();
+}
+
 /// <summary>Disables input while the lists are still loading.</summary>
 public sealed class NotConverter : IValueConverter
 {

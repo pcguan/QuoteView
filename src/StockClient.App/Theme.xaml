@@ -18,6 +18,7 @@
   <app:PriceConverter x:Key="Price" />
   <app:PctConverter x:Key="Pct" />
   <app:SignedConverter x:Key="Signed" />
+  <app:NumConverter x:Key="Num" />
 
   <SolidColorBrush x:Key="Muted" Color="#8B93A3" />
   <SolidColorBrush x:Key="Faint" Color="#5F6672" />

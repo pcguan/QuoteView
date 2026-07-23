@@ -78,6 +78,27 @@ public sealed class QuoteRow : ObservableObject
     public bool IsMissing => _quote.IsMissing;
     public IReadOnlyList<QuoteField> Extras => _quote.Extras;
 
+    // Per-market extras as structured numbers (null = not reported by the market),
+    // for the optional grid columns. The grid shows these scaled (311.01万); the
+    // detail badges below keep the raw values.
+    public double? Volume => _quote.Volume;
+    public double? Amount => _quote.Amount;
+    public double? TurnoverRate => _quote.TurnoverRate;
+    public double? VolumeRatio => _quote.VolumeRatio;
+    public double? Amplitude => _quote.Amplitude;
+    public double? AvgPrice => _quote.AvgPrice;
+    public double? PeTtm => _quote.PeTtm;
+    public double? Pb => _quote.Pb;
+    public double? FloatCap => _quote.FloatCap;
+    public double? TotalCap => _quote.TotalCap;
+    public double? LimitUp => _quote.LimitUp;
+    public double? LimitDown => _quote.LimitDown;
+    public double? Week52High => _quote.Week52High;
+    public double? Week52Low => _quote.Week52Low;
+    public double? DividendYield => _quote.DividendYield;
+    public double? OuterVolume => _quote.OuterVolume;
+    public double? InnerVolume => _quote.InnerVolume;
+
     /// <summary>1 up, -1 down, 0 none — drives the row flash after a price move.</summary>
     public int Flash
     {
@@ -90,15 +111,9 @@ public sealed class QuoteRow : ObservableObject
         var previous = _quote.Now;
         Quote = next;
 
-        foreach (var name in new[]
-                 {
-                     nameof(Name), nameof(Now), nameof(Yesterday), nameof(Open),
-                     nameof(High), nameof(Low), nameof(Change), nameof(Percent),
-                     nameof(Time), nameof(IsMissing), nameof(Extras),
-                 })
-        {
-            OnPropertyChanged(name);
-        }
+        // Empty string = "all properties changed" to WPF. With ~30 passthrough
+        // props now, a hand-kept name list is a bug farm.
+        OnPropertyChanged(string.Empty);
 
         if (!next.IsMissing && previous > 0 && Math.Abs(next.Now - previous) > 1e-9)
             Flash = next.Now > previous ? 1 : -1;

@@ -3,6 +3,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              PreviewMouseDown="Root_PreviewMouseDown">
+  <UserControl.Resources>
+    <!-- Shared cell style for the numeric extras columns. -->
+    <Style x:Key="NumCell" TargetType="TextBlock">
+      <Setter Property="HorizontalAlignment" Value="Right" />
+      <Setter Property="FontFamily" Value="Consolas" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+    </Style>
+  </UserControl.Resources>
   <Grid Margin="16,4,16,8">
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="210" />
@@ -219,6 +228,30 @@
                   <Setter Property="Foreground" Value="{Binding Percent, Converter={StaticResource SignToBrush}}" /></Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
+            <DataGridTextColumn Header="成交量" Binding="{Binding Volume, Converter={StaticResource Num}}" Width="92" MinWidth="72">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="ToolTip" Value="{Binding Volume, Converter={StaticResource Num}, ConverterParameter=raw}" />
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="成交额" Binding="{Binding Amount, Converter={StaticResource Num}}" Width="92" MinWidth="72">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="ToolTip" Value="{Binding Amount, Converter={StaticResource Num}, ConverterParameter=raw}" />
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="总市值" Binding="{Binding TotalCap, Converter={StaticResource Num}}" Width="92" MinWidth="72">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="ToolTip" Value="{Binding TotalCap, Converter={StaticResource Num}, ConverterParameter=raw}" />
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
             <DataGridTextColumn Header="今开" Binding="{Binding Open, Converter={StaticResource Price}}" Width="90" MinWidth="76">
               <DataGridTextColumn.ElementStyle>
                 <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />
@@ -245,6 +278,49 @@
                 <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Faint}" />
                   <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="FontFamily" Value="Consolas" />
                   <Setter Property="VerticalAlignment" Value="Center" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <!-- Optional numeric columns, hidden by default; enable via the header
+                 right-click menu. Grid shows scaled values (311.01万); the detail
+                 badges below keep the raw ones. -->
+            <DataGridTextColumn Header="流通市值" Binding="{Binding FloatCap, Converter={StaticResource Num}}" Width="92" MinWidth="72" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="ToolTip" Value="{Binding FloatCap, Converter={StaticResource Num}, ConverterParameter=raw}" />
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="换手率" Binding="{Binding TurnoverRate, Converter={StaticResource Num}, ConverterParameter=pct}" Width="80" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="量比" Binding="{Binding VolumeRatio, Converter={StaticResource Num}, ConverterParameter=num}" Width="72" MinWidth="60" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="振幅" Binding="{Binding Amplitude, Converter={StaticResource Num}, ConverterParameter=pct}" Width="76" MinWidth="60" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="均价" Binding="{Binding AvgPrice, Converter={StaticResource Price}}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="市盈TTM" Binding="{Binding PeTtm, Converter={StaticResource Num}, ConverterParameter=num}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="市净率" Binding="{Binding Pb, Converter={StaticResource Num}, ConverterParameter=num}" Width="76" MinWidth="60" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="涨停价" Binding="{Binding LimitUp, Converter={StaticResource Price}}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="跌停价" Binding="{Binding LimitDown, Converter={StaticResource Price}}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="52周最高" Binding="{Binding Week52High, Converter={StaticResource Price}}" Width="90" MinWidth="70" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="52周最低" Binding="{Binding Week52Low, Converter={StaticResource Price}}" Width="90" MinWidth="70" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="股息率" Binding="{Binding DividendYield, Converter={StaticResource Num}, ConverterParameter=pct}" Width="76" MinWidth="60" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="外盘" Binding="{Binding OuterVolume, Converter={StaticResource Num}}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="内盘" Binding="{Binding InnerVolume, Converter={StaticResource Num}}" Width="84" MinWidth="64" Visibility="Collapsed"
+                                ElementStyle="{StaticResource NumCell}" />
+            <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="130" MinWidth="90" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Faint}" />
+                  <Setter Property="FontFamily" Value="Consolas" /><Setter Property="VerticalAlignment" Value="Center" /></Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
             <DataGridTextColumn Header="行业" Binding="{Binding Industry}" Width="110" MinWidth="70">

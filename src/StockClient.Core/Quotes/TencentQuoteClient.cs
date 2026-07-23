@@ -82,6 +82,14 @@ public sealed class TencentQuoteClient
 
         CodeMapper.TryParse(code, out var market, out _);
 
+        // Structured numerics with per-market unit normalization (all verified
+        // against live data): A-share 成交额[37] is in 万, HK/US [37] is raw
+        // currency; caps [44]/[45] are in 亿 everywhere (incl. KR's [45], 亿 KRW).
+        // [46]-[49] diverge: PB/涨停/跌停/量比 for A-shares, but English name and
+        // the 52-week range for HK/US/KR.
+        var isA = market is "SH" or "SZ" or "BJ";
+        var isHkUs = market is "HK" or "US";
+
         return new Quote
         {
             Code = code.ToUpperInvariant(),
@@ -94,6 +102,25 @@ public sealed class TencentQuoteClient
             High = Num(p, 33),
             Low = Num(p, 34),
             Time = At(p, 30),
+
+            Volume = Opt(p, 6),
+            Amount = isA ? Opt(p, 37) * 1e4 : isHkUs ? Opt(p, 37) : null,
+            TurnoverRate = isA || market == "US" ? Opt(p, 38) : null,
+            VolumeRatio = isA ? Opt(p, 49) : null,
+            Amplitude = isA || isHkUs ? Opt(p, 43) : null,
+            AvgPrice = isA ? Opt(p, 51) : null,
+            PeTtm = isA || isHkUs ? Opt(p, 39) : null,
+            Pb = isA ? Opt(p, 46) : null,
+            FloatCap = isA || isHkUs ? Opt(p, 44) * 1e8 : null,
+            TotalCap = Opt(p, 45) * 1e8,
+            LimitUp = isA ? Opt(p, 47) : null,
+            LimitDown = isA ? Opt(p, 48) : null,
+            Week52High = isA ? null : Opt(p, 48),
+            Week52Low = isA ? null : Opt(p, 49),
+            DividendYield = market == "HK" ? Opt(p, 59) : null,
+            OuterVolume = isA ? Opt(p, 7) : null,
+            InnerVolume = isA ? Opt(p, 8) : null,
+
             Extras = Extras(market, p),
         };
     }
@@ -182,6 +209,12 @@ public sealed class TencentQuoteClient
         double.TryParse(At(p, i), NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
             ? v
             : 0;
+
+    /// <summary>Like Num but null when absent/unparsable — "not reported" ≠ 0.</summary>
+    private static double? Opt(string[] p, int i) =>
+        double.TryParse(At(p, i), NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : null;
 }
 
 /// <summary>

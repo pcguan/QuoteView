@@ -32,6 +32,62 @@ public sealed record Quote
     /// <summary>Provider timestamp; the format differs per market.</summary>
     public string Time { get; init; } = "";
 
+    // Structured numerics for grid columns, normalized per market at parse time
+    // (amounts to the raw currency unit, caps from 亿 to raw). Null = the market
+    // doesn't report it — distinct from a genuine 0. The raw per-market strings
+    // stay in Extras for the detail badges (真实值).
+
+    /// <summary>成交量, native units: 手 for A-shares, 股 elsewhere.</summary>
+    public double? Volume { get; init; }
+
+    /// <summary>成交额 in the raw currency (元/HKD/USD). Null for KR.</summary>
+    public double? Amount { get; init; }
+
+    /// <summary>换手率 %. A-shares and US.</summary>
+    public double? TurnoverRate { get; init; }
+
+    /// <summary>量比. A-shares only.</summary>
+    public double? VolumeRatio { get; init; }
+
+    /// <summary>振幅 %.</summary>
+    public double? Amplitude { get; init; }
+
+    /// <summary>均价. A-shares only.</summary>
+    public double? AvgPrice { get; init; }
+
+    /// <summary>市盈率 TTM.</summary>
+    public double? PeTtm { get; init; }
+
+    /// <summary>市净率. A-shares only — [46] is the English name for HK/US.</summary>
+    public double? Pb { get; init; }
+
+    /// <summary>流通市值, raw currency (from 亿 × 1e8).</summary>
+    public double? FloatCap { get; init; }
+
+    /// <summary>总市值, raw currency (from 亿 × 1e8).</summary>
+    public double? TotalCap { get; init; }
+
+    /// <summary>涨停价. A-shares only — [47]/[48] mean the 52-week range elsewhere.</summary>
+    public double? LimitUp { get; init; }
+
+    /// <summary>跌停价. A-shares only.</summary>
+    public double? LimitDown { get; init; }
+
+    /// <summary>52周最高. HK/US/KR.</summary>
+    public double? Week52High { get; init; }
+
+    /// <summary>52周最低. HK/US/KR.</summary>
+    public double? Week52Low { get; init; }
+
+    /// <summary>股息率 %. HK only.</summary>
+    public double? DividendYield { get; init; }
+
+    /// <summary>外盘 (手). A-shares only.</summary>
+    public double? OuterVolume { get; init; }
+
+    /// <summary>内盘 (手). A-shares only.</summary>
+    public double? InnerVolume { get; init; }
+
     /// <summary>Market-specific fields, only those confirmed for this market.</summary>
     public IReadOnlyList<QuoteField> Extras { get; init; } = Array.Empty<QuoteField>();
 
