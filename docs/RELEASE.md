@@ -72,7 +72,8 @@ ssh corp-win 'powershell -NoProfile -Command "Invoke-RestMethod -Uri \"https://u
 ```
 - GitHub 资产名固定 **`QuoteView.exe`**（客户端按此名找）；NAS 上是 `QuoteView-<ver>.exe`（manifest 给全 URL）。
 - 别忘了步骤 4 把 csproj/CHANGELOG 的改动 commit+push。
-- 部署新 exe 到桌面见 [ARCHITECTURE.md](ARCHITECTURE.md) 的部署工作流。
+- **不再手动部署到桌面 / 不 kill 运行中的 QuoteView 进程**——发布到两个源后，运行中的 app 走
+  **线上自更新**（国内源优先，「检查更新」或下次启动）拉到新版。这也顺带每次都验证了自更新链路。
 
 ---
 
