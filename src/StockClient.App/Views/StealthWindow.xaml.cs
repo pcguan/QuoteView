@@ -554,8 +554,36 @@ public partial class StealthWindow : Window
         StealthField.Low => Price(r.Low),
         StealthField.Yesterday => Price(r.Yesterday),
         StealthField.Time => r.Time,
+        StealthField.Volume => Scale(r.Volume),
+        StealthField.Amount => Scale(r.Amount),
+        StealthField.TotalCap => Scale(r.TotalCap),
+        StealthField.FloatCap => Scale(r.FloatCap),
+        StealthField.TurnoverRate => Pct(r.TurnoverRate),
+        StealthField.VolumeRatio => Plain(r.VolumeRatio),
+        StealthField.Amplitude => Pct(r.Amplitude),
+        StealthField.AvgPrice => r.AvgPrice is { } a ? Price(a) : "",
+        StealthField.PeTtm => Plain(r.PeTtm),
+        StealthField.Pb => Plain(r.Pb),
         _ => "",
     };
+
+    /// <summary>进位显示 (311.01万 / 1.66万亿); empty when the market didn't report it.</summary>
+    private static string Scale(double? value)
+    {
+        if (value is not { } v || v == 0) return "";
+        var sign = v < 0 ? "-" : "";
+        var a = Math.Abs(v);
+        return a >= 1e12 ? sign + (a / 1e12).ToString("0.00", CultureInfo.InvariantCulture) + "万亿"
+            : a >= 1e8 ? sign + (a / 1e8).ToString("0.00", CultureInfo.InvariantCulture) + "亿"
+            : a >= 1e4 ? sign + (a / 1e4).ToString("0.00", CultureInfo.InvariantCulture) + "万"
+            : v.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private static string Pct(double? v) =>
+        v is { } x && x != 0 ? x.ToString("0.00", CultureInfo.InvariantCulture) + "%" : "";
+
+    private static string Plain(double? v) =>
+        v is { } x && x != 0 ? x.ToString("0.00", CultureInfo.InvariantCulture) : "";
 
     /// <summary>Korean prices run to six figures; cheap ETFs need three decimals.</summary>
     private static string Price(double v) =>
@@ -653,6 +681,16 @@ public partial class StealthWindow : Window
         StealthField.Low => "最低",
         StealthField.Yesterday => "昨收",
         StealthField.Time => "时间",
+        StealthField.Volume => "成交量",
+        StealthField.Amount => "成交额",
+        StealthField.TotalCap => "总市值",
+        StealthField.FloatCap => "流通市值",
+        StealthField.TurnoverRate => "换手率",
+        StealthField.VolumeRatio => "量比",
+        StealthField.Amplitude => "振幅",
+        StealthField.AvgPrice => "均价",
+        StealthField.PeTtm => "市盈TTM",
+        StealthField.Pb => "市净率",
         _ => f.ToString(),
     };
 

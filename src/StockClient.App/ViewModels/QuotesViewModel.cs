@@ -99,6 +99,30 @@ public sealed class QuoteRow : ObservableObject
     public double? OuterVolume => _quote.OuterVolume;
     public double? InnerVolume => _quote.InnerVolume;
 
+    // From the secondary EastMoney poll (A-shares only), null until it runs.
+    private QuoteExtra? _extra;
+    public double? Speed => _extra?.Speed;
+    public double? MainInflow => _extra?.MainInflow;
+    public double? SuperInflow => _extra?.SuperInflow;
+    public double? BigInflow => _extra?.BigInflow;
+    public double? MidInflow => _extra?.MidInflow;
+    public double? SmallInflow => _extra?.SmallInflow;
+    public double? MainInflowPct => _extra?.MainInflowPct;
+
+    /// <summary>Merges the EastMoney fund-flow extras. Distinct source from Update().</summary>
+    public void UpdateExtra(QuoteExtra extra)
+    {
+        _extra = extra;
+        foreach (var name in new[]
+                 {
+                     nameof(Speed), nameof(MainInflow), nameof(SuperInflow), nameof(BigInflow),
+                     nameof(MidInflow), nameof(SmallInflow), nameof(MainInflowPct),
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     /// <summary>1 up, -1 down, 0 none — drives the row flash after a price move.</summary>
     public int Flash
     {
@@ -199,8 +223,12 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly GroupStore _store;
     private readonly GroupConfig _config;
     private readonly QuotePoller _poller;
+    private readonly EastMoneyExtraPoller _extraPoller;
     private readonly ContractRepository _contracts;
     private readonly DispatcherTimer _flashTimer;
+
+    /// <summary>Whether any fund-flow/涨速 column is on, so the secondary poll should run.</summary>
+    private bool _fundFlowActive;
 
     private readonly Dictionary<string, QuoteRow> _rows = new(StringComparer.OrdinalIgnoreCase);
 
@@ -224,6 +252,9 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _poller = new QuotePoller(new TencentQuoteClient(_http));
         _poller.Tick += OnTick;
         _poller.Failed += OnFailed;
+
+        _extraPoller = new EastMoneyExtraPoller(new EastMoneyQuoteClient(_http));
+        _extraPoller.Tick += OnExtraTick;
 
         Groups = new ObservableCollection<GroupRow>(_config.Groups.Select(g => new GroupRow(g)));
 
@@ -560,6 +591,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         {
             Status = "请先创建分组";
             _poller.SetTarget(null, null);
+            _extraPoller.SetTarget(Array.Empty<(string, string)>());
             return;
         }
 
@@ -575,7 +607,51 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _stealthIndex = 0;
         StealthTick?.Invoke(StealthRows());
         _poller.SetTarget(_activeGroup.Id, _activeGroup.Model.Codes);
+        RefreshExtraPolling();
     }
+
+    /// <summary>
+    /// Turns the secondary EastMoney poll on/off. Called by the view when a
+    /// fund-flow/涨速 column is shown or hidden — nobody looking at those columns
+    /// means no extra request goes out at all.
+    /// </summary>
+    public void SetFundFlowActive(bool active)
+    {
+        if (_fundFlowActive == active) return;
+        _fundFlowActive = active;
+        RefreshExtraPolling();
+    }
+
+    /// <summary>
+    /// Points the secondary poll at the active group's A-shares — but only while a
+    /// fund-flow column is on. Non-A-share codes are excluded (those fields don't
+    /// exist for them), and an all-non-A group polls nothing.
+    /// </summary>
+    private void RefreshExtraPolling()
+    {
+        if (!_fundFlowActive || _activeGroup is null)
+        {
+            _extraPoller.SetTarget(Array.Empty<(string, string)>());
+            return;
+        }
+
+        var targets = _activeGroup.Model.Codes
+            .Where(CodeMapper.IsValid)
+            .Select(c => c.ToUpperInvariant())
+            .Select(code => (code, contract: _contracts.Find(code)))
+            .Where(x => x.contract is { Market: Market.SH or Market.SZ or Market.BJ })
+            .Select(x => (x.code, x.contract!.EastMoneySecId))
+            .ToArray();
+
+        _extraPoller.SetTarget(targets);
+    }
+
+    private void OnExtraTick(IReadOnlyDictionary<string, QuoteExtra> extras) =>
+        _dispatcher.InvokeAsync(() =>
+        {
+            foreach (var (code, extra) in extras)
+                if (_rows.TryGetValue(code, out var row)) row.UpdateExtra(extra);
+        });
 
     /// <summary>
     /// Resolves a row's 行业/地区/概念 from the shared contract list. A no-op while
@@ -619,9 +695,17 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
     private void OnFailed(string message) => _dispatcher.InvokeAsync(() => Error = message);
 
-    public void Pause() => _poller.Stop();
+    public void Pause()
+    {
+        _poller.Stop();
+        _extraPoller.Stop();
+    }
 
-    public void Resume() => _poller.Resume();
+    public void Resume()
+    {
+        _poller.Resume();
+        _extraPoller.Resume();
+    }
 
     private void Save() => _store.Save(_config);
 
@@ -630,6 +714,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _flashTimer.Stop();
         Save();
         await _poller.DisposeAsync();
+        await _extraPoller.DisposeAsync();
         _http.Dispose();
     }
 }

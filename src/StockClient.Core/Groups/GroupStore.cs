@@ -37,6 +37,19 @@ public enum StealthField
     Low,
     Yesterday,
     Time,
+
+    // Appended, never reordered: StealthFieldConfig.Field serializes by ordinal,
+    // so inserting mid-list would shift every saved config. All from the 1s quote.
+    Volume,
+    Amount,
+    TotalCap,
+    FloatCap,
+    TurnoverRate,
+    VolumeRatio,
+    Amplitude,
+    AvgPrice,
+    PeTtm,
+    Pb,
 }
 
 public static class StealthFields
@@ -123,6 +136,16 @@ public sealed class StealthConfig
             new() { Field = StealthField.Low, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.Yesterday, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.Time, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Volume, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Amount, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.TotalCap, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.FloatCap, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.TurnoverRate, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.VolumeRatio, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Amplitude, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.AvgPrice, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.PeTtm, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Pb, Visible = false, Color = "#FFFFFF" },
         },
     };
 

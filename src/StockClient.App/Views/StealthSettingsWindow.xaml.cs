@@ -25,6 +25,16 @@ public partial class StealthSettingsWindow : Window
         (StealthField.Low, "最低"),
         (StealthField.Yesterday, "昨收"),
         (StealthField.Time, "时间"),
+        (StealthField.Volume, "成交量"),
+        (StealthField.Amount, "成交额"),
+        (StealthField.TotalCap, "总市值"),
+        (StealthField.FloatCap, "流通市值"),
+        (StealthField.TurnoverRate, "换手率"),
+        (StealthField.VolumeRatio, "量比"),
+        (StealthField.Amplitude, "振幅"),
+        (StealthField.AvgPrice, "均价"),
+        (StealthField.PeTtm, "市盈TTM"),
+        (StealthField.Pb, "市净率"),
     };
 
     private static readonly (string Name, string Hex)[] Palette =

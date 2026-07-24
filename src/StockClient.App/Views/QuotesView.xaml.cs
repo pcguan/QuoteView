@@ -276,6 +276,20 @@ public partial class QuotesView : UserControl
 
         ColumnMenu.Attach(grid, menu);
         if (Vm is { } vm) QuoteColumns.Attach(grid, vm.QuoteColumns, vm.SaveConfig);
+
+        // On-demand: the EastMoney fund-flow poll runs only while one of its columns
+        // is actually visible — no one looking, no extra request.
+        var ffHeaders = new HashSet<string> { "涨速", "主力净流入", "主力占比", "超大单", "大单", "中单", "小单" };
+        void UpdateFundFlow() =>
+            Vm?.SetFundFlowActive(grid.Columns.Any(c =>
+                ffHeaders.Contains(c.Header as string ?? "") && c.Visibility == Visibility.Visible));
+
+        foreach (var col in grid.Columns.Where(c => ffHeaders.Contains(c.Header as string ?? "")))
+            System.ComponentModel.DependencyPropertyDescriptor
+                .FromProperty(DataGridColumn.VisibilityProperty, typeof(DataGridColumn))
+                ?.AddValueChanged(col, (_, _) => UpdateFundFlow());
+
+        UpdateFundFlow(); // reflect the restored saved visibility
     }
 
     private ColumnSettingsWindow? _columnSettings;

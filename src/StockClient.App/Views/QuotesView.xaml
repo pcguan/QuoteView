@@ -324,6 +324,53 @@
                   <Setter Property="FontFamily" Value="Consolas" /><Setter Property="VerticalAlignment" Value="Center" /></Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
+            <!-- A-share 涨速 / 主力资金 (东财第二路轮询)。默认隐藏；勾选任一列才启动该轮询。 -->
+            <DataGridTextColumn Header="涨速" Binding="{Binding Speed, Converter={StaticResource Num}, ConverterParameter=pct}" Width="76" MinWidth="60" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Speed, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="主力净流入" Binding="{Binding MainInflow, Converter={StaticResource Num}}" Width="98" MinWidth="80" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding MainInflow, Converter={StaticResource SignToBrush}}" />
+                  <Setter Property="ToolTip" Value="{Binding MainInflow, Converter={StaticResource Num}, ConverterParameter=raw}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="主力占比" Binding="{Binding MainInflowPct, Converter={StaticResource Num}, ConverterParameter=pct}" Width="82" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding MainInflowPct, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="超大单" Binding="{Binding SuperInflow, Converter={StaticResource Num}}" Width="90" MinWidth="72" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding SuperInflow, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="大单" Binding="{Binding BigInflow, Converter={StaticResource Num}}" Width="90" MinWidth="72" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding BigInflow, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="中单" Binding="{Binding MidInflow, Converter={StaticResource Num}}" Width="90" MinWidth="72" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding MidInflow, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="小单" Binding="{Binding SmallInflow, Converter={StaticResource Num}}" Width="90" MinWidth="72" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}"><Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding SmallInflow, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
             <DataGridTextColumn Header="行业" Binding="{Binding Industry}" Width="110" MinWidth="70">
               <DataGridTextColumn.ElementStyle>
                 <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}" />

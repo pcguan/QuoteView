@@ -39,7 +39,10 @@
               Foreground="#EDF1F7" Margin="0,0,0,18" />
 
     <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,10" />
-    <StackPanel x:Name="FieldsPanel" />
+    <!-- Scrolls: with ~20 fields the list would otherwise run off the screen. -->
+    <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+      <StackPanel x:Name="FieldsPanel" Margin="0,0,6,0" />
+    </ScrollViewer>
 
     <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                Text="改动即时生效，自动保存。至少保留一个字段。" />
