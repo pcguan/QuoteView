@@ -50,16 +50,30 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 - **分时缩略图**：单合约、内存单日缓存、过期（>15s）重拉，线尾用 1s 现价平滑；开关缩略图时
   把该块高度吸收进窗口 `Top`（向上生长），行情行位置不动。
 
+## 实时行情：两路轮询
+
+主行情是**腾讯 `qt.gtimg.cn` 每 1 秒一个批量请求**（全组合约一把拉，`QuotePoller`）——价格/涨跌/量额/市值/换手/市盈市净等都在这一条里，六市场通吃。
+
+**涨速 / 主力资金**（f22/f62/f66/f72/f78/f84/f184）腾讯没有,只东财有、且只 A 股。所以旁挂第二路
+`EastMoneyExtraPoller`（东财 `ulist.np`，5 秒一个批量请求）,严格隔离:
+
+- **按需启动**:仅当"涨速/主力净流入/…"这几列**有一列可见**时才轮询（视图监听列 Visibility → `SetFundFlowActive`）,没人看就一个请求都不发;
+- 只请求活动分组里的 **A 股**,secid 用 `f13.f12` 消歧 SZ 与 BJ（两者 f13 都是 0）;
+- **失败静默 + 自适应退避**（5s→翻倍到 30s,成功即恢复）,东财挂了只让这几列变旧,腾讯主链路零影响;
+- 只写涨速/资金流字段,绝不碰价格,避免和 1s 价格更新互相覆盖。
+
 ## 数据源与规模
 
 | 用途 | 来源 |
 | --- | --- |
 | 合约列表 | 东财 `push2delay.eastmoney.com/api/qt/clist/get` |
 | 板块目录 | 东财 `clist` `m:90+t:1/2/3`（地区/行业/概念） |
-| 实时行情 | 腾讯 `qt.gtimg.cn`，`kr` 前缀支持韩股 |
+| 实时行情（主） | 腾讯 `qt.gtimg.cn`，1s 批量，`kr` 前缀支持韩股 |
+| 涨速/主力资金（次） | 东财 `push2.../ulist.np/get`，5s 批量，A股、按需启动 |
 | K 线（主） | 东财 `push2his.eastmoney.com/api/qt/stock/kline/get`，六市场全历史 |
 | K 线（兜底） | 腾讯 `web.ifzq.gtimg.cn/appstock/app/fqkline/get`，A股/港股全史、BJ/US/KR 仅当日 |
 | 分时 | 东财 `push2his.../trends2/get`，六市场当日 |
+| 版本检查/更新 | 国内 NAS `nas.pcguan.cn/quoteview/`（主）+ GitHub Releases（兜底） |
 
 实测各市场规模与拉取成本（顺序分页，无并发）：
 
@@ -73,6 +87,28 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 | 韩股 | `m:177` | 2,866 | 29 |
 
 **合计约 28,600 条 / 约 289 请求 / 全量约 4 秒 / 磁盘约 2 MB。**
+
+## 列设置（实时行情）
+
+腾讯每秒行情携带的字段很多（价格/量额/市值/换手/市盈市净/振幅/均价…）+ 板块（行业/地区/概念）+ A股涨速/资金流,
+默认只显示几列,其余可在**列设置窗口**（`ColumnSettingsWindow`,表头行右端齿轮按钮 / 表头右键）里配置:
+
+- 全部列平铺成 chips,勾选显隐、**拖动排序**,带 全选/全清/默认 快捷。
+- 拖拽是**鼠标捕获式**（`CaptureMouse`+`MouseMove`）,不是 OLE `DoDragDrop`——后者事件节流,浮影会卡;
+  捕获式全速率跟手,浮影是拖起瞬间的**位图快照**（实时引用会因让位重建控件而变白）。
+- 大数**进位显示**（`NumConverter`:3110123→311.01万,市值到亿/万亿）,悬停看真实值;下方选中行徽章保持真实值。
+- 列显隐/顺序/宽度经 `QuoteColumns` 持久化（监听 Width/Visibility/DisplayIndex 三个 DP + 300ms 去抖）。
+
+## 在线更新
+
+启动 1.5 秒后静默首查,之后**每 30 秒**轮询;发现新版在**底部状态栏**弹提示条（更新/关闭,关闭后同版本不再自动打扰）。
+
+- **多源顺序**:`UpdateService` 先查国内 NAS（`DomesticReleaseClient` 读 `latest.json`）,失败/超时再 GitHub
+  （`GithubReleaseClient` 匿名读 `releases/latest`,**客户端不带 token**）;单源 10 秒超时,坏源快速跳过;
+  GitHub 兜底自动限频 5 分钟一次,防匿名配额（60/hr）耗尽。UI 不显示来源（隐私）。
+- **自更新**:下载新 exe → 把正在运行的 exe 改名 `.old` → 新 exe 就位 → 带 `--updated` 启动新进程 → 自己退出。
+  单实例互斥锁对 `--updated` 会**等旧实例退出后接管**（否则新副本会把自己当重复实例退出 = "更新没重启"）。
+  下次启动清扫残留 `.old`。发布见 [RELEASE.md](RELEASE.md)。
 
 ## 缓存
 
@@ -147,11 +183,13 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 src/StockClient.Core/
   Contracts/   市场枚举 + fs 过滤器 + 时区；合约 + symbols.json；东财 clist 分页；按交易日缓存
   Boards/      板块（行业/概念/地区）+ boards.json；东财 clist m:90+t:1/2/3；按交易日缓存
-  Quotes/      腾讯批量行情 + 1s 轮询；K 线主源/兜底源 + 缓存；分时 trends2 + 内存日缓存
+  Quotes/      腾讯批量行情(主)+1s 轮询；东财 ulist(次,涨速/资金流)+5s 轮询；K 线主/兜底+缓存；分时 trends2+内存日缓存
+  Updates/     国内/GitHub 双源发布客户端（DomesticReleaseClient / GithubReleaseClient）
   Groups/      分组 + 简洁面板 + 列布局配置（groups.json）
 src/StockClient.App/   WPF UI
-  Views/       主窗口、行情/合约查询、K 线/分时图、简洁面板 + 设置、分时缩略图
+  Views/       主窗口、行情/合约查询、K 线/分时图、简洁面板 + 设置、分时缩略图、列设置窗（拖动排序）
   ViewModels/  Main / Quotes / Kline
+  Services/    UpdateService（版本检查 + 自更新，多源顺序 + 改名替换重启）
 tools/Smoke/   数据层冒烟测试（打真实接口）
 tools/deploy.sh  同步源码 → corp-win 编译 → 分发桌面
 tools/ghpush.py  git 传输被封时的兜底：走 api.github.com 推送整棵树
