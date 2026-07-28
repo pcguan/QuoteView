@@ -23,11 +23,19 @@ public sealed class KlineViewModel : ObservableObject
     /// <summary>Intraday re-poll cadence. The trend is minute-grained, so seconds is plenty.</summary>
     private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Candle re-poll cadence. The last candle keeps moving until the close, so a
+    /// window left open must not sit on the values it loaded with. Cheap: the
+    /// repository answers from cache and only tops up the trailing candles.
+    /// </summary>
+    private static readonly TimeSpan KlineInterval = TimeSpan.FromSeconds(30);
+
     private readonly Contract _contract;
     private readonly KlineRepository _repo;
     private readonly EastMoneyTrendClient _trendClient;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
+    private readonly DispatcherTimer _klineTimer;
 
     private CancellationTokenSource? _cts;
 
@@ -56,6 +64,13 @@ public sealed class KlineViewModel : ObservableObject
             Interval = TrendInterval,
         };
         _trendTimer.Tick += (_, _) => _ = LoadTrendAsync();
+
+        _klineTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
+        {
+            Interval = KlineInterval,
+        };
+        _klineTimer.Tick += (_, _) => _ = RefreshAsync();
+        _klineTimer.Start();
     }
 
     public string Title => $"{_contract.Name}  {_contract.Code}";
@@ -122,6 +137,13 @@ public sealed class KlineViewModel : ObservableObject
 
     /// <summary>Raised after each intraday poll so the trend chart can redraw.</summary>
     public event Action? TrendLoaded;
+
+    /// <summary>
+    /// Raised after a silent candle re-poll. Separate from <see cref="Loaded"/>
+    /// because the chart must keep its zoom/pan here — only a real load resets
+    /// the view.
+    /// </summary>
+    public event Action? Refreshed;
 
     /// <summary>Switch to a candle period, leaving intraday mode if it was active.</summary>
     public void ShowKline(KlinePeriod period)
@@ -237,6 +259,48 @@ public sealed class KlineViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Silent re-poll of the candles: no loading state, no error surfaced, and
+    /// the chart keeps its zoom/pan. The point is the day's last candle, which
+    /// keeps moving until the close — without this a window opened mid-session
+    /// still shows the intraday close hours after the bell.
+    ///
+    /// Skipped while a real load is in flight so the two can't race; the timer
+    /// comes back around shortly.
+    /// </summary>
+    private async Task RefreshAsync()
+    {
+        if (IsTrend || Loading || Candles.Count == 0) return;
+
+        var period = _period;
+        var adjust = _adjust;
+
+        try
+        {
+            // Its own token: a background refresh must not cancel, or be cancelled
+            // by, whatever the user is doing.
+            var (series, source) = await _repo.GetAsync(
+                _contract, period, adjust, CandleCount, CancellationToken.None);
+
+            // A period/adjust switch (or the trend) may have landed meanwhile —
+            // these candles are for the old view, so drop them.
+            if (IsTrend || period != _period || adjust != _adjust) return;
+            if (series.Candles.Count == 0) return;
+
+            Source = source;
+            Candles = series.Candles;
+            MovingAverages = ComputeMovingAverages(series.Candles);
+
+            Refreshed?.Invoke();
+        }
+        catch (Exception)
+        {
+            // Background refresh: the chart keeps the data it has, and the next
+            // tick tries again. Surfacing this would flash an error over a chart
+            // that is perfectly readable.
+        }
+    }
+
+    /// <summary>
     /// Simple moving average of closes for each window. The first (window-1)
     /// entries are null — a 20-day MA has no value until 20 candles exist — so
     /// the line simply starts later rather than drawing a wrong early value.
@@ -267,6 +331,7 @@ public sealed class KlineViewModel : ObservableObject
     public void Dispose()
     {
         _trendTimer.Stop();
+        _klineTimer.Stop();
         _cts?.Cancel();
     }
 }

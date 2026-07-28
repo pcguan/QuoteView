@@ -42,6 +42,7 @@ public partial class KlineWindow : Window
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
 
         _vm.Loaded += OnKlineLoaded;
+        _vm.Refreshed += OnKlineRefreshed;
         _vm.TrendLoaded += OnTrendLoaded;
         _vm.PropertyChanged += (_, e) => Dispatcher.Invoke(() =>
         {
@@ -61,6 +62,13 @@ public partial class KlineWindow : Window
     {
         Chart.SetSeries(_vm.Candles, _vm.MovingAverages);
         RefreshPeriodStates();
+        UpdateStatus();
+    });
+
+    /// <summary>Silent re-poll: same data path, but the view stays where it is.</summary>
+    private void OnKlineRefreshed() => Dispatcher.Invoke(() =>
+    {
+        Chart.UpdateSeries(_vm.Candles, _vm.MovingAverages);
         UpdateStatus();
     });
 

@@ -124,6 +124,14 @@ public sealed record MarketInfo
     public required string TimeZoneId { get; init; }
 
     /// <summary>
+    /// Regular session close in the exchange's own local time. Used to tell an
+    /// intraday snapshot from a settled one: a K-line fetched before the close
+    /// has an unfinished last candle, so it must not be served for the rest of
+    /// the day (see <see cref="IMarketClock.IsAfterClose"/>).
+    /// </summary>
+    public required TimeOnly Close { get; init; }
+
+    /// <summary>
     /// Boards and ETFs are separate queries, so each market has several.
     ///
     /// Each is fetched with its own explicit filter and tagged from that filter —
@@ -141,6 +149,7 @@ public sealed record MarketInfo
                 Market = Market.SH,
                 DisplayName = "沪A",
                 TimeZoneId = "Asia/Shanghai",
+                Close = new TimeOnly(15, 0),
                 Filters = new MarketFilter[]
                 {
                     new("m:1+t:2", ContractType.MainBoard),
@@ -153,6 +162,7 @@ public sealed record MarketInfo
                 Market = Market.SZ,
                 DisplayName = "深A",
                 TimeZoneId = "Asia/Shanghai",
+                Close = new TimeOnly(15, 0),
                 Filters = new MarketFilter[]
                 {
                     new("m:0+t:6", ContractType.MainBoard),
@@ -165,6 +175,7 @@ public sealed record MarketInfo
                 Market = Market.BJ,
                 DisplayName = "北交所",
                 TimeZoneId = "Asia/Shanghai",
+                Close = new TimeOnly(15, 0),
                 Filters = new MarketFilter[]
                 {
                     new("m:0+t:81+s:2048", ContractType.BeijingBoard),
@@ -175,6 +186,8 @@ public sealed record MarketInfo
                 Market = Market.HK,
                 DisplayName = "港股",
                 TimeZoneId = "Asia/Hong_Kong",
+                // 16:00 continuous, then a closing auction to 16:10.
+                Close = new TimeOnly(16, 10),
                 Filters = new MarketFilter[]
                 {
                     new("m:128+t:3", ContractType.MainBoard),
@@ -190,6 +203,7 @@ public sealed record MarketInfo
                 Market = Market.US,
                 DisplayName = "美股",
                 TimeZoneId = "America/New_York",
+                Close = new TimeOnly(16, 0),
                 // m:105/106/107 are exchanges, not categories; the type comes
                 // from f19 via UsSecurityTypes.
                 Filters = new MarketFilter[]
@@ -204,6 +218,7 @@ public sealed record MarketInfo
                 Market = Market.KR,
                 DisplayName = "韩股",
                 TimeZoneId = "Asia/Seoul",
+                Close = new TimeOnly(15, 30),
                 Filters = new MarketFilter[]
                 {
                     new("m:177", ContractType.Stock),

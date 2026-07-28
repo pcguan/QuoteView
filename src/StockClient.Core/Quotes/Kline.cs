@@ -63,4 +63,12 @@ public sealed record KlineSeries
     /// back labelled as such rather than masquerading as EastMoney's full data.
     /// </summary>
     public string Source { get; init; } = "";
+
+    /// <summary>
+    /// When this data was pulled. Persisted, and the whole reason the cache can
+    /// tell a settled series from an intraday snapshot whose last candle is still
+    /// moving. Default (all-zero) means a pre-1.0.14 cache file with no stamp —
+    /// treated as stale so it gets refreshed once.
+    /// </summary>
+    public DateTimeOffset FetchedAt { get; init; }
 }

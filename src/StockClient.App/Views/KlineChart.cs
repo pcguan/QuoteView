@@ -150,6 +150,41 @@ public sealed class KlineChart : FrameworkElement
     }
 
     /// <summary>
+    /// Swaps in refreshed data while keeping the current zoom and pan — used by
+    /// the intraday re-poll, where resetting the window every interval would yank
+    /// the chart back to the right edge under anyone reading through history.
+    ///
+    /// A view sitting at the right edge stays pinned there, so a chart left alone
+    /// still follows the newest candle.
+    /// </summary>
+    public void UpdateSeries(
+        IReadOnlyList<Kline> candles,
+        IReadOnlyDictionary<int, IReadOnlyList<double?>> movingAverages)
+    {
+        // Mid-pan: drop this refresh rather than shift the data under the drag.
+        // The next poll picks it up.
+        if (_dragging) return;
+
+        if (_candles.Count == 0)
+        {
+            SetSeries(candles, movingAverages);
+            return;
+        }
+
+        var pinned = ViewEnd >= _candles.Count;
+
+        _candles = candles;
+        _mas = movingAverages;
+        _hoverIndex = -1;
+
+        _viewCount = Math.Clamp(_viewCount, Math.Min(MinView, _candles.Count), _candles.Count);
+        var last = Math.Max(0, _candles.Count - _viewCount);
+        _viewStart = pinned ? last : Math.Clamp(_viewStart, 0, last);
+
+        InvalidateVisual();
+    }
+
+    /// <summary>
     /// One-click restore: the default recent window and every MA shown again.
     /// Panning, zooming and toggled-off MAs all revert.
     /// </summary>

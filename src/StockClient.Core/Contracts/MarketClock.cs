@@ -21,10 +21,28 @@ public interface IMarketClock
 {
     /// <summary>Current trading date for the market, in the exchange's own timezone.</summary>
     DateOnly TradingDate(Market market);
+
+    /// <summary>
+    /// True when the instant falls after that market's close (plus a settle
+    /// margin) on its own local date — i.e. that day's candle is final.
+    ///
+    /// Data taken before this point contains an unfinished candle for the day,
+    /// which is why the K-line cache can't simply be keyed by trading date alone.
+    /// </summary>
+    bool IsAfterClose(Market market, DateTimeOffset instant);
 }
 
 public sealed class MarketClock : IMarketClock
 {
+    /// <summary>
+    /// Grace period after the bell before the day's candle is trusted as final.
+    /// The upstream feeds keep settling the close for a few minutes (closing
+    /// auction prints, then the history endpoint catching up), so treating the
+    /// bell itself as the cutoff would freeze a not-quite-final candle for the
+    /// rest of the day.
+    /// </summary>
+    private static readonly TimeSpan SettleMargin = TimeSpan.FromMinutes(20);
+
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Dictionary<string, TimeZoneInfo> _zones = new();
 
@@ -37,6 +55,13 @@ public sealed class MarketClock : IMarketClock
         var zone = ResolveZone(info.TimeZoneId);
         var local = TimeZoneInfo.ConvertTime(_utcNow(), zone);
         return DateOnly.FromDateTime(local.DateTime);
+    }
+
+    public bool IsAfterClose(Market market, DateTimeOffset instant)
+    {
+        var info = MarketInfo.Of(market);
+        var local = TimeZoneInfo.ConvertTime(instant, ResolveZone(info.TimeZoneId));
+        return TimeOnly.FromDateTime(local.DateTime) >= info.Close.Add(SettleMargin);
     }
 
     private TimeZoneInfo ResolveZone(string id)
