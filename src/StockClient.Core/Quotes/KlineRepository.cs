@@ -12,13 +12,17 @@ namespace StockClient.Core.Quotes;
 /// which also makes front-adjustment always correct across ex-rights days without
 /// any special handling.
 ///
-/// The trading date alone is NOT enough to decide freshness, though: a series
-/// pulled during the session ends on an unfinished candle (close = the price at
-/// that moment, high/low/volume only partial). Serving that for the rest of the
-/// day is what made the chart disagree with the quote after the close. So the
-/// fetch time is stamped on the series, and a snapshot taken before the close is
-/// topped up — the last candles are re-pulled and merged in, a couple of hundred
-/// bytes rather than the full history — until the close settles it.
+/// <b>The running candle is dropped, not drawn.</b> During the session the last
+/// row upstream returns is unfinished — its close is just the price at that
+/// instant, and high/low/volume only cover the day so far — so it is cut off and
+/// the chart ends at the previous close. Once the market has closed, the day's
+/// candle is final and is fetched once and cached. That is the whole reason the
+/// fetch time is stamped on the series: a cache written during the session has to
+/// be refetched after the bell, but is otherwise good all day (it can't go stale —
+/// it holds nothing but settled candles).
+///
+/// So a contract costs at most two full fetches a day: one if it was opened during
+/// the session, one after the close.
 ///
 /// BOTH sources are cached, tagged with which one served them. Not caching the
 /// Tencent fallback would mean re-hitting Tencent on every open while EastMoney is
@@ -28,19 +32,6 @@ namespace StockClient.Core.Quotes;
 /// </summary>
 public sealed class KlineRepository
 {
-    /// <summary>
-    /// Minimum spacing between top-ups of the same series. The chart re-polls on
-    /// a timer and a window can be reopened at will; this keeps that down to one
-    /// small request per contract per interval.
-    /// </summary>
-    private static readonly TimeSpan TopUpInterval = TimeSpan.FromSeconds(20);
-
-    /// <summary>
-    /// How many trailing candles a top-up re-pulls. Two, so the previous candle
-    /// comes along as an overlap check rather than relying on the last one alone.
-    /// </summary>
-    private const int TopUpCount = 2;
-
     private readonly EastMoneyKlineClient _east;
     private readonly TencentKlineClient _tencent;
     private readonly KlineCache _cache;
@@ -62,100 +53,68 @@ public sealed class KlineRepository
         Contract contract, KlinePeriod period, KlineAdjust adjust, int count, CancellationToken cancellationToken)
     {
         var date = _clock.TradingDate(contract.Market);
+        var settled = _clock.IsAfterClose(contract.Market, _now());
 
         var cached = _cache.TryLoad(contract.Code, period, adjust, date);
-        if (cached is not null)
-        {
-            // Pulled after the close: that day's candle is final, so the cache
-            // stands for the rest of the day — the common case, no request.
-            if (_clock.IsAfterClose(contract.Market, cached.FetchedAt))
-                return (cached, Label(cached));
-
-            // Intraday snapshot. Too soon to bother upstream again, serve as is.
-            if (_now() - cached.FetchedAt < TopUpInterval)
-                return (cached, Label(cached));
-
-            var topped = await TopUpAsync(contract, cached, cancellationToken);
-            if (topped is not null)
-            {
-                _cache.Save(topped, date);
-                return (topped, Label(topped));
-            }
-
-            // Top-up failed (throttled, offline). Stale beats blank.
+        if (cached is not null && IsFresh(cached, contract.Market, settled))
             return (cached, Label(cached));
-        }
 
         try
         {
-            var series = (await _east.FetchAsync(contract, period, adjust, count, cancellationToken))
-                with { Source = "东财", FetchedAt = _now() };
-            if (series.Candles.Count > 0) _cache.Save(series, date);
-            return (series, series.Source);
+            var series = await _east.FetchAsync(contract, period, adjust, count, cancellationToken);
+            return Store(series with { Source = "东财" }, date, settled);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            var series = (await _tencent.FetchAsync(contract, period, adjust, cancellationToken))
-                with { Source = "腾讯(备用)", FetchedAt = _now() };
-            if (series.Candles.Count > 0) _cache.Save(series, date);
-            return (series, series.Source);
+            // A cache that only needed the closing candle added still draws the
+            // whole history. Better that than swapping it for Tencent's fallback,
+            // which is same-day only for BJ/US/KR and would wipe the history.
+            if (cached is not null) return (cached, Label(cached));
+
+            var series = await _tencent.FetchAsync(contract, period, adjust, cancellationToken);
+            return Store(series with { Source = "腾讯(备用)" }, date, settled);
         }
+    }
+
+    /// <summary>
+    /// A cached series holds settled candles only, so it stays good for the whole
+    /// day — except for the one transition that matters: taken during the session,
+    /// read after the close, where today's candle is now available and missing
+    /// from it.
+    /// </summary>
+    private bool IsFresh(KlineSeries cached, Market market, bool settled) =>
+        !settled || _clock.IsAfterClose(market, cached.FetchedAt);
+
+    private (KlineSeries, string) Store(KlineSeries series, DateOnly date, bool settled)
+    {
+        var stored = series with
+        {
+            Candles = DropRunning(series.Candles, date, settled),
+            FetchedAt = _now(),
+        };
+
+        if (stored.Candles.Count > 0) _cache.Save(stored, date);
+        return (stored, stored.Source);
+    }
+
+    /// <summary>
+    /// Cuts the still-running candle while the market is open.
+    ///
+    /// Matched on the date rather than just taking the last row off: on a weekend
+    /// or a holiday the last row is an earlier session's, already final, and must
+    /// stay. For week/month periods EastMoney labels the running bucket with its
+    /// latest trading day, so the same check catches those too.
+    /// </summary>
+    private static IReadOnlyList<Kline> DropRunning(
+        IReadOnlyList<Kline> candles, DateOnly tradingDate, bool settled)
+    {
+        if (settled || candles.Count == 0) return candles;
+
+        return candles[^1].Date == tradingDate.ToString("yyyy-MM-dd")
+            ? candles.Take(candles.Count - 1).ToArray()
+            : candles;
     }
 
     private static string Label(KlineSeries series) =>
         string.IsNullOrEmpty(series.Source) ? "缓存" : $"{series.Source}·缓存";
-
-    /// <summary>
-    /// Re-pulls the last few candles and merges them over the cached series, so
-    /// the day's still-moving candle catches up without refetching the history.
-    /// Null when upstream didn't answer, leaving the caller on the old data.
-    ///
-    /// Always goes to EastMoney, even for a series the Tencent fallback served:
-    /// the merge is by date, so mixing is safe, and a cache stuck on the fallback
-    /// gets accurate recent candles as soon as EastMoney is reachable again.
-    /// </summary>
-    private async Task<KlineSeries?> TopUpAsync(
-        Contract contract, KlineSeries cached, CancellationToken cancellationToken)
-    {
-        KlineSeries latest;
-        try
-        {
-            latest = await _east.FetchAsync(
-                contract, cached.Period, cached.Adjust, TopUpCount, cancellationToken);
-        }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            return null;
-        }
-
-        if (latest.Candles.Count == 0) return null;
-
-        return cached with
-        {
-            Candles = Splice(cached.Candles, latest.Candles),
-            FetchedAt = _now(),
-        };
-    }
-
-    /// <summary>
-    /// Replaces the cached tail from the first fresh candle's date onwards with
-    /// the fresh candles.
-    ///
-    /// Cutting at a date instead of merging candle-by-candle is what makes this
-    /// safe for week/month periods: EastMoney labels the running bucket with its
-    /// latest trading day, so the same week comes back under a different date as
-    /// the week goes on. Merging by date would leave both labels sitting there as
-    /// two candles; cutting drops the whole stale tail first.
-    /// </summary>
-    private static IReadOnlyList<Kline> Splice(IReadOnlyList<Kline> cached, IReadOnlyList<Kline> latest)
-    {
-        var from = latest[0].Date;
-
-        var spliced = cached
-            .Where(k => string.CompareOrdinal(k.Date, from) < 0)
-            .ToList();
-
-        spliced.AddRange(latest);
-        return spliced;
-    }
 }

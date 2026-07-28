@@ -24,9 +24,10 @@ public sealed class KlineViewModel : ObservableObject
     private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(5);
 
     /// <summary>
-    /// Candle re-poll cadence. The last candle keeps moving until the close, so a
-    /// window left open must not sit on the values it loaded with. Cheap: the
-    /// repository answers from cache and only tops up the trailing candles.
+    /// Candle re-poll cadence. Candles don't move — the running one isn't drawn —
+    /// so this exists for one transition: a window left open across the close
+    /// picks up the day's finished candle on its own. Cheap, because every poll
+    /// before that is answered from cache without a request.
     /// </summary>
     private static readonly TimeSpan KlineInterval = TimeSpan.FromSeconds(30);
 
@@ -260,9 +261,9 @@ public sealed class KlineViewModel : ObservableObject
 
     /// <summary>
     /// Silent re-poll of the candles: no loading state, no error surfaced, and
-    /// the chart keeps its zoom/pan. The point is the day's last candle, which
-    /// keeps moving until the close — without this a window opened mid-session
-    /// still shows the intraday close hours after the bell.
+    /// the chart keeps its zoom/pan. The point is the close: a window opened
+    /// during the session ends at the previous close, and this is what appends
+    /// today's candle once it is final, without the user reopening anything.
     ///
     /// Skipped while a real load is in flight so the two can't race; the timer
     /// comes back around shortly.

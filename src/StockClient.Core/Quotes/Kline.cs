@@ -66,9 +66,10 @@ public sealed record KlineSeries
 
     /// <summary>
     /// When this data was pulled. Persisted, and the whole reason the cache can
-    /// tell a settled series from an intraday snapshot whose last candle is still
-    /// moving. Default (all-zero) means a pre-1.0.14 cache file with no stamp —
-    /// treated as stale so it gets refreshed once.
+    /// tell a series that already has the day's closing candle from one taken
+    /// during the session, which stops at the previous close. Default (all-zero)
+    /// means a pre-1.0.14 cache file with no stamp — reads as "taken before the
+    /// close", so it refetches once after the bell.
     /// </summary>
     public DateTimeOffset FetchedAt { get; init; }
 }
