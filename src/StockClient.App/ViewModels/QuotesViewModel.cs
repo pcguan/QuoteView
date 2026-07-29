@@ -569,6 +569,43 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         RebuildRows();
     }
 
+    /// <summary>Moves a contract out of the active group into another one.</summary>
+    public void MoveCodeTo(QuoteRow? row, GroupRow? target) => TransferCode(row, target, move: true);
+
+    /// <summary>Adds a contract to another group, leaving it in this one too.</summary>
+    public void CopyCodeTo(QuoteRow? row, GroupRow? target) => TransferCode(row, target, move: false);
+
+    /// <summary>
+    /// Shared by move and copy: the only difference is whether the source keeps
+    /// its copy. A target that already holds the code is not a failure — a move
+    /// still takes it out of the source, which is what "move it there" means when
+    /// it is already there.
+    /// </summary>
+    private void TransferCode(QuoteRow? row, GroupRow? target, bool move)
+    {
+        if (row is null || target is null || _activeGroup is null) return;
+        if (ReferenceEquals(target, _activeGroup)) return;
+
+        if (!target.Model.Codes.Contains(row.Code, StringComparer.OrdinalIgnoreCase))
+        {
+            target.Model.Codes.Add(row.Code);
+            target.RefreshCount();
+        }
+
+        if (move)
+        {
+            _activeGroup.Model.Codes.RemoveAll(c =>
+                string.Equals(c, row.Code, StringComparison.OrdinalIgnoreCase));
+            _activeGroup.RefreshCount();
+        }
+
+        Save();
+
+        // Only a move changes what this group shows; a copy would just make the
+        // list flash for nothing.
+        if (move) RebuildRows();
+    }
+
     public void RemoveCode(QuoteRow? row)
     {
         if (row is null || _activeGroup is null) return;

@@ -275,6 +275,7 @@ public partial class QuotesView : UserControl
         menu.Items.Add(settings);
 
         ColumnMenu.Attach(grid, menu);
+        AttachRowMenu(grid);
         if (Vm is { } vm) QuoteColumns.Attach(grid, vm.QuoteColumns, vm.SaveConfig);
 
         // On-demand: the EastMoney fund-flow poll runs only while one of its columns
@@ -446,5 +447,106 @@ public partial class QuotesView : UserControl
     private void RemoveCode_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: QuoteRow row }) Vm?.RemoveCode(row);
+    }
+
+    /// <summary>
+    /// Right-click menu on a contract row: move / copy it to another group.
+    ///
+    /// Hung off the ROW style, not the grid, so it stays clear of the header's
+    /// column menu — right-clicking a header must still open 列设置. The items are
+    /// rebuilt on every open because the group list changes underneath, and the
+    /// row comes from the menu's placement target rather than the selection, so
+    /// the menu always acts on the row actually under the cursor.
+    /// </summary>
+    private void AttachRowMenu(System.Windows.Controls.DataGrid grid)
+    {
+        var rowMenu = new ContextMenu();
+        rowMenu.Opened += (_, _) => BuildRowMenu(rowMenu);
+
+        var style = new Style(typeof(DataGridRow),
+            grid.RowStyle ?? grid.TryFindResource(typeof(DataGridRow)) as Style);
+
+        style.Setters.Add(new Setter(FrameworkElement.ContextMenuProperty, rowMenu));
+
+        // Right-click selects the row first, so the detail panel below follows the
+        // row being acted on instead of staying on the previous selection.
+        style.Setters.Add(new EventSetter(
+            PreviewMouseRightButtonDownEvent,
+            new MouseButtonEventHandler((s, _) =>
+            {
+                if (s is DataGridRow row) row.IsSelected = true;
+            })));
+
+        grid.RowStyle = style;
+    }
+
+    private void BuildRowMenu(ContextMenu menu)
+    {
+        menu.Items.Clear();
+
+        if (Vm is not { } vm) return;
+        if ((menu.PlacementTarget as FrameworkElement)?.DataContext is not QuoteRow row) return;
+
+        var others = vm.Groups.Where(g => !ReferenceEquals(g, vm.ActiveGroup)).ToArray();
+
+        menu.Items.Add(GroupTargets("移动到分组", others, row,
+            target => vm.MoveCodeTo(row, target), markExisting: true));
+        menu.Items.Add(GroupTargets("添加到分组", others, row,
+            target => vm.CopyCodeTo(row, target), markExisting: false));
+
+        menu.Items.Add(new Separator());
+
+        var chart = new System.Windows.Controls.MenuItem { Header = "打开 K 线图" };
+        chart.Click += (_, _) =>
+        {
+            if (!string.IsNullOrWhiteSpace(row.Code)) OpenKlineRequested?.Invoke(row.Code);
+        };
+        menu.Items.Add(chart);
+
+        var remove = new System.Windows.Controls.MenuItem { Header = "从本分组移除" };
+        remove.Click += (_, _) => vm.RemoveCode(row);
+        menu.Items.Add(remove);
+    }
+
+    /// <summary>
+    /// One submenu listing every other group.
+    /// </summary>
+    /// <param name="markExisting">
+    /// How a target that already holds the code is treated. A copy there would do
+    /// nothing, so it is disabled; a move still has work to do (drop it from this
+    /// group), so it stays clickable and is just labelled.
+    /// </param>
+    private static System.Windows.Controls.MenuItem GroupTargets(
+        string header, IReadOnlyList<GroupRow> targets, QuoteRow row,
+        Action<GroupRow> apply, bool markExisting)
+    {
+        var item = new System.Windows.Controls.MenuItem { Header = header };
+
+        if (targets.Count == 0)
+        {
+            item.Items.Add(new System.Windows.Controls.MenuItem
+            {
+                Header = "（没有其它分组）",
+                IsEnabled = false,
+            });
+            return item;
+        }
+
+        foreach (var target in targets)
+        {
+            var has = target.Model.Codes.Contains(row.Code, StringComparer.OrdinalIgnoreCase);
+
+            var entry = new System.Windows.Controls.MenuItem
+            {
+                Header = has ? $"{target.Name}（已有）" : target.Name,
+                IsEnabled = !has || markExisting,
+            };
+
+            var captured = target;
+            entry.Click += (_, _) => apply(captured);
+            item.Items.Add(entry);
+        }
+
+        return item;
     }
 }
