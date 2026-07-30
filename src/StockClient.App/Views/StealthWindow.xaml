@@ -20,9 +20,10 @@
     icon. A panel whose entire purpose is to sit there unobtrusively must not be
     one stray click from disappearing.
 
-    Mouse gestures live here now (see StealthWindow.xaml.cs): wheel steps the
-    contract, left/right click steps the group, left DRAG still moves the panel,
-    and the menu moved to the middle button so right-click could be freed up.
+    Left click drags, right click opens the menu, and the wheel steps the
+    contract (see StealthWindow.xaml.cs). Clicks are NOT bound to anything else:
+    left belongs to dragging — the panel's only way to be positioned — and right
+    to the menu.
   -->
   <!--
     No ToolTip here, deliberately.
@@ -34,7 +35,12 @@
     ticker is for. (It also read as the panel "turning into two lines" while
     being dragged.) The right-click menu carries the same shortcuts.
   -->
-  <Border x:Name="Root" Background="#01000000" CornerRadius="4" Padding="9,2">
+  <!-- Padding is generous vertically on purpose: it is the panel's hit area.
+       At 2px the window was ~20px tall with one row, and the pointer slid off it
+       mid-scroll, so the wheel silently went to the window underneath — which
+       read as "scrolling is unreliable". The background is all but transparent,
+       so the extra height doesn't show. -->
+  <Border x:Name="Root" Background="#01000000" CornerRadius="4" Padding="10,8">
     <StackPanel Orientation="Vertical" VerticalAlignment="Center">
       <!-- Intraday sparkline of the current contract; the child is set in code and
            this host stays collapsed unless the trend option is on. -->
