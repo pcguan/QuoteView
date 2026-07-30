@@ -86,7 +86,10 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 - **面板图表**：图表块在行情行**之上**，切换时把块高差吸收进窗口 `Top`（向上生长），行情行位置不动。
   两种图共用这一块，所以一个快捷键就够（`PanelChart` 三态；旧配置的 `trend` 布尔键自动迁移，
   并继续同步写回，降级也不丢设置）。
-  - **分时缩略图**：单合约、内存单日缓存、过期（>15s）重拉，线尾用 1s 现价平滑。线加粗并**填充到昨收基线**——
+  - **分时缩略图**：单合约、内存单日缓存、过期（>15s）重拉，线尾用 1s 现价平滑。
+    **收盘后落盘**（`TrendCache`）：当天定稿后写盘、保留 7 天，之后当天再开/重启 app 零请求；
+    盘中不写——序列还在长，而两个源都只能"一次返回全天"、要不到增量，半天的文件没有价值。
+    所以磁盘上"存在即定稿"，读出来直接用；定稿条目在内存里也不再按 15 秒过期。线加粗并**填充到昨收基线**——
     面板不透明度可低到 20%，细线在那个透明度下看不见；横轴按整个交易日归一化（不同合约可比），早盘线本来就短。
     两源都无数据时画「分时暂无数据」，不留白（留白与"图坏了"没法区分）。
   - **五档盘口**：数据在 1 秒行情响应里就有，**零额外请求**，每 tick 直接重绘。
@@ -181,6 +184,7 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 %APPDATA%\StockClient\contracts\{MARKET}\{yyyy-MM-dd}\symbols.json          合约列表
 %APPDATA%\StockClient\boards\{yyyy-MM-dd}\boards.json                       板块目录（行业/概念/地区）
 %APPDATA%\StockClient\klines\{CODE}\{period}_{adjust}\{yyyy-MM-dd}.json     K 线
+%APPDATA%\StockClient\trends\{CODE}\{yyyy-MM-dd}.json                    分时（仅收盘后定稿的）
 %APPDATA%\StockClient\groups.json                                          分组 + 面板/列配置
 %APPDATA%\StockClient\panel.log                                            诊断日志（默认开）
 ```

@@ -13,6 +13,12 @@ namespace StockClient.Core.Quotes;
 /// trading date, so it rolls over on its own; a network hiccup keeps the last good
 /// series rather than blanking the chart.
 ///
+/// <b>Settled days are kept on disk</b> (<see cref="TrendCache"/>): once a market
+/// has closed its trend stops changing, so the first fetch after the close is
+/// written out and every later open that day costs nothing. Nothing is written
+/// during the session — the series is still growing, and neither source can be
+/// asked for only the new minutes, so a partial file would buy nothing.
+///
 /// <b>Two sources</b>, same shape as <see cref="KlineRepository"/>: EastMoney
 /// first, Tencent when it doesn't answer. EastMoney throttles this path with
 /// connection resets — measured, with its own kline path on the same host still
@@ -28,33 +34,53 @@ public sealed class TrendRepository
 
     private readonly EastMoneyTrendClient _client;
     private readonly TencentTrendClient? _fallback;
+    private readonly TrendCache? _disk;
     private readonly IMarketClock _clock;
+    private readonly Func<DateTimeOffset> _now;
     private readonly Dictionary<string, Entry> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     public TrendRepository(
-        EastMoneyTrendClient client, IMarketClock clock, TencentTrendClient? fallback = null)
+        EastMoneyTrendClient client, IMarketClock clock, TencentTrendClient? fallback = null,
+        TrendCache? disk = null, Func<DateTimeOffset>? now = null)
     {
         _client = client;
         _clock = clock;
         _fallback = fallback;
+        _disk = disk;
+        _now = now ?? (() => DateTimeOffset.Now);
     }
 
     public async Task<TrendSeries?> GetAsync(Contract contract, CancellationToken cancellationToken)
     {
         var date = _clock.TradingDate(contract.Market);
+        var settled = _clock.IsAfterClose(contract.Market, _now());
+
         _cache.TryGetValue(contract.Code, out var cached);
 
+        // A settled entry never expires — the day is over, it cannot change.
         var fresh = cached is not null
                     && cached.Date == date
-                    && (DateTime.UtcNow - cached.FetchedAtUtc).TotalSeconds < StaleSeconds;
+                    && (cached.Settled
+                        || (DateTime.UtcNow - cached.FetchedAtUtc).TotalSeconds < StaleSeconds);
         if (fresh) return cached!.Series;
+
+        // Disk holds settled days only, so a hit is usable as-is and ends the day's
+        // requests for this contract. Not consulted intraday: the file would be for
+        // an earlier date, and today's simply isn't there yet.
+        if (settled && _disk?.TryLoad(contract.Code, date) is { } stored)
+        {
+            _cache[contract.Code] = new Entry(date, DateTime.UtcNow, stored, Settled: true);
+            return stored;
+        }
 
         var series = await TryFetch(contract, cancellationToken);
 
         // Nothing usable from either source: keep showing the last good series.
         if (series is null || series.Points.Count == 0) return cached?.Series;
 
-        _cache[contract.Code] = new Entry(date, DateTime.UtcNow, series);
+        _cache[contract.Code] = new Entry(date, DateTime.UtcNow, series, settled);
+        if (settled) _disk?.Save(series, date);
+
         return series;
     }
 
@@ -86,5 +112,9 @@ public sealed class TrendRepository
         }
     }
 
-    private sealed record Entry(DateOnly Date, DateTime FetchedAtUtc, TrendSeries Series);
+    /// <param name="Settled">
+    /// Taken after the close, so the day is final: served for the rest of the day
+    /// without re-checking, and written to disk.
+    /// </param>
+    private sealed record Entry(DateOnly Date, DateTime FetchedAtUtc, TrendSeries Series, bool Settled);
 }

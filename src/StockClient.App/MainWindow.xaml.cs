@@ -68,7 +68,7 @@ public partial class MainWindow : FluentWindow
         // Tencent as the backup source: EastMoney throttles trends2 with connection
         // resets, which used to leave the panel thumbnail simply blank.
         _trendRepo = new TrendRepository(
-            _trendClient, new MarketClock(), new TencentTrendClient(_klineHttp));
+            _trendClient, new MarketClock(), new TencentTrendClient(_klineHttp), new TrendCache());
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
         // yields a window with no backdrop at all — it renders invisible.
