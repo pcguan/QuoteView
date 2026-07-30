@@ -218,6 +218,7 @@ public partial class StealthWindow : Window
         Loaded += (_, _) =>
         {
             HookHotkeys();
+            HookWheel();
             _rows = _vm.StealthRows();
             Render();
 
@@ -377,6 +378,7 @@ public partial class StealthWindow : Window
             $"shade={_config.Shade} opacity={Opacity:F2} visible={IsVisible} state={WindowState} " +
             $"size={ActualWidth:F0}x{ActualHeight:F0} pos={Left:F0},{Top:F0} " +
             $"children={Rows.Children.Count} rows={_rows.Count} " +
+            $"wheel={_wheelHits}/{_wheelPassed} hook={(_wheelHook != IntPtr.Zero ? "on" : "off")} " +
             $"first={(_rows.Count > 0 ? _rows[0].Code : "NULL")} {Native.Describe(hwnd)}";
 
         var changed = snapshot != _lastSnapshot;
@@ -902,11 +904,12 @@ public partial class StealthWindow : Window
         // element is where.
         if (msg == WmMouseWheel)
         {
+            // Only reached when the hook didn't swallow it. No logging here: this
+            // is on the scroll path, and Probe.Log writes the file synchronously.
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
-            Probe.Log($"WM_MOUSEWHEEL delta={delta} (win32)");
-
             if (delta != 0)
             {
+                _wheelHits++;
                 StepByWheel(delta);
                 handled = true;
             }
@@ -1041,17 +1044,82 @@ public partial class StealthWindow : Window
     /// rely on Windows routing the wheel to the hovered window rather than the
     /// focused one (MouseWheelRouting=2, the default); the panel never takes focus.
     /// </summary>
+    // A low-level mouse hook, because neither higher layer can be relied on.
+    //
+    // Measured from the log: while it works, WM_MOUSEWHEEL arrives for every
+    // notch; when it "stops", NOTHING arrives for 18 seconds while the wheel is
+    // being spun. So Windows itself stops routing the wheel here. It decides who
+    // gets the wheel when the mouse MOVES, and this panel is a layered, topmost
+    // window that never activates — once that decision goes stale, a stationary
+    // pointer can never refresh it, which is exactly why jiggling the mouse cures
+    // it. Neither WPF routing nor WM_MOUSEWHEEL can fix a message that is never
+    // sent.
+    //
+    // WH_MOUSE_LL sees wheel input before any of that routing, so the panel can
+    // decide for itself: pointer inside the panel's rectangle → step the contract
+    // and swallow the event; anywhere else → pass it straight through untouched.
+    //
+    // The callback runs on this (UI) thread and MUST stay quick — a slow one makes
+    // the whole desktop's scrolling stutter. It does a rect test and posts the
+    // work; no IO, no logging on this path (the counters below are reported by the
+    // 5s heartbeat instead).
+    private IntPtr _wheelHook;
+    private Native.HookProc? _wheelProc;   // held so the GC can't collect it
+    private int _wheelHits;
+    private int _wheelPassed;
+
+    private void HookWheel()
+    {
+        _wheelProc = WheelHook;
+        _wheelHook = Native.SetWindowsHookEx(Native.WhMouseLl, _wheelProc, IntPtr.Zero, 0);
+
+        Probe.Log(_wheelHook != IntPtr.Zero
+            ? $"wheel hook installed 0x{_wheelHook:X}"
+            : $"wheel hook FAILED err={System.Runtime.InteropServices.Marshal.GetLastWin32Error()} " +
+              "(falls back to WM_MOUSEWHEEL)");
+    }
+
+    private IntPtr WheelHook(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code < 0 || wParam.ToInt32() != Native.WmMouseWheelMsg)
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+
+        var data = System.Runtime.InteropServices.Marshal
+            .PtrToStructure<Native.MouseLowLevel>(lParam);
+
+        // Physical screen pixels on both sides, so DPI scaling never enters into it.
+        var hwnd = _source?.Handle ?? IntPtr.Zero;
+        if (hwnd == IntPtr.Zero
+            || !Native.GetWindowRect(hwnd, out var rect)
+            || !rect.Contains(data.X, data.Y))
+        {
+            _wheelPassed++;
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+        }
+
+        var delta = (short)((data.MouseData >> 16) & 0xFFFF);
+        if (delta == 0) return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+
+        _wheelHits++;
+
+        // Posted, not run inline: the hook has a system timeout, and stepping the
+        // contract redraws the panel.
+        Dispatcher.BeginInvoke(new Action(() => StepByWheel(delta)), DispatcherPriority.Input);
+
+        // Swallowed, so the window underneath doesn't scroll as well.
+        return new IntPtr(1);
+    }
+
     /// <summary>
-    /// WPF's routed wheel — a backstop for before the hwnd hook is in place. Once
-    /// WndProc handles WM_MOUSEWHEEL this no longer fires, so a line here in the
-    /// log means the window-message path missed it.
+    /// WPF's routed wheel — only reachable if the hook failed to install AND the
+    /// window message got through. Harmless duplicate protection: the hook
+    /// swallows what it handles, so both can't fire for one notch.
     /// </summary>
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
         if (e.Delta == 0) return;
 
-        Probe.Log($"OnMouseWheel delta={e.Delta} (wpf routed)");
         StepByWheel(e.Delta);
         e.Handled = true;
     }
@@ -1082,6 +1150,13 @@ public partial class StealthWindow : Window
         {
             var ok = Native.UnregisterHotKey(handle, id);
             Probe.Log($"  UnregisterHotKey 0x{id:X4} -> {(ok ? "ok" : $"FAIL err={System.Runtime.InteropServices.Marshal.GetLastWin32Error()}")}");
+        }
+
+        if (_wheelHook != IntPtr.Zero)
+        {
+            Native.UnhookWindowsHookEx(_wheelHook);
+            _wheelHook = IntPtr.Zero;
+            _wheelProc = null;
         }
 
         _source?.RemoveHook(WndProc);
@@ -1118,9 +1193,40 @@ internal static class Native
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int pid);
 
+    public delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookEx(int idHook, HookProc proc, IntPtr module, uint threadId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    public const int WhMouseLl = 14;
+    public const int WmMouseWheelMsg = 0x020A;
+
     public struct Rect
     {
         public int Left, Top, Right, Bottom;
+
+        public bool Contains(int x, int y) => x >= Left && x < Right && y >= Top && y < Bottom;
+    }
+
+    /// <summary>Payload of a low-level mouse hook callback (MSLLHOOKSTRUCT).</summary>
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct MouseLowLevel
+    {
+        public int X;
+        public int Y;
+
+        /// <summary>For the wheel, the notch delta is the HIGH word.</summary>
+        public int MouseData;
+
+        public int Flags;
+        public int Time;
+        public IntPtr ExtraInfo;
     }
 
     public const int GwlExStyle = -20;
