@@ -4,6 +4,33 @@ namespace StockClient.Core.Quotes;
 public sealed record QuoteField(string Label, string Value);
 
 /// <summary>
+/// One level of the order book. Volume is in the market's own unit — 手 for
+/// A-shares, 股 for US — and is 0 where the feed reports the price but no size
+/// (HK, every level).
+/// </summary>
+public sealed record DepthLevel(double Price, double Volume);
+
+/// <summary>
+/// The order book as far as the feed reports it: five levels a side for
+/// A-shares, level one only for US, price-without-size for HK, nothing for KR.
+/// Levels the feed left empty are dropped, so an empty list means "not reported"
+/// rather than "no orders".
+/// </summary>
+public sealed record QuoteDepth
+{
+    public IReadOnlyList<DepthLevel> Bids { get; init; } = Array.Empty<DepthLevel>();
+    public IReadOnlyList<DepthLevel> Asks { get; init; } = Array.Empty<DepthLevel>();
+
+    public bool IsEmpty => Bids.Count == 0 && Asks.Count == 0;
+
+    /// <summary>Largest size on either side, for scaling the bars. 0 when no sizes are reported.</summary>
+    public double MaxVolume =>
+        Math.Max(
+            Bids.Count == 0 ? 0 : Bids.Max(l => l.Volume),
+            Asks.Count == 0 ? 0 : Asks.Max(l => l.Volume));
+}
+
+/// <summary>
 /// A live quote.
 ///
 /// The core properties are the fields verified to sit at the same index for
@@ -87,6 +114,12 @@ public sealed record Quote
 
     /// <summary>内盘 (手). A-shares only.</summary>
     public double? InnerVolume { get; init; }
+
+    /// <summary>
+    /// Order book, parsed from the same response as everything else — the feed
+    /// already carries it, so this costs no extra request.
+    /// </summary>
+    public QuoteDepth Depth { get; init; } = new();
 
     /// <summary>Market-specific fields, only those confirmed for this market.</summary>
     public IReadOnlyList<QuoteField> Extras { get; init; } = Array.Empty<QuoteField>();

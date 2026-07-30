@@ -78,6 +78,24 @@ public sealed class QuoteRow : ObservableObject
     public bool IsMissing => _quote.IsMissing;
     public IReadOnlyList<QuoteField> Extras => _quote.Extras;
 
+    /// <summary>Order book from the same 1s quote — no separate request.</summary>
+    public QuoteDepth Depth => _quote.Depth;
+
+    /// <summary>
+    /// Decimals the price ladder should use. Prices come from the feed already
+    /// rounded, so this reads the quote back rather than guessing per market:
+    /// 1341.67 and 466.400 both need to render the way the feed sent them.
+    /// </summary>
+    public int PriceDecimals
+    {
+        get
+        {
+            var text = _quote.Now.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+            var dot = text.IndexOf('.');
+            return dot < 0 ? 2 : text.Length - dot - 1;
+        }
+    }
+
     // Per-market extras as structured numbers (null = not reported by the market),
     // for the optional grid columns. The grid shows these scaled (311.01万); the
     // detail badges below keep the raw values.

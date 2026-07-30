@@ -23,7 +23,7 @@ public partial class StealthWindow : Window
     private const int HotkeyPrev = 0xB004;
     private const int HotkeyNextGroup = 0xB005;
     private const int HotkeyPrevGroup = 0xB006;
-    private const int HotkeyToggleTrend = 0xB007;
+    private const int HotkeyCycleChart = 0xB007;
 
     private const uint ModAlt = 0x0001;
     private const uint ModWin = 0x0008;
@@ -93,7 +93,7 @@ public partial class StealthWindow : Window
     private static readonly int[] AllHotkeys =
     {
         HotkeyBrighter, HotkeyDarker, HotkeyNext, HotkeyPrev, HotkeyNextGroup, HotkeyPrevGroup,
-        HotkeyToggleTrend,
+        HotkeyCycleChart,
     };
 
     private static readonly (string Name, string Hex)[] Palette =
@@ -109,19 +109,26 @@ public partial class StealthWindow : Window
     private HwndSource? _source;
     private IReadOnlyList<QuoteRow> _rows = Array.Empty<QuoteRow>();
 
-    // Intraday sparkline of the anchor (current) contract only — one contract's
-    // trend at a time, cached per day, so the request load stays minimal.
+    // Charts of the anchor (current) contract only — one contract at a time, so
+    // the request load stays minimal. The order book needs no request at all: it
+    // rides along in the 1s quote.
     private PanelSparkline? _sparkline;
+    private DepthChart? _depthChart;
     private TrendSeries? _trendSeries;
     private string _trendCode = "";
     private bool _trendBusy;
     private DateTime _lastTrendAttempt = DateTime.MinValue;
 
-    /// <summary>Sparkline (44) + its host margins (1+3): the height a toggle adds/removes.</summary>
+    /// <summary>Sparkline (44) + its host margins (1+3): the height the 分时 chart adds.</summary>
     private const double SparkBlockHeight = 48;
 
-    /// <summary>The ShowTrend state already reflected in the window's Top, to detect a toggle.</summary>
-    private bool _appliedShowTrend;
+    /// <summary>Depth rows (5+5 at 13px, +1 split) + host margins: the height the 五档 chart adds.</summary>
+    private const double DepthBlockHeight = 135;
+
+    private const double DepthRowHeight = 13;
+
+    /// <summary>The chart already reflected in the window's Top, to detect a change.</summary>
+    private PanelChart _appliedChart;
 
     // Last hotkey fired and when, so a held key's repeat stream can be throttled.
     private int _lastHotkey;
@@ -182,7 +189,7 @@ public partial class StealthWindow : Window
         _config = config;
         _save = save;
         _trends = trends;
-        _appliedShowTrend = config.ShowTrend; // initial state is placed as-is; only toggles shift Top
+        _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
         Root.ContextMenu = BuildMenu();
@@ -378,23 +385,26 @@ public partial class StealthWindow : Window
     }
 
     /// <summary>
-    /// Drives the current contract's sparkline: shows/hides it per the setting,
-    /// tracks the anchor (first) contract, redraws the tip from the live 1s quote
-    /// every tick, and kicks a cached (per-day, stale-refetched) trend fetch.
+    /// Drives whichever chart is switched on above the rows: shows/hides it per
+    /// the setting, tracks the anchor (first) contract, and redraws it from the
+    /// live 1s quote every tick.
+    ///
+    /// 分时 additionally kicks a cached (per-day, stale-refetched) trend fetch;
+    /// 五档 needs nothing fetched — the book arrives inside the quote already.
     /// </summary>
     private void UpdateTrend()
     {
-        // A user toggle must not shove the quote rows down: absorb the sparkline
-        // block's height into Top so it grows UPWARD, above the rows, leaving them
-        // where they were. Only fires on an actual toggle, never per tick or on the
+        // A change must not shove the quote rows down: absorb the block's height
+        // into Top so the chart grows UPWARD, above the rows, leaving them where
+        // they were. Only fires on an actual change, never per tick or on the
         // initial placement (which is positioned as-is).
-        if (_config.ShowTrend != _appliedShowTrend)
+        if (_config.Chart != _appliedChart)
         {
-            if (IsLoaded) Top += _config.ShowTrend ? -SparkBlockHeight : SparkBlockHeight;
-            _appliedShowTrend = _config.ShowTrend;
+            if (IsLoaded) Top += BlockHeight(_appliedChart) - BlockHeight(_config.Chart);
+            _appliedChart = _config.Chart;
         }
 
-        if (!_config.ShowTrend)
+        if (_config.Chart == PanelChart.None)
         {
             if (SparkHost.Visibility != Visibility.Collapsed) SparkHost.Visibility = Visibility.Collapsed;
             _trendCode = "";
@@ -403,13 +413,24 @@ public partial class StealthWindow : Window
 
         // Visibility follows the setting only (not whether a contract is ready), so
         // it stays in lockstep with the Top adjustment above.
-        EnsureSparkline();
+        var chart = _config.Chart == PanelChart.Trend ? (UIElement)Sparkline() : Book();
+        if (!ReferenceEquals(SparkHost.Child, chart)) SparkHost.Child = chart;
         SparkHost.Visibility = Visibility.Visible;
 
         var anchor = _rows.FirstOrDefault(r => r is { IsMissing: false });
+
+        if (_config.Chart == PanelChart.Depth)
+        {
+            Book().Set(
+                anchor?.Depth ?? new QuoteDepth(),
+                anchor?.Yesterday ?? 0,
+                anchor?.PriceDecimals ?? 2);
+            return;
+        }
+
         if (anchor is null)
         {
-            _sparkline!.Set(null, 0); // no contract yet: blank chart, but the space stays
+            Sparkline().Set(null, 0); // no contract yet: blank chart, but the space stays
             _trendCode = "";
             return;
         }
@@ -422,7 +443,7 @@ public partial class StealthWindow : Window
         }
 
         // Redraw every tick so the tip tracks the live price without a request.
-        _sparkline!.Set(_trendSeries, anchor.Now);
+        Sparkline().Set(_trendSeries, anchor.Now);
 
         // Fetch on a contract change (attempt reset above) or periodically; the repo
         // serves a fresh cache without a network call, so this stays cheap.
@@ -430,27 +451,69 @@ public partial class StealthWindow : Window
             _ = FetchTrend(anchor.Code);
     }
 
-    private void EnsureSparkline()
+    private static double BlockHeight(PanelChart chart) => chart switch
     {
-        if (_sparkline is not null) return;
+        PanelChart.Trend => SparkBlockHeight,
+        PanelChart.Depth => DepthBlockHeight,
+        _ => 0,
+    };
 
+    private PanelSparkline Sparkline()
+    {
         // Fixed width, NOT stretched to the panel: the panel auto-sizes to each
         // contract's text, so a stretched chart came out a different length per
         // contract. A constant width keeps every thumbnail the same span. Taller
         // than the text rows so the day's swing is easy to read.
-        _sparkline = new PanelSparkline
+        return _sparkline ??= new PanelSparkline
         {
             Height = 44,
             Width = 168,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        SparkHost.Child = _sparkline;
     }
 
-    /// <summary>Flips the current-contract sparkline on/off (Win+Alt+Delete / menu).</summary>
-    private void ToggleTrend()
+    private DepthChart Book()
     {
-        _config.ShowTrend = !_config.ShowTrend;
+        // Same fixed width as the sparkline so switching charts doesn't resize the
+        // panel. Tighter rows and smaller type than the main window's ladder —
+        // ten levels have to fit in a strip that stays unobtrusive.
+        return _depthChart ??= new DepthChart
+        {
+            RowHeight = DepthRowHeight,
+            FontSize = 9.5,
+            Height = DepthRowHeight * 10 + 1,
+            Width = 168,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+    }
+
+    /// <summary>
+    /// Cycles the chart above the rows: 关 → 分时 → 五档 → 关 (Win+Alt+Delete / menu).
+    /// One key for both charts, since they occupy the same strip and a user
+    /// wanting one rarely wants the other at the same time.
+    /// </summary>
+    private void CycleChart()
+    {
+        _config.Chart = _config.Chart switch
+        {
+            PanelChart.None => PanelChart.Trend,
+            PanelChart.Trend => PanelChart.Depth,
+            _ => PanelChart.None,
+        };
+
+        _config.ShowTrend = _config.Chart == PanelChart.Trend; // keep the legacy key in step
+        _save();
+        _rows = _vm.StealthRows();
+        Render();
+    }
+
+    /// <summary>Jumps straight to one chart (settings window / menu), no cycling.</summary>
+    public void SetChart(PanelChart chart)
+    {
+        if (_config.Chart == chart) return;
+
+        _config.Chart = chart;
+        _config.ShowTrend = chart == PanelChart.Trend;
         _save();
         _rows = _vm.StealthRows();
         Render();
@@ -628,9 +691,27 @@ public partial class StealthWindow : Window
         settings.Click += (_, _) => SettingsRequested?.Invoke();
         menu.Items.Add(settings);
 
-        var trend = new MenuItem { Header = "显示/隐藏缩略图", InputGestureText = "Win+Alt+Delete" };
-        trend.Click += (_, _) => ToggleTrend();
-        menu.Items.Add(trend);
+        // One item per chart rather than the old on/off, so the state is visible
+        // (the hotkey cycles blind) and either chart is one click away.
+        var chart = new MenuItem { Header = "面板图表", InputGestureText = "Win+Alt+Delete" };
+        foreach (var (kind, label) in new[]
+                 {
+                     (PanelChart.None, "关闭"),
+                     (PanelChart.Trend, "分时缩略图"),
+                     (PanelChart.Depth, "五档盘口"),
+                 })
+        {
+            var captured = kind;
+            var item = new MenuItem
+            {
+                Header = label,
+                IsCheckable = true,
+                IsChecked = _config.Chart == kind,
+            };
+            item.Click += (_, _) => SetChart(captured);
+            chart.Items.Add(item);
+        }
+        menu.Items.Add(chart);
 
         menu.Items.Add(new Separator());
 
@@ -714,7 +795,7 @@ public partial class StealthWindow : Window
                  & Register(handle, HotkeyPrev, ModPanel, VkLeft, "Win+Alt+Left")
                  & Register(handle, HotkeyNextGroup, ModPanel, VkPageDown, "Win+Alt+PageDown")
                  & Register(handle, HotkeyPrevGroup, ModPanel, VkPageUp, "Win+Alt+PageUp")
-                 & Register(handle, HotkeyToggleTrend, ModPanelNoRepeat, VkDelete, "Win+Alt+Delete");
+                 & Register(handle, HotkeyCycleChart, ModPanelNoRepeat, VkDelete, "Win+Alt+Delete");
 
         if (ok) return;
 
@@ -788,9 +869,9 @@ public partial class StealthWindow : Window
                 _vm.StealthStepGroup(-1);
                 break;
 
-            case HotkeyToggleTrend:
-                ToggleTrend();
-                Snapshot("hotkey toggle trend");
+            case HotkeyCycleChart:
+                CycleChart();
+                Snapshot($"hotkey cycle chart -> {_config.Chart}");
                 break;
 
             default:

@@ -24,6 +24,23 @@ public sealed class Group
     public bool InPanel { get; set; } = true;
 }
 
+/// <summary>
+/// The chart shown above the stealth ticker's rows. Cycled by Win+Alt+Delete:
+/// none → 分时 → 五档 → none. Serialized by ORDINAL like the other enums here, so
+/// members may only be appended, never reordered. None must stay 0 — that is what
+/// a config without the key reads as.
+/// </summary>
+public enum PanelChart
+{
+    None,
+
+    /// <summary>Intraday sparkline of the current contract.</summary>
+    Trend,
+
+    /// <summary>Order book of the current contract, from the 1s quote itself.</summary>
+    Depth,
+}
+
 /// <summary>Which quote fields the stealth ticker shows, and in what colour.</summary>
 public enum StealthField
 {
@@ -111,9 +128,18 @@ public sealed class StealthConfig
     [JsonPropertyName("rowGap")]
     public int RowGap { get; set; }
 
-    /// <summary>Show a small intraday sparkline for the current contract. Off by default.</summary>
+    /// <summary>
+    /// Pre-1.0.17 flag for the sparkline. Kept only so an existing config still
+    /// opens with its chart on — <see cref="Chart"/> is what the panel reads now.
+    /// It is written back in step with <see cref="Chart"/> so downgrading doesn't
+    /// lose the setting either.
+    /// </summary>
     [JsonPropertyName("trend")]
     public bool ShowTrend { get; set; }
+
+    /// <summary>Which chart rides above the ticker rows. None by default.</summary>
+    [JsonPropertyName("chart")]
+    public PanelChart Chart { get; set; }
 
     /// <summary>Last position on screen. Null until the panel has been moved.</summary>
     [JsonPropertyName("left")]
@@ -162,6 +188,12 @@ public sealed class StealthConfig
         Shade = Math.Clamp(Shade, 0, 10);
         Rows = Math.Clamp(Rows, 1, MaxRows);
         RowGap = Math.Clamp(RowGap, 0, MaxRowGap);
+
+        // Config written before the chart became a three-way choice: carry the old
+        // on/off flag over once, then keep the two in step.
+        if (Chart == PanelChart.None && ShowTrend) Chart = PanelChart.Trend;
+        ShowTrend = Chart == PanelChart.Trend;
+
         return this;
     }
 }

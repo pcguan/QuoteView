@@ -20,7 +20,15 @@ public partial class QuotesView : UserControl
         DataContextChanged += (_, e) =>
         {
             if (e.NewValue is QuotesViewModel vm)
+            {
                 vm.SuggestionsChanged += has => SuggestPopup.IsOpen = has && CodeBox.IsKeyboardFocusWithin;
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName is nameof(QuotesViewModel.SelectedRow) or "")
+                        WatchDepth(vm.SelectedRow);
+                };
+                WatchDepth(vm.SelectedRow);
+            }
         };
 
         // Drag to reorder — groups in the list, contracts in the grid. Vm is read
@@ -447,6 +455,34 @@ public partial class QuotesView : UserControl
     private void RemoveCode_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: QuoteRow row }) Vm?.RemoveCode(row);
+    }
+
+    // The order book under the grid. Redrawn from the selected row's own change
+    // notification, which the 1s poll raises for every property at once — so the
+    // ladder tracks the quote without a timer of its own.
+    private DepthChart? _depth;
+    private QuoteRow? _depthRow;
+
+    private void WatchDepth(QuoteRow? row)
+    {
+        if (ReferenceEquals(row, _depthRow)) return;
+
+        if (_depthRow is not null) _depthRow.PropertyChanged -= OnDepthRowChanged;
+        _depthRow = row;
+        if (_depthRow is not null) _depthRow.PropertyChanged += OnDepthRowChanged;
+
+        RenderDepth();
+    }
+
+    private void OnDepthRowChanged(object? sender, PropertyChangedEventArgs e) => RenderDepth();
+
+    private void RenderDepth()
+    {
+        _depth ??= new DepthChart { RowHeight = 16, FontSize = 11 };
+        if (!ReferenceEquals(DepthHost.Child, _depth)) DepthHost.Child = _depth;
+
+        if (_depthRow is null) _depth.Set(new StockClient.Core.Quotes.QuoteDepth(), 0, 2);
+        else _depth.Set(_depthRow.Depth, _depthRow.Yesterday, _depthRow.PriceDecimals);
     }
 
     /// <summary>

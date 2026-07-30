@@ -35,8 +35,16 @@
     <Slider x:Name="ShadeSlider" Minimum="0" Maximum="10"
             TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,14" />
 
-    <CheckBox x:Name="TrendCheck" Content="显示分时缩略图（当前合约）"
-              Foreground="#EDF1F7" Margin="0,0,0,18" />
+    <TextBlock Text="面板图表（当前合约）　Win+Alt+Delete 循环切换" Foreground="#EDF1F7"
+               Margin="0,0,0,6" />
+    <StackPanel x:Name="ChartChoice" Orientation="Horizontal" Margin="0,0,0,18">
+      <RadioButton x:Name="ChartNone" Content="关闭" GroupName="chart"
+                   Foreground="#EDF1F7" Margin="0,0,14,0" />
+      <RadioButton x:Name="ChartTrend" Content="分时缩略图" GroupName="chart"
+                   Foreground="#EDF1F7" Margin="0,0,14,0" />
+      <RadioButton x:Name="ChartDepth" Content="五档盘口" GroupName="chart"
+                   Foreground="#EDF1F7" />
+    </StackPanel>
 
     <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,10" />
     <!-- Scrolls: with ~20 fields the list would otherwise run off the screen. -->

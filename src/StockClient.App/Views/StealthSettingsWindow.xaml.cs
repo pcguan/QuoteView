@@ -90,9 +90,25 @@ public partial class StealthSettingsWindow : Window
             Apply();
         };
 
-        TrendCheck.IsChecked = config.ShowTrend;
-        TrendCheck.Checked += (_, _) => { _config.ShowTrend = true; Apply(); };
-        TrendCheck.Unchecked += (_, _) => { _config.ShowTrend = false; Apply(); };
+        // Same three states the Win+Alt+Delete cycle walks; here they're pickable
+        // directly, and ShowTrend is kept in step so an older build still reads
+        // the setting.
+        foreach (var (button, kind) in new[]
+                 {
+                     (ChartNone, PanelChart.None),
+                     (ChartTrend, PanelChart.Trend),
+                     (ChartDepth, PanelChart.Depth),
+                 })
+        {
+            var captured = kind;
+            button.IsChecked = config.Chart == kind;
+            button.Checked += (_, _) =>
+            {
+                _config.Chart = captured;
+                _config.ShowTrend = captured == PanelChart.Trend;
+                Apply();
+            };
+        }
 
         BuildFields();
     }

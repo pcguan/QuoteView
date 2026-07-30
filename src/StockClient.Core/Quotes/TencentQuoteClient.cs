@@ -121,8 +121,40 @@ public sealed class TencentQuoteClient
             OuterVolume = isA ? Opt(p, 7) : null,
             InnerVolume = isA ? Opt(p, 8) : null,
 
+            Depth = Depth(p),
             Extras = Extras(market, p),
         };
+    }
+
+    /// <summary>
+    /// The order book, at [9]–[28]: five bid levels as price/size pairs from [9],
+    /// then five ask levels from [19]. Same response as the rest of the quote, so
+    /// it is free — no second endpoint, no extra request.
+    ///
+    /// What actually comes back differs by market (measured): SH/SZ/BJ give all
+    /// five levels with sizes in 手; US gives level one only, size in 股; HK gives
+    /// level-one PRICES with the sizes hard-zero; KR sends empty strings. A level
+    /// with no price is dropped, so "not reported" reads as an empty list instead
+    /// of a stack of zero rows.
+    /// </summary>
+    private static QuoteDepth Depth(string[] p)
+    {
+        return new QuoteDepth { Bids = Side(9), Asks = Side(19) };
+
+        IReadOnlyList<DepthLevel> Side(int start)
+        {
+            var levels = new List<DepthLevel>(5);
+
+            for (var i = 0; i < 5; i++)
+            {
+                var price = Num(p, start + i * 2);
+                if (price <= 0) continue;
+
+                levels.Add(new DepthLevel(price, Num(p, start + i * 2 + 1)));
+            }
+
+            return levels;
+        }
     }
 
     /// <summary>

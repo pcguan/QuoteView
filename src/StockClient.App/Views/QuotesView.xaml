@@ -440,20 +440,35 @@
             <TextBlock Text="· 该市场返回的字段" Margin="8,0,0,0" FontSize="11"
                        Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
           </StackPanel>
-          <ItemsControl ItemsSource="{Binding SelectedRow.Extras}">
-            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Style="{StaticResource Badge}" Margin="0,0,8,6">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Faint}" />
-                    <TextBlock Text="{Binding Value}" FontSize="12" FontWeight="SemiBold" Margin="7,0,0,0"
-                               Foreground="{StaticResource Accent}" FontFamily="Consolas" />
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Order book, filled in code: it redraws with every 1s tick, which
+                 a dozen bound TextBlocks would do far less cheaply. -->
+            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+              <TextBlock Text="五档盘口" FontSize="11" Foreground="{StaticResource Faint}"
+                         Margin="0,0,0,4" />
+              <Border x:Name="DepthHost" Width="226" Height="164" />
+            </StackPanel>
+
+            <ItemsControl Grid.Column="1" ItemsSource="{Binding SelectedRow.Extras}" VerticalAlignment="Top">
+              <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Style="{StaticResource Badge}" Margin="0,0,8,6">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="{Binding Label}" FontSize="11" Foreground="{StaticResource Faint}" />
+                      <TextBlock Text="{Binding Value}" FontSize="12" FontWeight="SemiBold" Margin="7,0,0,0"
+                                 Foreground="{StaticResource Accent}" FontFamily="Consolas" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </Grid>
         </StackPanel>
       </Border>
     </Grid>
