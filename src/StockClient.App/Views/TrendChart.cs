@@ -148,7 +148,12 @@ public sealed class TrendChart : FrameworkElement
         foreach (var p in points)
         {
             dev = Math.Max(dev, Math.Abs(p.Price - pre));
-            dev = Math.Max(dev, Math.Abs(p.AvgPrice - pre));
+
+            // Only when there IS an average. The Tencent fallback reports none for
+            // BJ/US/KR (its rows have no amount column), and treating a 0 as a real
+            // value stretches the axis from 0 to 2×pre and flattens the line into
+            // a hairline across the middle.
+            if (p.AvgPrice > 0) dev = Math.Max(dev, Math.Abs(p.AvgPrice - pre));
         }
 
         if (dev <= 0) dev = pre * 0.01 + 1;
@@ -195,15 +200,20 @@ public sealed class TrendChart : FrameworkElement
         DrawingContext dc, double step, Func<double, double> priceToY, IReadOnlyList<TrendPoint> points)
     {
         var price = new PathFigure { StartPoint = new Point(X(0, step), priceToY(points[0].Price)) };
-        var avg = new PathFigure { StartPoint = new Point(X(0, step), priceToY(points[0].AvgPrice)) };
-
         for (var i = 1; i < points.Count; i++)
-        {
             price.Segments.Add(new LineSegment(new Point(X(i, step), priceToY(points[i].Price)), true));
-            avg.Segments.Add(new LineSegment(new Point(X(i, step), priceToY(points[i].AvgPrice)), true));
-        }
 
         dc.DrawGeometry(null, PriceLine, new PathGeometry { Figures = { price } });
+
+        // The average line is skipped entirely when the source doesn't report one
+        // (Tencent fallback on BJ/US/KR) — drawing it from zeros would put a flat
+        // line along the bottom that reads as a real average of 0.
+        if (!points.Any(p => p.AvgPrice > 0)) return;
+
+        var avg = new PathFigure { StartPoint = new Point(X(0, step), priceToY(points[0].AvgPrice)) };
+        for (var i = 1; i < points.Count; i++)
+            avg.Segments.Add(new LineSegment(new Point(X(i, step), priceToY(points[i].AvgPrice)), true));
+
         dc.DrawGeometry(null, AvgLine, new PathGeometry { Figures = { avg } });
     }
 
@@ -263,7 +273,8 @@ public sealed class TrendChart : FrameworkElement
         {
             ("时间", p.Clock, AxisText),
             ("价", FormatPrice(p.Price), brush),
-            ("均价", FormatPrice(p.AvgPrice), AvgLine.Brush),
+            // "-" rather than 0.00 when the source has no average (Tencent fallback).
+            ("均价", p.AvgPrice > 0 ? FormatPrice(p.AvgPrice) : "-", AvgLine.Brush),
             ("涨跌幅", pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", brush),
             ("量", FormatVolume(p.Volume), AxisText),
         };

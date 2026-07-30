@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using StockClient.Core.Quotes;
@@ -14,6 +15,8 @@ public sealed class PanelSparkline : FrameworkElement
 {
     private static readonly Brush Up = Frozen("#EF5350");
     private static readonly Brush Down = Frozen("#26A69A");
+    private static readonly Brush UpFill = Frozen("#59EF5350");
+    private static readonly Brush DownFill = Frozen("#5926A69A");
     private static readonly Pen BaselinePen = FrozenPen("#5F6672", 0.6, dashed: true);
 
     private TrendSeries? _series;
@@ -30,7 +33,20 @@ public sealed class PanelSparkline : FrameworkElement
     {
         var w = ActualWidth;
         var h = ActualHeight;
-        if (_series is null || w <= 2 || h <= 2) return;
+        if (w <= 2 || h <= 2) return;
+
+        // Say so instead of drawing nothing. An empty strip is indistinguishable
+        // from a broken chart — which is exactly how a throttled trend source got
+        // reported as "画不出来".
+        if (_series is null || _series.Points.Count == 0)
+        {
+            var text = new FormattedText(
+                "分时暂无数据", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface("Microsoft YaHei"), 10, Frozen("#8B93A3"),
+                VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            dc.DrawText(text, new Point(1, (h - text.Height) / 2));
+            return;
+        }
 
         // x is the fraction of the full session, NOT of the points gathered so far,
         // so equal elapsed time draws equal length across contracts and the line
@@ -66,13 +82,26 @@ public sealed class PanelSparkline : FrameworkElement
             dc.DrawLine(BaselinePen, new Point(0, yb), new Point(w, yb));
         }
 
-        var pen = new Pen(pts[^1].Price >= pre ? Up : Down, 1.1);
+        var rising = pts[^1].Price >= pre;
+        var pen = new Pen(rising ? Up : Down, 1.6);
         pen.Freeze();
 
         var figure = new PathFigure { StartPoint = new Point(X(pts[0].Frac), Y(pts[0].Price)) };
         for (var i = 1; i < pts.Count; i++)
             figure.Segments.Add(new LineSegment(new Point(X(pts[i].Frac), Y(pts[i].Price)), true));
 
+        // Filled down to the baseline, and a thicker line than a normal chart would
+        // use. The panel runs at whatever opacity the shade dial is set to — at 20%
+        // a 1px hairline is effectively invisible, and early in the session the line
+        // covers only the fraction of the width the day has elapsed (x spans the
+        // WHOLE session so contracts stay comparable), so at 09:40 there is very
+        // little of it to see. An area has bulk; a hairline doesn't.
+        var area = figure.Clone();
+        area.Segments.Add(new LineSegment(new Point(X(pts[^1].Frac), h), false));
+        area.Segments.Add(new LineSegment(new Point(X(pts[0].Frac), h), false));
+        area.IsClosed = true;
+
+        dc.DrawGeometry(rising ? UpFill : DownFill, null, new PathGeometry { Figures = { area } });
         dc.DrawGeometry(null, pen, new PathGeometry { Figures = { figure } });
     }
 

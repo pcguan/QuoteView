@@ -65,7 +65,10 @@ public partial class MainWindow : FluentWindow
             new KlineCache(),
             new MarketClock());
         _trendClient = new EastMoneyTrendClient(_klineHttp);
-        _trendRepo = new TrendRepository(_trendClient, new MarketClock());
+        // Tencent as the backup source: EastMoney throttles trends2 with connection
+        // resets, which used to leave the panel thumbnail simply blank.
+        _trendRepo = new TrendRepository(
+            _trendClient, new MarketClock(), new TencentTrendClient(_klineHttp));
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
         // yields a window with no backdrop at all — it renders invisible.
@@ -303,7 +306,7 @@ public partial class MainWindow : FluentWindow
     {
         Probe.Log($"OpenKline {contract.Code} {contract.Name} secid={contract.EastMoneySecId}");
 
-        var vm = new ViewModels.KlineViewModel(contract, _klineRepo, _trendClient, Dispatcher);
+        var vm = new ViewModels.KlineViewModel(contract, _klineRepo, _trendRepo, Dispatcher);
 
         // No Owner: an owned window drags its owner to the front when activated,
         // which surfaced the main window every time a chart was clicked. Tracked

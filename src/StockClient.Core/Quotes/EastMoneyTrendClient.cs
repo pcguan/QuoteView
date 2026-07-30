@@ -68,14 +68,35 @@ public sealed class EastMoneyTrendClient
 
     private async Task<TrendResponse?> GetAsync(string path, CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://{Host}{path}");
-        request.Headers.Referrer = new Uri(Referer);
+        // Retried like the kline path, and for the same reason: EastMoney drops
+        // connections on this host readily ("连接被意外关闭"). When it is throttling
+        // the path outright every attempt fails and the caller falls back to
+        // Tencent; retries only rescue the ordinary flaky case.
+        const int maxAttempts = 3;
+        Exception? last = null;
 
-        using var response = await _http.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, $"https://{Host}{path}");
+                request.Headers.Referrer = new Uri(Referer);
 
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        return JsonSerializer.Deserialize<TrendResponse>(json);
+                using var response = await _http.SendAsync(request, cancellationToken);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                return JsonSerializer.Deserialize<TrendResponse>(json);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                last = ex;
+                if (attempt < maxAttempts) await Task.Delay(300 * attempt, cancellationToken);
+            }
+        }
+
+        if (last is not null) throw last;
+        return null;
     }
 
     private sealed record TrendResponse

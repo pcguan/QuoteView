@@ -33,7 +33,7 @@ public sealed class KlineViewModel : ObservableObject
 
     private readonly Contract _contract;
     private readonly KlineRepository _repo;
-    private readonly EastMoneyTrendClient _trendClient;
+    private readonly TrendRepository _trends;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _klineTimer;
@@ -53,11 +53,11 @@ public sealed class KlineViewModel : ObservableObject
 
     public KlineViewModel(
         Contract contract, KlineRepository repo,
-        EastMoneyTrendClient trendClient, Dispatcher dispatcher)
+        TrendRepository trends, Dispatcher dispatcher)
     {
         _contract = contract;
         _repo = repo;
-        _trendClient = trendClient;
+        _trends = trends;
         _dispatcher = dispatcher;
 
         _trendTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
@@ -197,11 +197,14 @@ public sealed class KlineViewModel : ObservableObject
 
         try
         {
-            var series = await _trendClient.FetchAsync(_contract, cts.Token);
+            // Through the repository, so this shares the panel's two sources
+            // (EastMoney, then Tencent when it is throttled) and its 15s cache.
+            // Null means neither source answered AND nothing was cached.
+            var series = await _trends.GetAsync(_contract, cts.Token);
             if (cts.IsCancellationRequested || !IsTrend) return;
 
-            Trend = series;
-            Error = series.Points.Count == 0 ? "没有分时数据" : "";
+            if (series is not null) Trend = series;
+            Error = Trend is null || Trend.Points.Count == 0 ? "没有分时数据" : "";
             TrendLoaded?.Invoke();
         }
         catch (OperationCanceledException)
