@@ -398,6 +398,7 @@ public partial class StealthWindow : Window
         if (_rows.Count == 0)
         {
             Rows.Children.Add(RowFor(null));
+            Resync();
             return;
         }
 
@@ -413,7 +414,25 @@ public partial class StealthWindow : Window
         }
 
         UpdateTrend();
+        Resync();
     }
+
+    /// <summary>
+    /// Re-runs the hit test after a rebuild, because the rebuild is what breaks
+    /// the wheel.
+    ///
+    /// Render throws every row away and makes new TextBlocks. If the pointer was
+    /// over one of them, WPF's mouse-over element has just been removed from the
+    /// tree — and a wheel event is a ROUTED event that starts at that element, so
+    /// with nothing under the pointer there is nowhere for it to start and the
+    /// window never sees it. The pointer hasn't moved, so nothing re-tests it
+    /// either; jiggling the mouse fixes it, which is exactly the reported symptom
+    /// ("stays put, scrolls a few notches, then stops until you move it").
+    ///
+    /// Mouse.Synchronize forces that re-test, so the new element under the pointer
+    /// becomes the mouse-over element straight away.
+    /// </summary>
+    private static void Resync() => Mouse.Synchronize();
 
     /// <summary>
     /// Drives whichever chart is switched on above the rows: shows/hides it per
