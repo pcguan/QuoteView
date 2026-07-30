@@ -87,6 +87,7 @@ public partial class StealthWindow : Window
     private const uint VkDelete = 0x2E;
 
     private const int WmHotkey = 0x0312;
+    private const int WmMouseWheel = 0x020A;
 
     private const int MaxShade = 10;
 
@@ -432,7 +433,11 @@ public partial class StealthWindow : Window
     /// Mouse.Synchronize forces that re-test, so the new element under the pointer
     /// becomes the mouse-over element straight away.
     /// </summary>
-    private static void Resync() => Mouse.Synchronize();
+    private void Resync() =>
+        // Queued at Loaded priority, i.e. after measure/arrange. Calling it inline
+        // hit-tests rows that have just been added and have no position yet, so it
+        // finds nothing and the mouse-over element stays broken.
+        Dispatcher.InvokeAsync(Mouse.Synchronize, DispatcherPriority.Loaded);
 
     /// <summary>
     /// Drives whichever chart is switched on above the rows: shows/hides it per
@@ -890,6 +895,25 @@ public partial class StealthWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        // Wheel handled at the window-message level, underneath WPF's routing.
+        // WPF starts a wheel event at the element under the pointer, and the panel
+        // rebuilds its rows constantly — so that element keeps disappearing and the
+        // event has nowhere to start. WM_MOUSEWHEEL arrives regardless of which
+        // element is where.
+        if (msg == WmMouseWheel)
+        {
+            var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
+            Probe.Log($"WM_MOUSEWHEEL delta={delta} (win32)");
+
+            if (delta != 0)
+            {
+                StepByWheel(delta);
+                handled = true;
+            }
+
+            return IntPtr.Zero;
+        }
+
         if (msg != WmHotkey) return IntPtr.Zero;
 
         var id = wParam.ToInt32();
@@ -1017,21 +1041,34 @@ public partial class StealthWindow : Window
     /// rely on Windows routing the wheel to the hovered window rather than the
     /// focused one (MouseWheelRouting=2, the default); the panel never takes focus.
     /// </summary>
+    /// <summary>
+    /// WPF's routed wheel — a backstop for before the hwnd hook is in place. Once
+    /// WndProc handles WM_MOUSEWHEEL this no longer fires, so a line here in the
+    /// log means the window-message path missed it.
+    /// </summary>
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
         if (e.Delta == 0) return;
 
-        // Delta is 120 per notch, but a fast flick arrives as ONE event carrying
-        // several notches (240, 360…). Stepping a single contract regardless meant
-        // spinning the wheel hard barely moved — it read as unresponsive. A finer
-        // wheel (or a trackpad) sends less than 120, which still has to move one.
-        var notches = Math.Max(1, (int)Math.Round(Math.Abs(e.Delta) / 120.0));
-
-        // One call with the whole distance, not a loop: the view model applies the
-        // offset once and pushes a single redraw.
-        _vm.StealthStep(e.Delta > 0 ? -notches : notches);
+        Probe.Log($"OnMouseWheel delta={e.Delta} (wpf routed)");
+        StepByWheel(e.Delta);
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// Steps the contract by however many notches the wheel reports.
+    ///
+    /// Delta is 120 per notch, but a fast flick arrives as ONE event carrying
+    /// several (240, 360…) — stepping one regardless made spinning hard barely
+    /// move. A finer wheel or a trackpad sends less than 120, which still has to
+    /// move one. The whole distance goes in a single call so the view model
+    /// applies it once and pushes a single redraw.
+    /// </summary>
+    private void StepByWheel(int delta)
+    {
+        var notches = Math.Max(1, (int)Math.Round(Math.Abs(delta) / 120.0));
+        _vm.StealthStep(delta > 0 ? -notches : notches);
     }
 
     protected override void OnClosed(EventArgs e)
