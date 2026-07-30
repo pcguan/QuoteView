@@ -523,21 +523,41 @@ public partial class StealthWindow : Window
     {
         _trendBusy = true;
         _lastTrendAttempt = DateTime.UtcNow;
+        // Logged because every failure here is silent by design — the thumbnail
+        // just stays empty, which is indistinguishable from a drawing bug and got
+        // diagnosed as one. One line per attempt (≈20s apart) is cheap.
         try
         {
             var contract = _vm.FindContract(code);
-            if (contract is null) return;
+            if (contract is null)
+            {
+                Probe.Log($"trend {code}: 合约未找到（列表还没加载完？），跳过");
+                return;
+            }
 
             var series = await _trends.GetAsync(contract, CancellationToken.None);
-            if (series is null || code != _trendCode) return; // switched away meanwhile
+            if (series is null)
+            {
+                Probe.Log($"trend {code}: 两个源都没给到数据");
+                return;
+            }
+
+            if (code != _trendCode)
+            {
+                Probe.Log($"trend {code}: 已切到 {_trendCode}，丢弃");
+                return; // switched away meanwhile
+            }
 
             _trendSeries = series;
             var live = _rows.FirstOrDefault(r => r.Code == code)?.Now ?? 0;
             _sparkline?.Set(series, live);
+
+            Probe.Log($"trend {code}: {series.Points.Count} 点 昨收={series.PreClose} 现价={live}");
         }
-        catch
+        catch (Exception ex)
         {
             // Best-effort thumbnail; keep whatever was last drawn.
+            Probe.Log($"trend {code} 抓取失败: {ex.GetType().Name} {ex.Message.Split('\n')[0]}");
         }
         finally
         {
