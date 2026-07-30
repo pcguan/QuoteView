@@ -361,6 +361,8 @@ public partial class StealthWindow : Window
     /// <summary>Rebuilds the panel: one row per contract, each row the chosen fields in colour.</summary>
     private void Render()
     {
+        HoldWidth();
+
         Rows.Children.Clear();
         ApplyShade();
 
@@ -911,6 +913,43 @@ public partial class StealthWindow : Window
 
         Probe.Log($"Root_Drag after:  size={ActualWidth:F0}x{ActualHeight:F0} " +
                   $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
+    }
+
+    // Widest the panel has been for the current group, used as a floor so it never
+    // shrinks mid-scroll.
+    private double _widthFloor;
+    private string _widthGroup = "";
+
+    /// <summary>
+    /// Stops the panel narrowing while you scroll through a group.
+    ///
+    /// The window auto-sizes to its content, so each contract makes it a different
+    /// width (measured: 141 to 186px across one group). Scrolling to a
+    /// shorter-named contract pulled the right edge in past the pointer — which
+    /// had not moved — and the wheel then went to whatever was underneath. From
+    /// the outside: "it stops responding after a few notches."
+    ///
+    /// So width only ever grows, per group. Switching groups starts over, since
+    /// otherwise one wide name would pad the panel forever.
+    /// </summary>
+    private void HoldWidth()
+    {
+        var group = _vm.ActiveGroup?.Id ?? "";
+        if (group != _widthGroup)
+        {
+            _widthGroup = group;
+            _widthFloor = 0;
+            Root.MinWidth = 0;
+            return;
+        }
+
+        // Measured after the previous render; setting it to a width already
+        // achieved can't itself trigger a resize loop.
+        if (ActualWidth > _widthFloor)
+        {
+            _widthFloor = ActualWidth;
+            Root.MinWidth = _widthFloor;
+        }
     }
 
     /// <summary>
