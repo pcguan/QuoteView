@@ -119,6 +119,12 @@ public partial class StealthWindow : Window
     private bool _trendBusy;
     private DateTime _lastTrendAttempt = DateTime.MinValue;
 
+    /// <summary>How often the same contract's trend is re-pulled.</summary>
+    private static readonly TimeSpan TrendRetry = TimeSpan.FromSeconds(20);
+
+    /// <summary>Quiet period after switching contract before its trend is fetched.</summary>
+    private static readonly TimeSpan TrendSettle = TimeSpan.FromMilliseconds(400);
+
     /// <summary>Sparkline (44) + its host margins (1+3): the height the 分时 chart adds.</summary>
     private const double SparkBlockHeight = 48;
 
@@ -244,11 +250,34 @@ public partial class StealthWindow : Window
         };
     }
 
-    private void OnTick(IReadOnlyList<QuoteRow> rows) => Dispatcher.InvokeAsync(() =>
+    // Latest rows waiting to be drawn, and whether a draw is already queued.
+    // Volatile because ticks arrive off the poller's thread.
+    private IReadOnlyList<QuoteRow>? _pendingRows;
+    private volatile bool _renderQueued;
+
+    /// <summary>
+    /// Queues ONE render for the newest rows, however many ticks arrive first.
+    ///
+    /// Spinning the wheel fires a tick per notch, and posting a render for each
+    /// used to pile them up behind the 1s quote ticks — the drawing then ran
+    /// further and further behind the input, which is what "gets less responsive
+    /// the longer you scroll" actually was. Intermediate frames are worth nothing
+    /// here: only the newest rows are ever drawn.
+    /// </summary>
+    private void OnTick(IReadOnlyList<QuoteRow> rows)
     {
-        _rows = rows;
-        Render();
-    });
+        _pendingRows = rows;
+
+        if (_renderQueued) return;
+        _renderQueued = true;
+
+        Dispatcher.InvokeAsync(() =>
+        {
+            _renderQueued = false;
+            if (_pendingRows is { } latest) _rows = latest;
+            Render();
+        });
+    }
 
     /// <summary>
     /// Puts the panel back in front the moment anything gets over it.
@@ -441,7 +470,13 @@ public partial class StealthWindow : Window
         {
             _trendCode = anchor.Code;
             _trendSeries = null;
-            _lastTrendAttempt = DateTime.MinValue; // fetch the new contract at once
+
+            // Wait for the scrolling to settle rather than firing at once. Wheeling
+            // through a group used to launch a request per contract — each with a
+            // synchronous log write on the UI thread — so the panel got heavier the
+            // more you scrolled. Every further switch pushes this out again, so only
+            // the contract you stop on is fetched.
+            _lastTrendAttempt = DateTime.UtcNow - TrendRetry + TrendSettle;
         }
 
         // Redraw every tick so the tip tracks the live price without a request.
@@ -449,7 +484,7 @@ public partial class StealthWindow : Window
 
         // Fetch on a contract change (attempt reset above) or periodically; the repo
         // serves a fresh cache without a network call, so this stays cheap.
-        if (!_trendBusy && (DateTime.UtcNow - _lastTrendAttempt).TotalSeconds >= 20)
+        if (!_trendBusy && DateTime.UtcNow - _lastTrendAttempt >= TrendRetry)
             _ = FetchTrend(anchor.Code);
     }
 
