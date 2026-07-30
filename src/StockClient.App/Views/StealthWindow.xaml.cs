@@ -107,6 +107,7 @@ public partial class StealthWindow : Window
     private readonly Action _save;
     private readonly TrendRepository _trends;
     private HwndSource? _source;
+    private ContextMenu? _menu;
     private IReadOnlyList<QuoteRow> _rows = Array.Empty<QuoteRow>();
 
     // Charts of the anchor (current) contract only — one contract at a time, so
@@ -192,7 +193,9 @@ public partial class StealthWindow : Window
         _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
-        Root.ContextMenu = BuildMenu();
+        // NOT attached as Root.ContextMenu: right-click now steps groups. The
+        // menu is opened from the middle button instead (see OnMouseDown).
+        _menu = BuildMenu();
 
         LocationChanged += (_, _) =>
         {
@@ -232,7 +235,7 @@ public partial class StealthWindow : Window
 
             // Reported in the menu, not a tooltip: a tooltip over this panel
             // covers the quotes it is meant to annotate.
-            if (HotkeysFailed && Root.ContextMenu is { } menu)
+            if (HotkeysFailed && _menu is { } menu)
             {
                 menu.Items.Insert(0, new MenuItem
                 {
@@ -735,25 +738,25 @@ public partial class StealthWindow : Window
 
         menu.Items.Add(new Separator());
 
-        var next = new MenuItem { Header = "下一个合约", InputGestureText = "Win+Alt+→" };
+        var next = new MenuItem { Header = "下一个合约", InputGestureText = "滚轮下 / Win+Alt+→" };
         next.Click += (_, _) => _vm.StealthStep(1);
         menu.Items.Add(next);
 
-        var prev = new MenuItem { Header = "上一个合约", InputGestureText = "Win+Alt+←" };
+        var prev = new MenuItem { Header = "上一个合约", InputGestureText = "滚轮上 / Win+Alt+←" };
         prev.Click += (_, _) => _vm.StealthStep(-1);
         menu.Items.Add(prev);
 
-        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "Win+Alt+PageDown" };
+        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "右键 / Win+Alt+PageDown" };
         nextGroup.Click += (_, _) => _vm.StealthStepGroup(1);
         menu.Items.Add(nextGroup);
 
-        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "Win+Alt+PageUp" };
+        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "左键 / Win+Alt+PageUp" };
         prevGroup.Click += (_, _) => _vm.StealthStepGroup(-1);
         menu.Items.Add(prevGroup);
 
         menu.Items.Add(new Separator());
 
-        var restore = new MenuItem { Header = "还原主窗口" };
+        var restore = new MenuItem { Header = "还原主窗口", InputGestureText = "或双击托盘图标" };
         restore.Click += (_, _) => RestoreRequested?.Invoke();
         menu.Items.Add(restore);
 
@@ -902,15 +905,88 @@ public partial class StealthWindow : Window
         return IntPtr.Zero;
     }
 
+    // Mouse gestures on the panel, so navigation works without the keyboard:
+    //   wheel        previous / next contract
+    //   left click   previous group      right click  next group
+    //   left drag    move the panel      middle click the menu
+    //
+    // Left click had to be split from left drag: dragging is how the panel is
+    // positioned and can't be given up. The split is by distance — past a few
+    // pixels it's a drag, otherwise it's a click. That also fixes the old
+    // complaint recorded in the XAML, that a click gave no feedback whatsoever
+    // because DragMove swallowed it whole; now a click visibly changes group.
+    private const double DragThreshold = 4;
+
+    private Point? _pressedAt;
+    private bool _dragged;
+
     private void Root_Drag(object sender, MouseButtonEventArgs e)
     {
-        Probe.Log($"Root_Drag clicks={e.ClickCount} before: size={ActualWidth:F0}x{ActualHeight:F0} " +
-                  $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
+        // Down only records the origin. Committing to a drag here is what made a
+        // plain click unusable for anything else.
+        _pressedAt = e.GetPosition(this);
+        _dragged = false;
+    }
 
-        if (e.ClickCount == 1) DragMove();
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
 
-        Probe.Log($"Root_Drag after:  size={ActualWidth:F0}x{ActualHeight:F0} " +
-                  $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
+        if (_pressedAt is not { } origin || e.LeftButton != MouseButtonState.Pressed || _dragged) return;
+
+        var now = e.GetPosition(this);
+        if (Math.Abs(now.X - origin.X) < DragThreshold && Math.Abs(now.Y - origin.Y) < DragThreshold) return;
+
+        // DragMove blocks until the button is released and eats the MouseUp, so
+        // the click handler below is skipped via _dragged.
+        _dragged = true;
+        DragMove();
+    }
+
+    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseLeftButtonUp(e);
+
+        var wasDrag = _dragged;
+        _pressedAt = null;
+        _dragged = false;
+
+        if (wasDrag) return;
+
+        _vm.StealthStepGroup(-1);
+        Snapshot("click -> prev group");
+    }
+
+    protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseRightButtonUp(e);
+
+        // Right-click navigates instead of opening the menu; the menu moved to
+        // the middle button. Handled so the (now unattached) context menu can't
+        // also appear.
+        e.Handled = true;
+        _vm.StealthStepGroup(1);
+        Snapshot("click -> next group");
+    }
+
+    protected override void OnMouseDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseDown(e);
+
+        if (e.ChangedButton != MouseButton.Middle || _menu is null) return;
+
+        _menu.PlacementTarget = Root;
+        _menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (e.Delta == 0) return;
+
+        _vm.StealthStep(e.Delta > 0 ? -1 : 1);
+        e.Handled = true;
     }
 
     protected override void OnClosed(EventArgs e)

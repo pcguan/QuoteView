@@ -14,16 +14,15 @@
   <!--
     No MouseDoubleClick -> restore, deliberately.
 
-    Restoring closes this panel, and double-click was far too easy to hit by
-    accident: single click is swallowed whole by DragMove below, which gives no
-    visible feedback at all — the panel doesn't highlight, doesn't move, nothing
-    happens. So a click that doesn't appear to register invites a second one,
-    both land inside the 500ms double-click window, and the ticker vanishes.
-    From the outside that reads as "one click killed it".
+    Restoring closes this panel, and double-click is far too easy to hit by
+    accident on a panel this small. Two explicit, unambiguous paths already
+    exist: 还原主窗口 in the menu (middle-click) and double-clicking the tray
+    icon. A panel whose entire purpose is to sit there unobtrusively must not be
+    one stray click from disappearing.
 
-    Restore already has two explicit, unambiguous paths: the right-click menu's
-    还原主窗口 and double-clicking the tray icon. A panel whose entire purpose is
-    to sit there unobtrusively must not be one stray click from disappearing.
+    Mouse gestures live here now (see StealthWindow.xaml.cs): wheel steps the
+    contract, left/right click steps the group, left DRAG still moves the panel,
+    and the menu moved to the middle button so right-click could be freed up.
   -->
   <!--
     No ToolTip here, deliberately.
