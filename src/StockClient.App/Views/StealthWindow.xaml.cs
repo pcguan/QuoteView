@@ -244,7 +244,7 @@ public partial class StealthWindow : Window
             {
                 menu.Items.Insert(0, new MenuItem
                 {
-                    Header = "⚠ 快捷键被其它程序占用，已停用",
+                    Header = $"⚠ {_taken.Count} 个快捷键被占用且接管失败",
                     IsEnabled = false,
                 });
                 menu.Items.Insert(1, new Separator());
@@ -872,19 +872,29 @@ public partial class StealthWindow : Window
         // silently dead with nothing on screen to explain why.
         Probe.Log($"HookHotkeys hwnd=0x{handle:X} source={(_source is null ? "NULL" : "ok")}");
 
-        var ok = Register(handle, HotkeyBrighter, ModPanel, VkUp, "Win+Alt+Up")
-                 & Register(handle, HotkeyDarker, ModPanel, VkDown, "Win+Alt+Down")
-                 & Register(handle, HotkeyNext, ModPanel, VkRight, "Win+Alt+Right")
-                 & Register(handle, HotkeyPrev, ModPanel, VkLeft, "Win+Alt+Left")
-                 & Register(handle, HotkeyNextGroup, ModPanel, VkPageDown, "Win+Alt+PageDown")
-                 & Register(handle, HotkeyPrevGroup, ModPanel, VkPageUp, "Win+Alt+PageUp")
-                 & Register(handle, HotkeyCycleChart, ModPanelNoRepeat, VkDelete, "Win+Alt+Delete");
+        var wanted = new (int Id, uint Mods, uint Vk, string Label)[]
+        {
+            (HotkeyBrighter, ModPanel, VkUp, "Win+Alt+Up"),
+            (HotkeyDarker, ModPanel, VkDown, "Win+Alt+Down"),
+            (HotkeyNext, ModPanel, VkRight, "Win+Alt+Right"),
+            (HotkeyPrev, ModPanel, VkLeft, "Win+Alt+Left"),
+            (HotkeyNextGroup, ModPanel, VkPageDown, "Win+Alt+PageDown"),
+            (HotkeyPrevGroup, ModPanel, VkPageUp, "Win+Alt+PageUp"),
+            (HotkeyCycleChart, ModPanelNoRepeat, VkDelete, "Win+Alt+Delete"),
+        };
 
-        if (ok) return;
+        _taken.Clear();
 
-        Probe.Log("HookHotkeys FAILED -> rolling back all six");
-        foreach (var id in AllHotkeys) Native.UnregisterHotKey(handle, id);
-        HotkeysFailed = true;
+        foreach (var (id, mods, vk, label) in wanted)
+        {
+            if (Register(handle, id, mods, vk, label)) continue;
+
+            // Taken by another process. RegisterHotKey has no way to preempt that,
+            // so this one gets claimed by the keyboard hook instead.
+            _taken.Add((id, vk));
+        }
+
+        HotkeysFailed = _taken.Count > 0 && !HookKeys();
     }
 
     private static bool Register(IntPtr handle, int id, uint mods, uint vk, string label)
@@ -893,6 +903,74 @@ public partial class StealthWindow : Window
         var err = ok ? 0 : System.Runtime.InteropServices.Marshal.GetLastWin32Error();
         Probe.Log($"  RegisterHotKey {label,-22} mods=0x{mods:X4} -> {(ok ? "ok" : $"FAIL err={err}")}");
         return ok;
+    }
+
+    // Hotkeys another process already owns, claimed via the keyboard hook instead.
+    private readonly List<(int Id, uint Vk)> _taken = new();
+    private IntPtr _keyHook;
+    private Native.HookProc? _keyProc;
+
+    /// <summary>
+    /// Takes over the combinations RegisterHotKey couldn't get.
+    ///
+    /// Windows hands a hotkey to whoever registered it first and offers nothing to
+    /// override that — no preemption, no "suspend theirs while I run". A low-level
+    /// keyboard hook is the only way: it sees keys BEFORE the system dispatches
+    /// hotkeys, so swallowing the combination there stops the other program's
+    /// hotkey from ever firing. Unhooking on exit puts everything back exactly as
+    /// it was, which is the "give it back when I quit" half.
+    ///
+    /// Installed only when something is actually contested — with all seven
+    /// registered normally, no hook is installed at all.
+    ///
+    /// The callback sees every keystroke on the machine, so it does the minimum
+    /// possible: compare a virtual-key code, check two modifier states, and post.
+    /// Nothing is read, stored or forwarded. It also runs on the UI thread under a
+    /// system timeout, so it must stay this cheap.
+    /// </summary>
+    private bool HookKeys()
+    {
+        if (_keyHook != IntPtr.Zero) return true;
+
+        _keyProc = KeyHook;
+        _keyHook = Native.SetWindowsHookEx(Native.WhKeyboardLl, _keyProc, IntPtr.Zero, 0);
+
+        var names = string.Join(", ", _taken.Select(t => $"0x{t.Vk:X2}"));
+        Probe.Log(_keyHook != IntPtr.Zero
+            ? $"key hook installed 0x{_keyHook:X} -> 接管 {_taken.Count} 个被占热键 [{names}]"
+            : $"key hook FAILED err={System.Runtime.InteropServices.Marshal.GetLastWin32Error()} " +
+              $"-> {_taken.Count} 个热键仍不可用 [{names}]");
+
+        return _keyHook != IntPtr.Zero;
+    }
+
+    private IntPtr KeyHook(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code < 0) return Native.CallNextHookEx(_keyHook, code, wParam, lParam);
+
+        var msg = wParam.ToInt32();
+        // SYSKEYDOWN too: with Alt held, that's what the other key arrives as.
+        if (msg != Native.WmKeyDown && msg != Native.WmSysKeyDown)
+            return Native.CallNextHookEx(_keyHook, code, wParam, lParam);
+
+        var info = System.Runtime.InteropServices.Marshal
+            .PtrToStructure<Native.KeyboardLowLevel>(lParam);
+
+        var hit = _taken.FirstOrDefault(t => t.Vk == (uint)info.VkCode);
+        if (hit.Vk == 0) return Native.CallNextHookEx(_keyHook, code, wParam, lParam);
+
+        // Win+Alt, same as the registered ones. Checked live rather than tracked,
+        // so a modifier pressed before the panel opened still counts.
+        var win = (Native.GetAsyncKeyState(Native.VkLWin) & 0x8000) != 0
+                  || (Native.GetAsyncKeyState(Native.VkRWin) & 0x8000) != 0;
+        var alt = (Native.GetAsyncKeyState(Native.VkMenu) & 0x8000) != 0;
+
+        if (!win || !alt) return Native.CallNextHookEx(_keyHook, code, wParam, lParam);
+
+        Dispatcher.BeginInvoke(new Action(() => Trigger(hit.Id)), DispatcherPriority.Input);
+
+        // Swallowed — this is what outranks the process that registered it.
+        return new IntPtr(1);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -936,6 +1014,14 @@ public partial class StealthWindow : Window
 
         Probe.Log($"WM_HOTKEY id=0x{id:X4}");
 
+        Trigger(id);
+        handled = true;
+        return IntPtr.Zero;
+    }
+
+    /// <summary>Runs one hotkey's action, whether it came from WM_HOTKEY or the hook.</summary>
+    private void Trigger(int id)
+    {
         switch (id)
         {
             // Up brightens, down darkens — the way the arrows read.
@@ -976,13 +1062,7 @@ public partial class StealthWindow : Window
                 CycleChart();
                 Snapshot($"hotkey cycle chart -> {_config.Chart}");
                 break;
-
-            default:
-                return IntPtr.Zero;
         }
-
-        handled = true;
-        return IntPtr.Zero;
     }
 
     private void Root_Drag(object sender, MouseButtonEventArgs e)
@@ -1159,6 +1239,16 @@ public partial class StealthWindow : Window
             _wheelProc = null;
         }
 
+        // Releasing the keyboard hook hands the contested combinations straight
+        // back to whoever registered them — the "give it back on exit" half.
+        if (_keyHook != IntPtr.Zero)
+        {
+            Native.UnhookWindowsHookEx(_keyHook);
+            _keyHook = IntPtr.Zero;
+            _keyProc = null;
+            Probe.Log($"key hook removed -> 归还 {_taken.Count} 个热键");
+        }
+
         _source?.RemoveHook(WndProc);
         _vm.StealthTick -= OnTick;
 
@@ -1204,14 +1294,35 @@ internal static class Native
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vk);
+
     public const int WhMouseLl = 14;
+    public const int WhKeyboardLl = 13;
     public const int WmMouseWheelMsg = 0x020A;
+    public const int WmKeyDown = 0x0100;
+    public const int WmSysKeyDown = 0x0104;
+
+    public const int VkLWin = 0x5B;
+    public const int VkRWin = 0x5C;
+    public const int VkMenu = 0x12;
 
     public struct Rect
     {
         public int Left, Top, Right, Bottom;
 
         public bool Contains(int x, int y) => x >= Left && x < Right && y >= Top && y < Bottom;
+    }
+
+    /// <summary>Payload of a low-level keyboard hook callback (KBDLLHOOKSTRUCT).</summary>
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct KeyboardLowLevel
+    {
+        public int VkCode;
+        public int ScanCode;
+        public int Flags;
+        public int Time;
+        public IntPtr ExtraInfo;
     }
 
     /// <summary>Payload of a low-level mouse hook callback (MSLLHOOKSTRUCT).</summary>
