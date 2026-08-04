@@ -190,7 +190,7 @@
                   SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
                   AutoGenerateColumns="False" IsReadOnly="True" HeadersVisibility="Column"
                   GridLinesVisibility="None" Background="Transparent" BorderThickness="0"
-                  RowHeight="30" CanUserAddRows="False" SelectionMode="Single"
+                  RowHeight="30" CanUserAddRows="False" SelectionMode="Extended"
                   MouseDoubleClick="QuoteGrid_DoubleClick"
                   Loaded="QuoteGrid_Loaded">
           <DataGrid.Columns>
@@ -428,8 +428,10 @@
         </Grid>
       </Border>
 
-      <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,8,0,0"
-              Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
+      <!-- Fixed height and always visible: when this pane appeared and vanished
+           with the selection, every click resized the grid above it and the rows
+           jumped under the cursor. It now reserves its space permanently. -->
+      <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,8,0,0" Height="150">
         <StackPanel>
           <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
             <TextBlock Text="{Binding SelectedRow.Name}" FontWeight="SemiBold" />
@@ -438,23 +440,26 @@
             <TextBlock Text="{Binding SelectedRow.Time}" Margin="12,0,0,0" FontSize="11"
                        Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
             <TextBlock Text="· 该市场返回的字段" Margin="8,0,0,0" FontSize="11"
-                       Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
+                       Foreground="{StaticResource Faint}" VerticalAlignment="Center"
+                       Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}" />
+            <TextBlock Text="选中一行查看该合约的全部字段；双击打开图表" FontSize="11"
+                       Foreground="{StaticResource Faint}" VerticalAlignment="Center">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding HasSelection}" Value="False">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
           </StackPanel>
-          <Grid>
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="Auto" />
-              <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
-            <!-- Order book, filled in code: it redraws with every 1s tick, which
-                 a dozen bound TextBlocks would do far less cheaply. -->
-            <StackPanel Grid.Column="0" Margin="0,0,16,0">
-              <TextBlock Text="五档盘口" FontSize="11" Foreground="{StaticResource Faint}"
-                         Margin="0,0,0,4" />
-              <Border x:Name="DepthHost" Width="226" Height="164" />
-            </StackPanel>
-
-            <ItemsControl Grid.Column="1" ItemsSource="{Binding SelectedRow.Extras}" VerticalAlignment="Top">
+          <!-- Scrolls rather than growing: the pane's height is fixed now, and
+               different markets return very different numbers of fields. -->
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding SelectedRow.Extras}">
               <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
@@ -468,7 +473,7 @@
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
-          </Grid>
+          </ScrollViewer>
         </StackPanel>
       </Border>
     </Grid>

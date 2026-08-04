@@ -22,12 +22,6 @@ public partial class QuotesView : UserControl
             if (e.NewValue is QuotesViewModel vm)
             {
                 vm.SuggestionsChanged += has => SuggestPopup.IsOpen = has && CodeBox.IsKeyboardFocusWithin;
-                vm.PropertyChanged += (_, args) =>
-                {
-                    if (args.PropertyName is nameof(QuotesViewModel.SelectedRow) or "")
-                        WatchDepth(vm.SelectedRow);
-                };
-                WatchDepth(vm.SelectedRow);
             }
         };
 
@@ -457,42 +451,13 @@ public partial class QuotesView : UserControl
         if (sender is FrameworkElement { DataContext: QuoteRow row }) Vm?.RemoveCode(row);
     }
 
-    // The order book under the grid. Redrawn from the selected row's own change
-    // notification, which the 1s poll raises for every property at once — so the
-    // ladder tracks the quote without a timer of its own.
-    private DepthChart? _depth;
-    private QuoteRow? _depthRow;
-
-    private void WatchDepth(QuoteRow? row)
-    {
-        if (ReferenceEquals(row, _depthRow)) return;
-
-        if (_depthRow is not null) _depthRow.PropertyChanged -= OnDepthRowChanged;
-        _depthRow = row;
-        if (_depthRow is not null) _depthRow.PropertyChanged += OnDepthRowChanged;
-
-        RenderDepth();
-    }
-
-    private void OnDepthRowChanged(object? sender, PropertyChangedEventArgs e) => RenderDepth();
-
-    private void RenderDepth()
-    {
-        _depth ??= new DepthChart { RowHeight = 16, FontSize = 11 };
-        if (!ReferenceEquals(DepthHost.Child, _depth)) DepthHost.Child = _depth;
-
-        if (_depthRow is null) _depth.Set(new StockClient.Core.Quotes.QuoteDepth(), 0, 2);
-        else _depth.Set(_depthRow.Depth, _depthRow.Yesterday, _depthRow.PriceDecimals);
-    }
-
     /// <summary>
-    /// Right-click menu on a contract row: move / copy it to another group.
+    /// Right-click menu on contract rows: move / copy / remove, in bulk.
     ///
     /// Hung off the ROW style, not the grid, so it stays clear of the header's
     /// column menu — right-clicking a header must still open 列设置. The items are
-    /// rebuilt on every open because the group list changes underneath, and the
-    /// row comes from the menu's placement target rather than the selection, so
-    /// the menu always acts on the row actually under the cursor.
+    /// rebuilt on every open because both the group list and the selection change
+    /// underneath.
     /// </summary>
     private void AttachRowMenu(System.Windows.Controls.DataGrid grid)
     {
@@ -504,16 +469,31 @@ public partial class QuotesView : UserControl
 
         style.Setters.Add(new Setter(FrameworkElement.ContextMenuProperty, rowMenu));
 
-        // Right-click selects the row first, so the detail panel below follows the
-        // row being acted on instead of staying on the previous selection.
+        // Right-clicking INSIDE an existing multi-selection keeps it; right-clicking
+        // elsewhere selects that one row first. Without this, right-clicking a
+        // selected row would collapse the selection to it and silently turn a bulk
+        // action into a single one.
         style.Setters.Add(new EventSetter(
             PreviewMouseRightButtonDownEvent,
             new MouseButtonEventHandler((s, _) =>
             {
-                if (s is DataGridRow row) row.IsSelected = true;
+                if (s is DataGridRow { IsSelected: false } row) row.IsSelected = true;
             })));
 
         grid.RowStyle = style;
+    }
+
+    /// <summary>
+    /// The rows the menu acts on: the whole selection when the clicked row is part
+    /// of it, otherwise just that row.
+    /// </summary>
+    private IReadOnlyList<QuoteRow> MenuTargets(ContextMenu menu)
+    {
+        var clicked = (menu.PlacementTarget as FrameworkElement)?.DataContext as QuoteRow;
+        var selected = QuoteGrid.SelectedItems.OfType<QuoteRow>().ToArray();
+
+        if (clicked is null) return selected;
+        return selected.Contains(clicked) ? selected : new[] { clicked };
     }
 
     private void BuildRowMenu(ContextMenu menu)
@@ -521,26 +501,46 @@ public partial class QuotesView : UserControl
         menu.Items.Clear();
 
         if (Vm is not { } vm) return;
-        if ((menu.PlacementTarget as FrameworkElement)?.DataContext is not QuoteRow row) return;
+
+        var targets = MenuTargets(menu);
+        if (targets.Count == 0) return;
+
+        var many = targets.Count > 1;
+        var what = many ? $"选中的 {targets.Count} 个合约" : targets[0].Name;
+
+        menu.Items.Add(new System.Windows.Controls.MenuItem
+        {
+            Header = what,
+            IsEnabled = false,
+        });
+        menu.Items.Add(new Separator());
 
         var others = vm.Groups.Where(g => !ReferenceEquals(g, vm.ActiveGroup)).ToArray();
 
-        menu.Items.Add(GroupTargets("移动到分组", others, row,
-            target => vm.MoveCodeTo(row, target), markExisting: true));
-        menu.Items.Add(GroupTargets("添加到分组", others, row,
-            target => vm.CopyCodeTo(row, target), markExisting: false));
+        menu.Items.Add(GroupTargets("移动到分组", others, targets,
+            target => vm.MoveCodesTo(targets, target), markExisting: true));
+        menu.Items.Add(GroupTargets("添加到分组", others, targets,
+            target => vm.CopyCodesTo(targets, target), markExisting: false));
 
         menu.Items.Add(new Separator());
 
-        var chart = new System.Windows.Controls.MenuItem { Header = "打开 K 线图" };
-        chart.Click += (_, _) =>
+        // Single row only: opening N chart windows at once from a menu click is
+        // not what anyone means by it.
+        if (!many)
         {
-            if (!string.IsNullOrWhiteSpace(row.Code)) OpenKlineRequested?.Invoke(row.Code);
-        };
-        menu.Items.Add(chart);
+            var chart = new System.Windows.Controls.MenuItem { Header = "打开图表" };
+            chart.Click += (_, _) =>
+            {
+                if (!string.IsNullOrWhiteSpace(targets[0].Code)) OpenKlineRequested?.Invoke(targets[0].Code);
+            };
+            menu.Items.Add(chart);
+        }
 
-        var remove = new System.Windows.Controls.MenuItem { Header = "从本分组移除" };
-        remove.Click += (_, _) => vm.RemoveCode(row);
+        var remove = new System.Windows.Controls.MenuItem
+        {
+            Header = many ? $"从本分组移除这 {targets.Count} 个" : "从本分组移除",
+        };
+        remove.Click += (_, _) => vm.RemoveCodes(targets);
         menu.Items.Add(remove);
     }
 
@@ -548,12 +548,12 @@ public partial class QuotesView : UserControl
     /// One submenu listing every other group.
     /// </summary>
     /// <param name="markExisting">
-    /// How a target that already holds the code is treated. A copy there would do
-    /// nothing, so it is disabled; a move still has work to do (drop it from this
-    /// group), so it stays clickable and is just labelled.
+    /// How a target that already holds ALL the selected codes is treated. A copy
+    /// there would do nothing, so it is disabled; a move still has work to do
+    /// (drop them from this group), so it stays clickable and is just labelled.
     /// </param>
     private static System.Windows.Controls.MenuItem GroupTargets(
-        string header, IReadOnlyList<GroupRow> targets, QuoteRow row,
+        string header, IReadOnlyList<GroupRow> targets, IReadOnlyList<QuoteRow> rows,
         Action<GroupRow> apply, bool markExisting)
     {
         var item = new System.Windows.Controls.MenuItem { Header = header };
@@ -570,11 +570,19 @@ public partial class QuotesView : UserControl
 
         foreach (var target in targets)
         {
-            var has = target.Model.Codes.Contains(row.Code, StringComparer.OrdinalIgnoreCase);
+            // "已有" only when every selected contract is already there; a partial
+            // overlap still has something to add.
+            var missing = rows.Count(r =>
+                !target.Model.Codes.Contains(r.Code, StringComparer.OrdinalIgnoreCase));
+            var has = missing == 0;
+
+            var label = has ? $"{target.Name}（已有）"
+                : rows.Count > 1 && missing < rows.Count ? $"{target.Name}（缺 {missing} 个）"
+                : target.Name;
 
             var entry = new System.Windows.Controls.MenuItem
             {
-                Header = has ? $"{target.Name}（已有）" : target.Name,
+                Header = label,
                 IsEnabled = !has || markExisting,
             };
 

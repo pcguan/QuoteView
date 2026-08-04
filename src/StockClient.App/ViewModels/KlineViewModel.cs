@@ -34,6 +34,7 @@ public sealed class KlineViewModel : ObservableObject
     private readonly Contract _contract;
     private readonly KlineRepository _repo;
     private readonly TrendRepository _trends;
+    private readonly TencentQuoteClient? _quotes;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _klineTimer;
@@ -47,17 +48,19 @@ public sealed class KlineViewModel : ObservableObject
         new Dictionary<int, IReadOnlyList<double?>>();
     private bool _isTrend;
     private TrendSeries? _trend;
+    private Quote? _live;
     private string _source = "东财";
     private bool _loading;
     private string _error = "";
 
     public KlineViewModel(
         Contract contract, KlineRepository repo,
-        TrendRepository trends, Dispatcher dispatcher)
+        TrendRepository trends, Dispatcher dispatcher, TencentQuoteClient? quotes = null)
     {
         _contract = contract;
         _repo = repo;
         _trends = trends;
+        _quotes = quotes;
         _dispatcher = dispatcher;
 
         _trendTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
@@ -91,6 +94,20 @@ public sealed class KlineViewModel : ObservableObject
         get => _trend;
         private set => Set(ref _trend, value);
     }
+
+    /// <summary>
+    /// The 1s quote for this contract, polled only while the intraday view is up —
+    /// it exists for the order book beside the line, which comes free inside the
+    /// same response. Null until the first tick, or if no client was supplied.
+    /// </summary>
+    public Quote? Live
+    {
+        get => _live;
+        private set => Set(ref _live, value);
+    }
+
+    /// <summary>Raised after each live-quote tick so the book can redraw.</summary>
+    public event Action? LiveUpdated;
 
     /// <summary>Which source served the current candles: "东财" or "腾讯(备用)".</summary>
     public string Source
@@ -195,6 +212,8 @@ public sealed class KlineViewModel : ObservableObject
             Error = "";
         }
 
+        _ = PollLiveAsync();
+
         try
         {
             // Through the repository, so this shares the panel's two sources
@@ -218,6 +237,29 @@ public sealed class KlineViewModel : ObservableObject
         finally
         {
             if (!cts.IsCancellationRequested && first) Loading = false;
+        }
+    }
+
+    /// <summary>
+    /// One quote for this contract, for the order book. Deliberately not a shared
+    /// poller: a chart window can be open on a contract that is in no group, so it
+    /// fetches its own — one request per intraday window per trend poll.
+    /// </summary>
+    private async Task PollLiveAsync()
+    {
+        if (_quotes is null || !IsTrend) return;
+
+        try
+        {
+            var quotes = await _quotes.GetQuotesAsync(new[] { _contract.Code }, CancellationToken.None);
+            if (!IsTrend || quotes.Count == 0 || quotes[0].IsMissing) return;
+
+            Live = quotes[0];
+            LiveUpdated?.Invoke();
+        }
+        catch (Exception)
+        {
+            // The book just keeps its last state; the line is the main event here.
         }
     }
 

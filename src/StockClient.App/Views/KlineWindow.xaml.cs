@@ -42,6 +42,7 @@ public partial class KlineWindow : Window
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
 
         _vm.Loaded += OnKlineLoaded;
+        _vm.LiveUpdated += OnLiveUpdated;
         _vm.Refreshed += OnKlineRefreshed;
         _vm.TrendLoaded += OnTrendLoaded;
         _vm.PropertyChanged += (_, e) => Dispatcher.Invoke(() =>
@@ -72,6 +73,48 @@ public partial class KlineWindow : Window
         UpdateStatus();
     });
 
+    /// <summary>Width of the book pane beside the intraday line.</summary>
+    private const double DepthWidth = 200;
+
+    private DepthChart? _depth;
+
+    private void OnLiveUpdated() => Dispatcher.Invoke(RenderDepth);
+
+    /// <summary>
+    /// Draws the book from the window's own 1s quote. Rows are taller and the type
+    /// bigger than the stealth panel's copy — there is room here, and this is the
+    /// view someone opens to actually study the book.
+    /// </summary>
+    private void RenderDepth()
+    {
+        if (!_vm.IsTrend) return;
+
+        _depth ??= new DepthChart { RowHeight = 22, FontSize = 12 };
+        if (!ReferenceEquals(DepthHost.Child, _depth))
+        {
+            DepthHost.Child = _depth;
+            DepthHost.Height = 22 * 10 + 1;
+        }
+
+        var live = _vm.Live;
+        _depth.Set(
+            live?.Depth ?? new StockClient.Core.Quotes.QuoteDepth(),
+            live?.Yesterday ?? 0,
+            Decimals(live));
+
+        DepthTime.Text = live is null ? "" : $"{live.Name}  {live.Now}  {live.Time}";
+    }
+
+    /// <summary>Renders prices the way the feed sent them (1341.67 vs 466.400).</summary>
+    private static int Decimals(StockClient.Core.Quotes.Quote? quote)
+    {
+        if (quote is null) return 2;
+
+        var text = quote.Now.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        var dot = text.IndexOf('.');
+        return dot < 0 ? 2 : text.Length - dot - 1;
+    }
+
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
     {
         if (_vm.Trend is { } trend) Trend.SetSeries(trend);
@@ -86,6 +129,13 @@ public partial class KlineWindow : Window
 
         Chart.Visibility = trend ? Visibility.Collapsed : Visibility.Visible;
         Trend.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
+
+        // Order book only alongside the intraday line — it is today's book, which
+        // means nothing next to a year of candles. Collapsing the column (not just
+        // the pane) gives the width back to the chart.
+        DepthPane.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
+        DepthColumn.Width = trend ? new GridLength(DepthWidth) : new GridLength(0);
+        if (trend) RenderDepth();
 
         // Adjustment doesn't apply to an intraday line; the hint changes to match.
         AdjustButtons.IsEnabled = !trend;

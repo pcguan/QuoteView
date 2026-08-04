@@ -306,7 +306,8 @@ public partial class MainWindow : FluentWindow
     {
         Probe.Log($"OpenKline {contract.Code} {contract.Name} secid={contract.EastMoneySecId}");
 
-        var vm = new ViewModels.KlineViewModel(contract, _klineRepo, _trendRepo, Dispatcher);
+        var vm = new ViewModels.KlineViewModel(
+            contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp));
 
         // No Owner: an owned window drags its owner to the front when activated,
         // which surfaced the main window every time a chart was clicked. Tracked

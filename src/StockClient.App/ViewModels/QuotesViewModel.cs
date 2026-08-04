@@ -587,33 +587,40 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         RebuildRows();
     }
 
-    /// <summary>Moves a contract out of the active group into another one.</summary>
-    public void MoveCodeTo(QuoteRow? row, GroupRow? target) => TransferCode(row, target, move: true);
+    /// <summary>Moves contracts out of the active group into another one.</summary>
+    public void MoveCodesTo(IReadOnlyList<QuoteRow> rows, GroupRow? target) =>
+        TransferCodes(rows, target, move: true);
 
-    /// <summary>Adds a contract to another group, leaving it in this one too.</summary>
-    public void CopyCodeTo(QuoteRow? row, GroupRow? target) => TransferCode(row, target, move: false);
+    /// <summary>Adds contracts to another group, leaving them in this one too.</summary>
+    public void CopyCodesTo(IReadOnlyList<QuoteRow> rows, GroupRow? target) =>
+        TransferCodes(rows, target, move: false);
 
     /// <summary>
     /// Shared by move and copy: the only difference is whether the source keeps
-    /// its copy. A target that already holds the code is not a failure — a move
+    /// its copies. A target that already holds a code is not a failure — a move
     /// still takes it out of the source, which is what "move it there" means when
     /// it is already there.
+    ///
+    /// The whole batch is one save and one rebuild; doing it per contract made the
+    /// list flash once per selected row.
     /// </summary>
-    private void TransferCode(QuoteRow? row, GroupRow? target, bool move)
+    private void TransferCodes(IReadOnlyList<QuoteRow> rows, GroupRow? target, bool move)
     {
-        if (row is null || target is null || _activeGroup is null) return;
+        if (rows.Count == 0 || target is null || _activeGroup is null) return;
         if (ReferenceEquals(target, _activeGroup)) return;
 
-        if (!target.Model.Codes.Contains(row.Code, StringComparer.OrdinalIgnoreCase))
+        foreach (var row in rows)
         {
+            if (target.Model.Codes.Contains(row.Code, StringComparer.OrdinalIgnoreCase)) continue;
             target.Model.Codes.Add(row.Code);
-            target.RefreshCount();
         }
+
+        target.RefreshCount();
 
         if (move)
         {
-            _activeGroup.Model.Codes.RemoveAll(c =>
-                string.Equals(c, row.Code, StringComparison.OrdinalIgnoreCase));
+            var codes = rows.Select(r => r.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _activeGroup.Model.Codes.RemoveAll(codes.Contains);
             _activeGroup.RefreshCount();
         }
 
@@ -624,15 +631,21 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         if (move) RebuildRows();
     }
 
-    public void RemoveCode(QuoteRow? row)
+    /// <summary>Removes contracts from the active group.</summary>
+    public void RemoveCodes(IReadOnlyList<QuoteRow> rows)
     {
-        if (row is null || _activeGroup is null) return;
+        if (rows.Count == 0 || _activeGroup is null) return;
 
-        _activeGroup.Model.Codes.RemoveAll(c =>
-            string.Equals(c, row.Code, StringComparison.OrdinalIgnoreCase));
+        var codes = rows.Select(r => r.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _activeGroup.Model.Codes.RemoveAll(codes.Contains);
         _activeGroup.RefreshCount();
         Save();
         RebuildRows();
+    }
+
+    public void RemoveCode(QuoteRow? row)
+    {
+        if (row is not null) RemoveCodes(new[] { row });
     }
 
     private void RebuildRows()

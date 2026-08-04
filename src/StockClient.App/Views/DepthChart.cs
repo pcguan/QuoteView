@@ -104,34 +104,52 @@ public sealed class DepthChart : FrameworkElement
         }
     }
 
+    /// <summary>
+    /// One level, laid out as three aligned columns rather than "left, left,
+    /// far right":
+    ///
+    ///   档位 | 价格 (right-aligned) | 挂单量 (right-aligned)
+    ///
+    /// The label sat flush against the price while the size was pinned to the far
+    /// edge, leaving a gap down the middle of the control and nothing lining up.
+    /// Now the price column ends at a fixed fraction of the width and the size
+    /// column ends at the right edge, so both read as columns. Every string is
+    /// drawn at the SAME size and on a common baseline — mixing 0.92× for the
+    /// label made each row look like two different rows.
+    /// </summary>
     private void Row(
         DrawingContext dc, DepthLevel level, string label, Brush bar, Brush price,
         double max, double w, double top)
     {
         // Bar first, underneath: it is a background, and drawing it after the text
-        // would wash the digits out at these sizes.
+        // would wash the digits out at these sizes. Grown from the RIGHT, so it
+        // reads as depth behind the numbers instead of pushing them around.
         if (max > 0 && level.Volume > 0)
         {
             var width = Math.Max(1, level.Volume / max * w);
-            dc.DrawRectangle(Fade(bar), null, new Rect(0, top, width, RowHeight - 1));
+            dc.DrawRectangle(Fade(bar), null, new Rect(w - width, top, width, RowHeight - 1));
         }
 
-        var mid = top + (RowHeight - FontSize * 1.25) / 2;
+        var pad = Math.Max(3, w * 0.02);
 
-        Draw(dc, label, Label, FontSize * 0.92, 2, mid + FontSize * 0.1);
+        // Price column ends ~55% across, leaving the rest to the size. Both are
+        // right-aligned, which is how a column of numbers is actually compared.
+        var priceRight = w * 0.55;
 
-        var priceText = level.Price.ToString("F" + _decimals, CultureInfo.InvariantCulture);
-        var tint = _reference > 0 ? (level.Price >= _reference ? BidText : AskText) : price;
-        Draw(dc, priceText, tint, FontSize, FontSize * 1.9, mid);
+        var labelText = Text(label, Label, FontSize);
+        var priceText = Text(
+            level.Price.ToString("F" + _decimals, CultureInfo.InvariantCulture),
+            _reference > 0 ? (level.Price >= _reference ? BidText : AskText) : price,
+            FontSize);
+        var sizeText = Text(Compact(level.Volume), Size, FontSize);
 
-        // Size right-aligned: the eye compares a column of numbers by its right
-        // edge, and these span 1 to 6 digits.
-        var sizeText = Compact(level.Volume);
-        if (sizeText.Length > 0)
-        {
-            var text = Text(sizeText, Size, FontSize);
-            Draw(dc, text, w - text.Width - 2, mid);
-        }
+        // One baseline for the row: all three are the same size, so centring the
+        // tallest centres them all.
+        var y = top + (RowHeight - priceText.Height) / 2;
+
+        dc.DrawText(labelText, new Point(pad, y));
+        dc.DrawText(priceText, new Point(Math.Max(pad + labelText.Width + 4, priceRight - priceText.Width), y));
+        if (sizeText.Width > 0) dc.DrawText(sizeText, new Point(w - pad - sizeText.Width, y));
     }
 
     /// <summary>手/股 counts get long; 12345 reads better as 1.2万 in a 170px panel.</summary>
@@ -149,10 +167,7 @@ public sealed class DepthChart : FrameworkElement
     };
 
     private void Draw(DrawingContext dc, string s, Brush brush, double size, double x, double y) =>
-        Draw(dc, Text(s, brush, size), x, y);
-
-    private static void Draw(DrawingContext dc, FormattedText text, double x, double y) =>
-        dc.DrawText(text, new Point(x, y));
+        dc.DrawText(Text(s, brush, size), new Point(x, y));
 
     private FormattedText Text(string s, Brush brush, double size) =>
         new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,

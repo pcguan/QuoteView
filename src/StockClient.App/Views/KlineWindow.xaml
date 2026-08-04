@@ -36,11 +36,29 @@
     <Border Grid.Row="1" Background="#0F1420" BorderBrush="#222A38"
             BorderThickness="1" CornerRadius="6">
       <Grid>
-        <views:KlineChart x:Name="Chart" />
-        <views:TrendChart x:Name="Trend" Visibility="Collapsed" />
-        <TextBlock x:Name="Overlay" Text="加载中…" FontSize="13" Foreground="#8B93A3"
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <!-- Order book, only in intraday mode (collapsed otherwise, so candles
+               keep the full width). -->
+          <ColumnDefinition x:Name="DepthColumn" Width="0" />
+        </Grid.ColumnDefinitions>
+
+        <views:KlineChart x:Name="Chart" Grid.Column="0" />
+        <views:TrendChart x:Name="Trend" Grid.Column="0" Visibility="Collapsed" />
+        <TextBlock x:Name="Overlay" Grid.Column="0" Text="加载中…" FontSize="13" Foreground="#8B93A3"
                    HorizontalAlignment="Center" VerticalAlignment="Center"
                    Visibility="Collapsed" />
+
+        <Border x:Name="DepthPane" Grid.Column="1" Visibility="Collapsed"
+                BorderBrush="#222A38" BorderThickness="1,0,0,0" Padding="10,8">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="五档盘口" FontSize="11" Foreground="#8B93A3"
+                       Margin="0,0,0,6" />
+            <TextBlock x:Name="DepthTime" DockPanel.Dock="Bottom" FontSize="10" Foreground="#5F6672"
+                       Margin="0,6,0,0" />
+            <Border x:Name="DepthHost" VerticalAlignment="Top" />
+          </DockPanel>
+        </Border>
       </Grid>
     </Border>
   </Grid>
