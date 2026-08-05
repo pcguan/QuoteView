@@ -134,6 +134,8 @@ SOURCES = {
 def main() -> int:
     started = datetime.now(CN)
 
+    # Same fallback as fetch_market: the kline endpoint is the most throttled one
+    # and must not decide whether news gets collected at all.
     try:
         day = em.daily("1.000001", limit=2)[-1]["date"].replace("-", "")
     except Exception:  # noqa: BLE001

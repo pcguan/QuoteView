@@ -29,16 +29,28 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 CN = timezone(timedelta(hours=8))
 
 
-def trading_day() -> str:
+def trading_day() -> tuple[str, str]:
     """
-    The trading date this run describes, taken from the market rather than the
-    clock: the last daily bar of the Shanghai Composite IS the last session,
-    which handles weekends and holidays without shipping a calendar.
+    The trading date this run describes, and how it was determined.
+
+    Preferred source is the market itself: the last daily bar of the Shanghai
+    Composite IS the last session, which covers weekends and holidays without
+    shipping a calendar.
+
+    That endpoint is also the most rate-limited one EastMoney serves, so it must
+    not be able to sink the whole run — it did exactly that once, taking down
+    every other source with it. On failure this falls back to the Beijing
+    calendar date and SAYS SO in _status.json, because a fallback date can be
+    wrong on a holiday and the reader needs to know which one they got.
     """
-    bars = em.daily("1.000001", limit=2)
-    if not bars:
-        raise net.FetchError("cannot determine trading day: no index bars")
-    return bars[-1]["date"].replace("-", "")
+    try:
+        bars = em.daily("1.000001", limit=2)
+        if bars:
+            return bars[-1]["date"].replace("-", ""), "index-bar"
+    except Exception:  # noqa: BLE001
+        pass
+
+    return datetime.now(CN).strftime("%Y%m%d"), "clock(fallback)"
 
 
 def load_watchlist() -> list[dict]:
@@ -74,11 +86,7 @@ def secid_of(code: str) -> str | None:
 def main() -> int:
     started = datetime.now(CN)
 
-    try:
-        day = trading_day()
-    except Exception as exc:  # noqa: BLE001
-        print(f"FATAL: {exc}", file=sys.stderr)
-        return 2
+    day, day_source = trading_day()
 
     out_dir = os.path.join(BASE, "data", day)
     os.makedirs(out_dir, exist_ok=True)
@@ -102,7 +110,7 @@ def main() -> int:
             print(f"  {name:<12} ERROR {type(exc).__name__}: {exc}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
-    print(f"trading day {day}  (run at {started:%Y-%m-%d %H:%M:%S %Z})")
+    print(f"trading day {day} [{day_source}]  (run at {started:%Y-%m-%d %H:%M:%S %Z})")
 
     task("indices", em.indices)
     task("breadth", em.breadth)
@@ -162,6 +170,7 @@ def main() -> int:
 
     status["_meta"] = {
         "trading_day": day,
+        "trading_day_source": day_source,
         "fetched_at": started.isoformat(timespec="seconds"),
         "sources": "eastmoney",
     }
