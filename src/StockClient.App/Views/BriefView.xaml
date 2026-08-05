@@ -29,9 +29,13 @@
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-          <ComboBox x:Name="DayPicker" Width="130" Height="30" Margin="0,0,8,0"
-                    SelectionChanged="DayPicker_Changed" ToolTip="选择日期" />
-          <ui:Button Height="30" Width="32" Padding="0" Icon="{ui:SymbolIcon ArrowSync24}"
+          <!-- Wide enough for 2026-08-05 plus the drop-down glyph; the raw
+               yyyyMMdd form in a narrower box was getting clipped. -->
+          <ComboBox x:Name="DayPicker" Width="160" Height="32" Margin="0,0,8,0"
+                    Padding="10,0,6,0" VerticalContentAlignment="Center"
+                    DisplayMemberPath="Label" SelectedValuePath="Key"
+                    SelectionChanged="DayPicker_Changed" ToolTip="选择交易日" />
+          <ui:Button Height="32" Width="34" Padding="0" Icon="{ui:SymbolIcon ArrowSync24}"
                      Click="Refresh_Click" ToolTip="重新读取本地简报" />
         </StackPanel>
       </Grid>

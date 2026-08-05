@@ -34,10 +34,17 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 CN = timezone(timedelta(hours=8))
 
 # Anything not on this list is never requested.
+#
+# 证券时报 (www.stcn.com) was dropped: its 快讯 list page renders client-side, so
+# the HTML contains no article links at all, and the site exposes no list API
+# (its only ajax endpoint, /xinpi/list-ajax.html, serves 信披 and returns empty).
+# A source that can never yield rows is worse than no source — it reports an
+# anomaly every single day and trains you to ignore the anomaly line.
+#
+# 财联社 (www.cls.cn) was dropped too: answers 418 to non-browser clients.
 ALLOWED_DOMAINS = {
     "newsapi.eastmoney.com",
     "zhibo.sina.com.cn",
-    "www.stcn.com",
     "www.cninfo.com.cn",
 }
 
@@ -88,24 +95,6 @@ def sina_live() -> tuple[str, str, list[dict]]:
     return "sina_live.json", body, items
 
 
-def stcn_flash() -> tuple[str, str, list[dict]]:
-    """证券时报 快讯列表页 — HTML, titles pulled with a narrow regex."""
-    url = "https://www.stcn.com/article/list/kx.html"
-    check_domain(url)
-    body = net.get(url)
-
-    items = []
-    seen = set()
-    for match in re.finditer(r'<a[^>]+href="(/article/detail/[^"]+)"[^>]*>(.*?)</a>', body, re.S):
-        href, title = match.group(1), re.sub(r"<[^>]+>", "", match.group(2))
-        title = html.unescape(title).strip()
-        if len(title) < 8 or title in seen:
-            continue
-        seen.add(title)
-        items.append({"title": title, "time": "", "url": "https://www.stcn.com" + href})
-    return "stcn_flash.html", body, items
-
-
 def cninfo_notices() -> tuple[str, str, list[dict]]:
     """
     巨潮资讯 announcements — the statutory disclosure channel, so this is the
@@ -138,7 +127,6 @@ def cninfo_notices() -> tuple[str, str, list[dict]]:
 SOURCES = {
     "eastmoney_flash": ("东财快讯", eastmoney_flash),
     "sina_live": ("新浪7x24", sina_live),
-    "stcn_flash": ("证券时报快讯", stcn_flash),
     "cninfo_notices": ("巨潮公告", cninfo_notices),
 }
 

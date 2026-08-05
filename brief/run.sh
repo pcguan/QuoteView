@@ -90,6 +90,17 @@ if [ ! -f "out/brief-$DAY.md" ]; then
   exit 3
 fi
 
+# Machine checks before anything leaves this machine: the JSON is hand-written by
+# the model, so malformed output and citations pointing at nonexistent files are
+# both real possibilities. A brief that fails here is NOT distributed — the client
+# keeps yesterday's, which is better than showing an unverifiable one.
+echo
+python3 "$BASE/verify.py" "$DAY"
+if [ $? -ne 0 ]; then
+  echo "FATAL: 简报未通过校验，不分发"
+  exit 4
+fi
+
 echo
 echo "完成: out/brief-$DAY.md ($(wc -c < "out/brief-$DAY.md") 字节)"
 

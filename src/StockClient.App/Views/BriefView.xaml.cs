@@ -38,9 +38,12 @@ public partial class BriefView : UserControl
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => Reload();
 
+    /// <summary>One entry in the date picker: the raw key, and what's shown.</summary>
+    private sealed record DayOption(string Key, string Label);
+
     private void DayPicker_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_loading || DayPicker.SelectedItem is not string day) return;
+        if (_loading || DayPicker.SelectedValue is not string day) return;
         Show(_store.Load(day), day);
     }
 
@@ -48,9 +51,11 @@ public partial class BriefView : UserControl
     {
         var days = _store.AvailableDays();
 
+        // Shown as 2026-08-05 rather than 20260805 — the raw form is both harder
+        // to read and wider than it looks in a fixed-width box.
         _loading = true;
-        DayPicker.ItemsSource = days;
-        DayPicker.SelectedItem = days.FirstOrDefault();
+        DayPicker.ItemsSource = days.Select(d => new DayOption(d, Pretty(d))).ToArray();
+        DayPicker.SelectedValue = days.FirstOrDefault();
         _loading = false;
 
         DayPicker.Visibility = days.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
