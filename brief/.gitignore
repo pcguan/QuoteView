@@ -1,0 +1,6 @@
+# Fetched evidence and generated briefs: regenerated daily, large, and not
+# source. The pipeline code is versioned; its output is not.
+data/
+raw/
+out/
+*.log
