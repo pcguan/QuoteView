@@ -92,3 +92,8 @@ fi
 
 echo
 echo "完成: out/brief-$DAY.md ($(wc -c < "out/brief-$DAY.md") 字节)"
+
+# Hand the JSON to the desktops that run QuoteView. Best effort: a machine being
+# off is normal and must not turn a good run into a failed one.
+echo "分发:"
+"$BASE/publish.sh" "$DAY" || echo "  分发未完成（不影响本次生成）"
