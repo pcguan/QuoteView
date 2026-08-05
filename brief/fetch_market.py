@@ -182,6 +182,15 @@ def main() -> int:
             return rows
 
         task("watchlist", watch)
+    else:
+        # Emptying watchlist.csv must actually remove the section, not just stop
+        # refreshing it. A file left behind from when the list was populated looks
+        # exactly like current data to whatever reads this directory next — which
+        # is how a deleted watchlist kept showing up in the brief.
+        stale_watchlist = os.path.join(out_dir, "watchlist.json")
+        if os.path.exists(stale_watchlist):
+            os.remove(stale_watchlist)
+            print("  watchlist    关注池为空，已清除上次留下的 watchlist.json")
 
     status["_meta"] = {
         "trading_day": day,
