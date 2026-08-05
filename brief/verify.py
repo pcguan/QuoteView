@@ -26,6 +26,25 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 BANNED = ["预计", "有望", "值得关注", "值得留意", "或将", "建议买入", "建议配置",
           "目标价", "看涨", "看跌", "逢低", "抄底"]
 
+# ...but the same words appear legitimately when QUOTING a source. "公司公告预计
+# 净利润亏损" is a statutory earnings warning; "据知情人士透露…有望参与" is
+# reported speech. In both the brief is relaying what someone else said, which is
+# exactly its job. A flat string match failed both — and a check that cries wolf
+# is a check people learn to skip.
+#
+# So a hit only counts as a violation when nothing nearby attributes it.
+ATTRIBUTION = ["公告", "表示", "称", "报道", "透露", "研报", "预告", "披露",
+               "回应", "介绍", "指出", "认为", "消息", "受访", "采访", "问询",
+               "预测", "展望", "解读"]
+
+WINDOW = 100
+
+# Fixed statutory phrasings. "预计净利润亏损 X 万元" is the wording the exchanges
+# require in an earnings pre-announcement — it is a disclosure, not a forecast by
+# whoever is relaying it, and the attributing verb often sits a whole clause away.
+PHRASE_ALLOW = ["预计净利润", "预计亏损", "预计营业收入", "预计营收",
+                "预计归母", "业绩预告", "预计实现"]
+
 
 def fail(message: str) -> None:
     print(f"  FAIL  {message}")
@@ -91,14 +110,32 @@ def main() -> int:
     else:
         print(f"  ok    {total} 条线索全部可溯源到 raw/{day}/")
 
-    # 5. Forbidden vocabulary anywhere in the text.
+    # 5. Forbidden vocabulary — but only where it is the brief's own voice.
     blob = json.dumps(brief, ensure_ascii=False)
-    hits = [word for word in BANNED if word in blob]
-    if hits:
-        fail(f"出现禁用词（属于预测/建议）：{'、'.join(hits)}")
+    violations = []
+    quoted = 0
+
+    for word in BANNED:
+        start = 0
+        while (at := blob.find(word, start)) != -1:
+            start = at + len(word)
+            context = blob[max(0, at - WINDOW):at + WINDOW]
+            phrase = blob[at:at + 8]
+
+            if any(phrase.startswith(allowed) for allowed in PHRASE_ALLOW):
+                quoted += 1          # statutory wording
+            elif any(marker in context for marker in ATTRIBUTION):
+                quoted += 1          # relaying a source: allowed
+            else:
+                violations.append((word, context.strip()))
+
+    if violations:
+        for word, context in violations[:5]:
+            fail(f"禁用词「{word}」且无来源归属：…{context[:70]}…")
+        fail(f"共 {len(violations)} 处")
         problems += 1
     else:
-        print("  ok    无预测/建议类措辞")
+        print(f"  ok    无自述性预测/建议（{quoted} 处为转述原文，放行）")
 
     # 6. Numbers must match the fetched data, spot-checked on the indices — this
     #    is the one place a fabricated figure would be most plausible.

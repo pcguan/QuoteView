@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 import json
+import time
 import os
 import re
 import sys
@@ -29,6 +30,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from lib import eastmoney as em  # noqa: E402
 from lib import net  # noqa: E402
+
+# How far back to collect. A "daily" brief that only saw the last 90 minutes of
+# headlines is not a daily brief — measured, one page of each source covered
+# 14:04-15:25 and 15:00-15:29 respectively, so anything from the previous session
+# was simply invisible. This reaches back past the previous close.
+LOOKBACK_HOURS = 30
+
+# Page ceilings, so a source that never reports an old enough timestamp can't
+# loop forever.
+MAX_PAGES = 30
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CN = timezone(timedelta(hours=8))
@@ -58,41 +69,74 @@ def check_domain(url: str) -> None:
 # ------------------------------------------------------------------ sources
 
 def eastmoney_flash() -> tuple[str, str, list[dict]]:
-    """EastMoney 快讯 — JSONP-ish body, list under LivesList."""
-    url = "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html"
-    check_domain(url)
-    body = net.get(url)
+    """EastMoney 快讯, paged back until LOOKBACK_HOURS is covered."""
+    cutoff = (datetime.now(CN) - timedelta(hours=LOOKBACK_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
 
-    start = body.find("{")
-    payload = json.loads(body[start:].rstrip().rstrip(";"))
+    items: list[dict] = []
+    bodies: list[str] = []
 
-    items = []
-    for row in payload.get("LivesList") or []:
-        items.append({
-            "title": html.unescape(str(row.get("digest") or row.get("title") or "")).strip(),
-            "time": str(row.get("showtime") or ""),
-            "url": str(row.get("url_unique") or row.get("url_m") or ""),
-        })
-    return "eastmoney_flash.json", body, items
+    for page in range(1, MAX_PAGES + 1):
+        url = f"https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_{page}_.html"
+        check_domain(url)
+        body = net.get(url)
+        bodies.append(body)
+
+        payload = json.loads(body[body.find("{"):].rstrip().rstrip(";"))
+        rows = payload.get("LivesList") or []
+        if not rows:
+            break
+
+        oldest = ""
+        for row in rows:
+            when = str(row.get("showtime") or "")
+            oldest = min(oldest, when) if oldest else when
+            items.append({
+                "title": html.unescape(str(row.get("digest") or row.get("title") or "")).strip(),
+                "time": when,
+                "url": str(row.get("url_unique") or row.get("url_m") or ""),
+            })
+
+        if oldest and oldest < cutoff:
+            break
+        time.sleep(0.3)
+
+    # Every page kept, so a headline can still be checked against what was served.
+    return "eastmoney_flash.json", "\n".join(bodies), items
 
 
 def sina_live() -> tuple[str, str, list[dict]]:
-    """Sina 7x24 财经直播."""
-    url = ("https://zhibo.sina.com.cn/api/zhibo/feed?page=1&page_size=50"
-           "&zhibo_id=152&tag_id=0&dire=f&dpc=1")
-    check_domain(url)
-    body = net.get(url)
-    payload = json.loads(body)
+    """Sina 7x24 财经直播, paged back the same way."""
+    cutoff = (datetime.now(CN) - timedelta(hours=LOOKBACK_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
 
-    items = []
-    for row in (payload.get("result", {}).get("data", {}).get("feed", {}).get("list") or []):
-        text = html.unescape(str(row.get("rich_text") or row.get("text") or "")).strip()
-        items.append({
-            "title": text,
-            "time": str(row.get("create_time") or ""),
-            "url": str(row.get("docurl") or ""),
-        })
-    return "sina_live.json", body, items
+    items: list[dict] = []
+    bodies: list[str] = []
+
+    for page in range(1, MAX_PAGES + 1):
+        url = (f"https://zhibo.sina.com.cn/api/zhibo/feed?page={page}&page_size=100"
+               "&zhibo_id=152&tag_id=0&dire=f&dpc=1")
+        check_domain(url)
+        body = net.get(url)
+        bodies.append(body)
+
+        rows = json.loads(body).get("result", {}).get("data", {}).get("feed", {}).get("list") or []
+        if not rows:
+            break
+
+        oldest = ""
+        for row in rows:
+            when = str(row.get("create_time") or "")
+            oldest = min(oldest, when) if oldest else when
+            items.append({
+                "title": html.unescape(str(row.get("rich_text") or row.get("text") or "")).strip(),
+                "time": when,
+                "url": str(row.get("docurl") or ""),
+            })
+
+        if oldest and oldest < cutoff:
+            break
+        time.sleep(0.3)
+
+    return "sina_live.json", "\n".join(bodies), items
 
 
 def cninfo_notices() -> tuple[str, str, list[dict]]:
@@ -178,13 +222,33 @@ def main() -> int:
             print(f"  {label:<12} ERROR {type(exc).__name__}: {exc}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
 
+    # Same story often arrives from both feeds within seconds. Dedupe on the
+    # opening of the headline, keeping the EARLIEST copy — that timestamp is when
+    # the market could first have known, which is the thing that matters when a
+    # move precedes the explanation.
+    index.sort(key=lambda x: x.get("time", ""))
+    unique, seen = [], set()
+    for item in index:
+        key = item["title"][:36]
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+
+    duplicates = len(index) - len(unique)
+    unique.reverse()   # newest first, which is how it gets read
+
     with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as fh:
-        json.dump(index, fh, ensure_ascii=False, indent=1)
+        json.dump(unique, fh, ensure_ascii=False, indent=1)
+
+    index = unique
 
     status["_meta"] = {
         "trading_day": day,
         "fetched_at": started.isoformat(timespec="seconds"),
         "headlines": len(index),
+        "duplicates_removed": duplicates,
+        "lookback_hours": LOOKBACK_HOURS,
         "allowed_domains": sorted(ALLOWED_DOMAINS),
     }
     with open(os.path.join(out_dir, "_status.json"), "w", encoding="utf-8") as fh:
