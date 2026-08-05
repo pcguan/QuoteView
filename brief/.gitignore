@@ -4,3 +4,5 @@ data/
 raw/
 out/
 *.log
+__pycache__/
+*.pyc
