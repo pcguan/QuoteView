@@ -325,6 +325,55 @@
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
             <!-- A-share 涨速 / 主力资金 (东财第二路轮询)。默认隐藏；勾选任一列才启动该轮询。 -->
+            <DataGridTextColumn Header="昨日涨幅" Binding="{Binding PrevDayPercent, Converter={StaticResource Num}, ConverterParameter=pct}" Width="84" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding PrevDayPercent, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="3日涨幅" Binding="{Binding Return3, Converter={StaticResource Num}, ConverterParameter=pct}" Width="80" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Return3, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="5日涨幅" Binding="{Binding Return5, Converter={StaticResource Num}, ConverterParameter=pct}" Width="80" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Return5, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="10日涨幅" Binding="{Binding Return10, Converter={StaticResource Num}, ConverterParameter=pct}" Width="84" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Return10, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="20日涨幅" Binding="{Binding Return20, Converter={StaticResource Num}, ConverterParameter=pct}" Width="84" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Return20, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="60日涨幅" Binding="{Binding Return60, Converter={StaticResource Num}, ConverterParameter=pct}" Width="84" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding Return60, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
+            <DataGridTextColumn Header="年初至今" Binding="{Binding ReturnYtd, Converter={StaticResource Num}, ConverterParameter=pct}" Width="84" MinWidth="64" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">
+                  <Setter Property="HorizontalAlignment" Value="Right" />
+                  <Setter Property="Foreground" Value="{Binding ReturnYtd, Converter={StaticResource SignToBrush}}" /></Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
             <DataGridTextColumn Header="涨速" Binding="{Binding Speed, Converter={StaticResource Num}, ConverterParameter=pct}" Width="76" MinWidth="60" Visibility="Collapsed">
               <DataGridTextColumn.ElementStyle>
                 <Style TargetType="TextBlock" BasedOn="{StaticResource NumCell}">

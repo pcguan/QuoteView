@@ -117,6 +117,37 @@ public sealed class QuoteRow : ObservableObject
     public double? OuterVolume => _quote.OuterVolume;
     public double? InnerVolume => _quote.InnerVolume;
 
+    // Baselines for the period returns, refreshed once per trading day. The
+    // percentages themselves are derived here against the live price, so they move
+    // with the quote instead of with the fetch.
+    private ReturnBaselines? _baselines;
+
+    public double? PrevDayPercent => _baselines?.PrevDayPercent;
+    public double? Return3 => Ret(_baselines?.Day3);
+    public double? Return5 => Ret(_baselines?.Day5);
+    public double? Return10 => Ret(_baselines?.Day10);
+    public double? Return20 => Ret(_baselines?.Day20);
+    public double? Return60 => Ret(_baselines?.Day60);
+    public double? ReturnYtd => Ret(_baselines?.YearStart);
+
+    private double? Ret(double? baseline) =>
+        baseline is { } b ? ReturnBaselines.Percent(Now, b) : null;
+
+    /// <summary>Attaches (or replaces) the day's baselines for this contract.</summary>
+    public void SetBaselines(ReturnBaselines? baselines)
+    {
+        _baselines = baselines;
+
+        foreach (var name in new[]
+                 {
+                     nameof(PrevDayPercent), nameof(Return3), nameof(Return5),
+                     nameof(Return10), nameof(Return20), nameof(Return60), nameof(ReturnYtd),
+                 })
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
     // From the secondary EastMoney poll (A-shares only), null until it runs.
     private QuoteExtra? _extra;
     public double? Speed => _extra?.Speed;
@@ -242,6 +273,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly GroupConfig _config;
     private readonly QuotePoller _poller;
     private readonly EastMoneyExtraPoller _extraPoller;
+    private readonly ReturnBaselineRepository _returns;
     private readonly ContractRepository _contracts;
     private readonly DispatcherTimer _flashTimer;
 
@@ -272,6 +304,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _poller.Failed += OnFailed;
 
         _extraPoller = new EastMoneyExtraPoller(new EastMoneyQuoteClient(_http));
+
+        // Period-return baselines: one batch request per trading day, then the
+        // percentages are computed locally against each tick's price.
+        _returns = new ReturnBaselineRepository(
+            new ReturnBaselineClient(_http), new ReturnBaselineCache(), new MarketClock());
         _extraPoller.Tick += OnExtraTick;
 
         Groups = new ObservableCollection<GroupRow>(_config.Groups.Select(g => new GroupRow(g)));
@@ -676,6 +713,40 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         StealthTick?.Invoke(StealthRows());
         _poller.SetTarget(_activeGroup.Id, _activeGroup.Model.Codes);
         RefreshExtraPolling();
+        ApplyBaselines();
+        _ = RefreshBaselinesAsync();
+    }
+
+    /// <summary>
+    /// Hands each row whatever baselines are already known — instant, no request.
+    /// </summary>
+    private void ApplyBaselines()
+    {
+        var known = _returns.Current;
+        foreach (var (code, row) in _rows)
+            row.SetBaselines(known.TryGetValue(code, out var b) ? b : null);
+    }
+
+    /// <summary>
+    /// Tops up the baselines for contracts whose own market has rolled over. Costs
+    /// one batch request, at most once per contract per trading day; silent on
+    /// failure, since the columns simply stay blank.
+    /// </summary>
+    private async Task RefreshBaselinesAsync()
+    {
+        if (_activeGroup is null) return;
+
+        var contracts = _activeGroup.Model.Codes
+            .Where(CodeMapper.IsValid)
+            .Select(c => _contracts.Find(c.ToUpperInvariant()))
+            .Where(c => c is not null)
+            .Select(c => c!)
+            .ToArray();
+
+        if (contracts.Length == 0) return;
+
+        var changed = await _returns.RefreshAsync(contracts, CancellationToken.None);
+        if (changed) _dispatcher.InvokeAsync(ApplyBaselines);
     }
 
     /// <summary>
