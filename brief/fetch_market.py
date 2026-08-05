@@ -103,12 +103,27 @@ def main() -> int:
             status[name] = {"state": "ok", "items": count}
             print(f"  {name:<12} ok ({count})")
         except Exception as exc:  # noqa: BLE001
-            status[name] = {
-                "state": "error",
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-            print(f"  {name:<12} ERROR {type(exc).__name__}: {exc}", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
+            # A failed fetch may still leave a perfectly good file from earlier
+            # the same trading day. Calling that "error" tells the reader to
+            # discard a section that is actually fine — but calling it "ok" would
+            # hide that the number is not from this run. So: stale, with the time.
+            path = os.path.join(out_dir, f"{name}.json")
+            previous = None
+            if os.path.exists(path):
+                previous = datetime.fromtimestamp(os.path.getmtime(path), CN)
+
+            if previous is not None and previous.strftime("%Y%m%d") == day:
+                status[name] = {
+                    "state": "stale",
+                    "fetched_at": previous.isoformat(timespec="seconds"),
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "note": "本次抓取失败，沿用本交易日早些时候的数据",
+                }
+                print(f"  {name:<12} STALE 沿用 {previous:%H:%M:%S} 的数据 "
+                      f"({type(exc).__name__})", file=sys.stderr)
+            else:
+                status[name] = {"state": "error", "error": f"{type(exc).__name__}: {exc}"}
+                print(f"  {name:<12} ERROR {type(exc).__name__}: {exc}", file=sys.stderr)
 
     print(f"trading day {day} [{day_source}]  (run at {started:%Y-%m-%d %H:%M:%S %Z})")
 

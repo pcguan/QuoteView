@@ -71,9 +71,9 @@ echo "生成简报: $DAY"
 # --max-turns bounds a runaway session; acceptEdits lets it write out/ without
 # prompting (the permission file already restricts WHERE it can write).
 claude -p "读取 data/$DAY/ 和 raw/$DAY/，按 CLAUDE.md 的章节结构生成 out/brief-$DAY.md 和 out/brief-$DAY.json。严格遵守 CLAUDE.md 的约束：数字只能来自 data/，每条线索必须标注 raw/ 下的来源文件名，禁止预测和建议。" \
-  --allowedTools "Read,Write,Glob,Grep" \
+  --allowedTools "Read,Write,Glob,Grep,WebSearch,Bash(python3 fetch_url.py:*)" \
   --permission-mode acceptEdits \
-  --max-turns 40
+  --max-turns 60
 STATUS=$?
 
 # Exit-code guard: the subscription runs on a 5-hour rolling window and can be

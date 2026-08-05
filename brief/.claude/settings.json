@@ -9,18 +9,17 @@
       "Write(./raw/**)",
       "Write(./lib/**)",
       "WebFetch",
-      "WebSearch",
-      "Bash(rm *)",
-      "Bash(curl *)",
-      "Bash(wget *)"
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(rm:*)"
     ],
     "allow": [
       "Read(./**)",
       "Write(./out/**)",
       "Edit(./out/**)",
-      "Bash(ls *)",
-      "Bash(cat ./data/**)",
-      "Bash(cat ./raw/**)"
+      "WebSearch",
+      "Bash(python3 fetch_url.py:*)",
+      "Bash(ls:*)"
     ]
   }
 }
