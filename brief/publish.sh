@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Copies the day's brief to the machines that run QuoteView.
+# Publishes the brief to the NAS, where any client can fetch it over HTTP.
 #
-# NOT published to the NAS: the master copy stays in out/ here, and the client
-# reads a plain local file. That keeps the brief off any public URL — it is an
-# internal daily note, not a release artifact.
+# Same channel the updater already uses (nginx serves that directory), so a new
+# machine needs nothing configured: install the exe, and 资讯 works. Pushing by
+# scp to individual desktops only ever reached the machines this host happens to
+# have SSH access to, which is not a distribution mechanism.
+#
+# Layout on the NAS:
+#   /quoteview/brief/index.json           available days, newest first
+#   /quoteview/brief/brief-YYYYMMDD.json  one day
 set -uo pipefail
 
 BASE="$(cd "$(dirname "$0")" && pwd)"
-DAY="${1:-}"
+REMOTE="/vol3/1000/HDD2/tool/docker/nginx/html/quoteview/brief"
+KEEP=30
 
+DAY="${1:-}"
 if [ -z "$DAY" ]; then
   DAY=$(ls -1 "$BASE/out" 2>/dev/null | sed -n 's/^brief-\([0-9]\{8\}\)\.json$/\1/p' | sort | tail -1)
 fi
@@ -18,21 +25,24 @@ fi
 FILE="$BASE/out/brief-$DAY.json"
 [ -f "$FILE" ] || { echo "publish: 缺少 $FILE"; exit 1; }
 
-for host in corp-win pc-guan; do
-  # cmd expands %APPDATA% itself, which avoids nesting PowerShell quoting inside
-  # bash inside ssh — that nesting is what silently produced an empty path.
-  dir=$(ssh -o ConnectTimeout=10 "$host" \
-        'cmd /c "mkdir %APPDATA%\StockClient\brief 2>nul & echo %APPDATA%\StockClient\brief"' \
-        2>/dev/null | tr -d '\r' | tail -1)
+# Index built from what is actually on disk here, newest first, capped — the
+# client uses it to discover days without guessing filenames.
+python3 - "$BASE" "$KEEP" > "$BASE/out/index.json" <<'PY'
+import json, os, re, sys
+base, keep = sys.argv[1], int(sys.argv[2])
+days = sorted({m.group(1) for f in os.listdir(os.path.join(base, "out"))
+               if (m := re.fullmatch(r"brief-(\d{8})\.json", f))}, reverse=True)[:keep]
+json.dump({"days": days, "latest": days[0] if days else None},
+          sys.stdout, ensure_ascii=False, indent=1)
+PY
 
-  if [ -z "$dir" ] || [ "${dir#*StockClient}" = "$dir" ]; then
-    echo "  $host 不可达或路径异常，跳过"   # a desktop being off must not fail the run
-    continue
-  fi
+ssh -o ConnectTimeout=10 nas "mkdir -p $REMOTE" || { echo "publish: NAS 不可达"; exit 1; }
 
-  if scp -q "$FILE" "$host:${dir//\\//}/brief-$DAY.json"; then
-    echo "  $host <- brief-$DAY.json  ($dir)"
-  else
-    echo "  $host 推送失败"
-  fi
-done
+if scp -q "$FILE" "$BASE/out/index.json" "nas:$REMOTE/"; then
+  # 644 or nginx can't read them (the directory defaults to 700 → 403).
+  ssh nas "chmod 644 $REMOTE/*.json"
+  echo "  已发布 brief-$DAY.json + index.json"
+else
+  echo "  发布失败"
+  exit 1
+fi

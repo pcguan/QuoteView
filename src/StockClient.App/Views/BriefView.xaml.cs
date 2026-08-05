@@ -28,15 +28,17 @@ public partial class BriefView : UserControl
     private static readonly Brush Warn = Frozen("#FFC107");
 
     private readonly BriefStore _store = new();
+    private readonly BriefClient _client;
     private bool _loading;
 
     public BriefView()
     {
         InitializeComponent();
-        Loaded += (_, _) => Reload();
+        _client = new BriefClient(_store);
+        Loaded += (_, _) => _ = ReloadAsync();
     }
 
-    private void Refresh_Click(object sender, RoutedEventArgs e) => Reload();
+    private void Refresh_Click(object sender, RoutedEventArgs e) => _ = ReloadAsync();
 
     /// <summary>One entry in the date picker: the raw key, and what's shown.</summary>
     private sealed record DayOption(string Key, string Label);
@@ -47,9 +49,29 @@ public partial class BriefView : UserControl
         Show(_store.Load(day), day);
     }
 
-    private void Reload()
+    /// <summary>
+    /// Shows what is cached immediately, then asks the server what else exists.
+    ///
+    /// Cache-first so the page is never blank while a request is in flight, and
+    /// so a machine with no network still shows the last brief it read.
+    /// </summary>
+    private async Task ReloadAsync()
     {
-        var days = _store.AvailableDays();
+        Render(_store.AvailableDays());
+
+        var catalog = await _client.GetCatalogAsync(CancellationToken.None);
+        if (catalog is null || catalog.Days.Count == 0) return;
+
+        // Fetch anything not cached yet, newest first; each one is cached on the
+        // way through.
+        foreach (var day in catalog.Days.Take(BriefStore.RetainDays))
+            await _client.GetAsync(day, CancellationToken.None);
+
+        Render(_store.AvailableDays());
+    }
+
+    private void Render(IReadOnlyList<string> days)
+    {
 
         // Shown as 2026-08-05 rather than 20260805 — the raw form is both harder
         // to read and wider than it looks in a fixed-width box.
@@ -80,8 +102,9 @@ public partial class BriefView : UserControl
             EmptyPane.Visibility = Visibility.Visible;
             Body.Visibility = Visibility.Collapsed;
             EmptyHint.Text =
-                $"简报由 brief/ 管道每个交易日生成后放到：\n{_store.Root}\n\n" +
-                "这里只负责展示，不联网、不自己生成 —— 没有文件就是没有。";
+                "每个交易日 07:30 / 15:30 生成，客户端自动拉取。\n" +
+                "现在没有内容，通常是还没到今天的生成时间，或者暂时连不上。\n\n" +
+                "客户端只负责展示：不自己抓数据、不做计算。";
             return;
         }
 
