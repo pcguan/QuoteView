@@ -236,6 +236,17 @@ public sealed class GroupConfig
     [JsonPropertyName("quoteColumns")]
     public List<QuoteColumnState> QuoteColumns { get; set; } = new();
 
+    /// <summary>
+    /// Free-text notes, keyed by contract code — deliberately NOT per group.
+    /// A note is about the contract itself ("等回踩 40 加"), so the same holding
+    /// appearing in 半导体 and 自选 must show the same note; storing it on the group
+    /// would silently fork into two copies the moment a contract is in two groups.
+    ///
+    /// Local only: it lives in groups.json and goes nowhere else.
+    /// </summary>
+    [JsonPropertyName("notes")]
+    public Dictionary<string, string> Notes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public static GroupConfig CreateDefault() => new()
     {
         Groups = { new Group { Id = "default", Name = "自选股", Codes = { "SH600519", "SZ000651", "HK00700", "USAAPL", "KR005930" } } },
@@ -284,6 +295,12 @@ public sealed class GroupStore
     private static GroupConfig Normalize(GroupConfig config)
     {
         config.Groups ??= new List<Group>();
+
+        // Deserialization builds a case-sensitive dictionary; codes are compared
+        // case-insensitively everywhere else, so rebuild it that way.
+        config.Notes = config.Notes is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(config.Notes, StringComparer.OrdinalIgnoreCase);
         config.Groups.RemoveAll(g => g is null || string.IsNullOrWhiteSpace(g.Id));
 
         foreach (var group in config.Groups)

@@ -207,6 +207,22 @@
                   <Setter Property="VerticalAlignment" Value="Center" /></Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
+            <!-- Notes are per CONTRACT, not per group, so the same holding carries the
+                 same text everywhere. Edited from the row's right-click menu. -->
+            <DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="160" MinWidth="80" Visibility="Collapsed">
+              <DataGridTextColumn.ElementStyle>
+                <Style TargetType="TextBlock">
+                  <Setter Property="VerticalAlignment" Value="Center" />
+                  <Setter Property="FontSize" Value="12" />
+                  <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                  <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                  <Setter Property="ToolTip" Value="{Binding Note}" />
+                  <Style.Triggers>
+                    <Trigger Property="Text" Value=""><Setter Property="ToolTip" Value="{x:Null}" /></Trigger>
+                  </Style.Triggers>
+                </Style>
+              </DataGridTextColumn.ElementStyle>
+            </DataGridTextColumn>
             <DataGridTextColumn Header="最新价" Binding="{Binding Now, Converter={StaticResource Price}}" Width="100" MinWidth="76">
               <DataGridTextColumn.ElementStyle>
                 <Style TargetType="TextBlock"><Setter Property="HorizontalAlignment" Value="Right" />

@@ -524,6 +524,18 @@ public partial class QuotesView : UserControl
 
         menu.Items.Add(new Separator());
 
+        // Single row only: a note is about one contract, and the dialog can only
+        // show one text.
+        if (!many)
+        {
+            var note = new System.Windows.Controls.MenuItem
+            {
+                Header = vm.GetNote(targets[0].Code).Length > 0 ? "编辑备注…" : "添加备注…",
+            };
+            note.Click += (_, _) => _ = EditNoteAsync(targets[0]);
+            menu.Items.Add(note);
+        }
+
         // Single row only: opening N chart windows at once from a menu click is
         // not what anyone means by it.
         if (!many)
@@ -542,6 +554,50 @@ public partial class QuotesView : UserControl
         };
         remove.Click += (_, _) => vm.RemoveCodes(targets);
         menu.Items.Add(remove);
+    }
+
+    /// <summary>
+    /// Prompts for this contract's note and stores it.
+    ///
+    /// The note is keyed by contract code rather than by group, so editing it here
+    /// changes it everywhere that contract appears. Saving also reveals the 备注
+    /// column if it was hidden — otherwise the text is written and nothing visibly
+    /// happens.
+    /// </summary>
+    private async Task EditNoteAsync(QuoteRow row)
+    {
+        if (Vm is not { } vm) return;
+
+        var input = new System.Windows.Controls.TextBox
+        {
+            Text = vm.GetNote(row.Code),
+            MinWidth = 320,
+            MaxLength = 200,
+            TextWrapping = TextWrapping.Wrap,
+            AcceptsReturn = false,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+
+        var dialog = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = $"备注 · {row.Name} {row.Code}",
+            Content = input,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+        };
+
+        input.Loaded += (_, _) => { input.Focus(); input.SelectAll(); };
+
+        if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        vm.SetNote(row.Code, input.Text);
+        ShowNoteColumn();
+    }
+
+    private void ShowNoteColumn()
+    {
+        var column = QuoteGrid.Columns.FirstOrDefault(c => (c.Header as string) == "备注");
+        if (column is not null) column.Visibility = Visibility.Visible;
     }
 
     /// <summary>

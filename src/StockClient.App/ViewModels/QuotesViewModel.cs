@@ -172,6 +172,18 @@ public sealed class QuoteRow : ObservableObject
         }
     }
 
+    private string _note = "";
+
+    /// <summary>
+    /// User's own note for this contract. Set from the shared store, so the same
+    /// contract shows the same text in every group.
+    /// </summary>
+    public string Note
+    {
+        get => _note;
+        set => Set(ref _note, value ?? "");
+    }
+
     /// <summary>1 up, -1 down, 0 none — drives the row flash after a price move.</summary>
     public int Flash
     {
@@ -668,6 +680,29 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         if (move) RebuildRows();
     }
 
+    /// <summary>This contract's note, empty when it has none.</summary>
+    public string GetNote(string code) =>
+        _config.Notes.TryGetValue(code, out var note) ? note : "";
+
+    /// <summary>
+    /// Stores a note against the contract code, so every group showing that
+    /// contract picks it up. An empty note is removed rather than stored blank,
+    /// which keeps groups.json from accumulating dead keys.
+    /// </summary>
+    public void SetNote(string code, string? note)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return;
+
+        var text = (note ?? "").Trim();
+
+        if (text.Length == 0) _config.Notes.Remove(code);
+        else _config.Notes[code] = text;
+
+        if (_rows.TryGetValue(code, out var row)) row.Note = text;
+
+        Save();
+    }
+
     /// <summary>Removes contracts from the active group.</summary>
     public void RemoveCodes(IReadOnlyList<QuoteRow> rows)
     {
@@ -704,6 +739,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         {
             var row = new QuoteRow(code);
             FillMeta(row);
+            row.Note = GetNote(code);
             _rows[code] = row;
             Quotes.Add(row);
         }
