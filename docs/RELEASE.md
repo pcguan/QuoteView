@@ -39,6 +39,10 @@ git push        # 走 .git/config 里的代理，直接 push；卡死就检查 h
 
 ## 5. 发布新版本（要让用户 app 自动更新时）
 
+> ⚠️ **抬完版本必须重新编译。**改 `<Version>` 之后如果直接从上次的 `dist/` 拷 exe，
+> 文件名和 manifest 都写着新版本，而**二进制里还是旧版本号**——客户端更新完仍报旧版、
+> 于是被反复提示同一个更新。发布前跑 `tools/check_release.sh <版本>` 卡这一关。
+
 先抬版本并出对应 exe：
 - `src/StockClient.App/StockClient.App.csproj` 的 `<Version>` +1（如 1.0.1→1.0.2）；
 - 在 `CHANGELOG.md` 顶部记这一版的改动；
@@ -76,6 +80,15 @@ ssh corp-win 'powershell -NoProfile -Command "Invoke-RestMethod -Uri \"https://u
   **线上自更新**（国内源优先，「检查更新」或下次启动）拉到新版。这也顺带每次都验证了自更新链路。
 
 ---
+
+## 5c. 发布前自检（必做）
+
+```bash
+tools/check_release.sh 1.0.35
+```
+
+三项：`latest.json` 的版本、`latest.json` 的 size 与实际文件、**exe 内部编译进去的版本号**。
+第三项是唯一会静默出错的一项，其余两项肉眼也能发现。
 
 ## 6. 走公网验证两个源一致
 本地（或任意机器）用 curl 验证——**两个源的 version 和 size 都要和本地 exe 对得上**：
