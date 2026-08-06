@@ -62,9 +62,13 @@ public partial class BriefView : UserControl
         var catalog = await _client.GetCatalogAsync(CancellationToken.None);
         if (catalog is null || catalog.Days.Count == 0) return;
 
-        // Fetch anything not cached yet, newest first; each one is cached on the
-        // way through.
-        foreach (var day in catalog.Days.Take(BriefStore.RetainDays))
+        // The newest day is re-fetched every time: it is the one that gets
+        // regenerated during the day, so a cached copy of it goes stale. Older
+        // days are settled and come from cache.
+        var newest = catalog.Days[0];
+        await _client.GetAsync(newest, CancellationToken.None, refresh: true);
+
+        foreach (var day in catalog.Days.Skip(1).Take(BriefStore.RetainDays - 1))
             await _client.GetAsync(day, CancellationToken.None);
 
         Render(_store.AvailableDays());
