@@ -25,6 +25,13 @@ export HTTP_PROXY="${HTTP_PROXY:-http://192.168.33.9:7890}"
 export HTTPS_PROXY="${HTTPS_PROXY:-$HTTP_PROXY}"
 export PATH="/root/.nvm/versions/node/v26.1.0/bin:/usr/local/bin:/usr/bin:/bin"
 
+# Where the claude CLI keeps its credentials. Without it the CLI reports
+# "Not logged in" and exits 1 — which is exactly how the first scheduled run
+# failed: data and headlines were fetched fine, then the brief never generated.
+# Same class of problem as the proxy: anything carried by an environment variable
+# has to be stated explicitly, because cron provides none.
+export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/root/workspace/claude_code/.claude}"
+
 FETCH_ONLY=0
 FORCE=0
 for arg in "$@"; do

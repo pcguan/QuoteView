@@ -5,9 +5,6 @@
       "Edit(./raw/**)",
       "Edit(./lib/**)",
       "Edit(./CLAUDE.md)",
-      "Write(./data/**)",
-      "Write(./raw/**)",
-      "Write(./lib/**)",
       "WebFetch",
       "Bash(curl:*)",
       "Bash(wget:*)",
@@ -19,7 +16,8 @@
       "Edit(./out/**)",
       "WebSearch",
       "Bash(python3 fetch_url.py:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python3 verify.py:*)"
     ]
   }
 }
