@@ -20,8 +20,15 @@ namespace StockClient.App.Views;
 /// Stored as <c>#RRGGBB</c>, which is what the config already holds and what
 /// <see cref="ColorConverter"/> reads back, so any hex the user types round-trips
 /// through the existing settings file unchanged.
+///
+/// <b>A self-drawn Border, not a Button.</b> App.xaml merges WPF UI's
+/// ControlsDictionary, whose implicit Button/TextBox styles carry a much taller
+/// template than the plain ones — that's why every ui:TextBox in this codebase
+/// is written Height="36". Pinning a real Button to 24px squeezed the swatch and
+/// the hex out of view behind the template's own padding. Drawing the face here
+/// keeps it the size this row has room for, and matches the dark panel besides.
 /// </summary>
-public sealed class ColorPickerButton : Button
+public sealed class ColorPickerButton : Border
 {
     /// <summary>
     /// Quick presets. The first seven are the palette this control replaced, so
@@ -62,16 +69,20 @@ public sealed class ColorPickerButton : Button
 
         Width = width;
         Height = 24;
-        Padding = new Thickness(4, 0, 4, 0);
+        Padding = new Thickness(5, 0, 5, 0);
         Margin = new Thickness(leftMargin, 0, 0, 0);
         VerticalAlignment = VerticalAlignment.Center;
-        HorizontalContentAlignment = HorizontalAlignment.Left;
+        Background = Frozen("#1A2030");
+        BorderBrush = Frozen("#39435A");
+        BorderThickness = new Thickness(1);
+        CornerRadius = new CornerRadius(3);
+        Cursor = Cursors.Hand;
         ToolTip = tooltip;
 
         _swatch = new Rectangle
         {
             Width = 12, Height = 12,
-            Stroke = Brushes.Gray, StrokeThickness = 1,
+            Stroke = Frozen("#5F6672"), StrokeThickness = 1,
             Margin = new Thickness(0, 0, 5, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -80,24 +91,40 @@ public sealed class ColorPickerButton : Button
         {
             FontFamily = new FontFamily("Consolas"),
             FontSize = 11,
+            Foreground = Frozen("#EDF1F7"),
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        var face = new StackPanel { Orientation = Orientation.Horizontal };
+        var face = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         face.Children.Add(_swatch);
         face.Children.Add(_label);
-        Content = face;
+        Child = face;
 
         var color = Parse(hex);
         (_hue, _saturation, _value) = ToHsv(color);
         ShowOnFace(color);
 
-        Click += (_, _) => Toggle();
+        MouseEnter += (_, _) => BorderBrush = Frozen("#5C6B8A");
+        MouseLeave += (_, _) => BorderBrush = Frozen("#39435A");
+        MouseLeftButtonDown += (_, e) => { Toggle(); e.Handled = true; };
     }
+
+    /// <summary>
+    /// When the popup dismisses itself on an outside click, that click can still
+    /// land here — without this the swatch would reopen what the user just closed.
+    /// </summary>
+    private long _closedAt;
 
     private void Toggle()
     {
         _popup ??= BuildPopup();
+
+        if (!_popup.IsOpen && Environment.TickCount64 - _closedAt < 250) return;
+
         _popup.IsOpen = !_popup.IsOpen;
     }
 
@@ -196,17 +223,20 @@ public sealed class ColorPickerButton : Button
         // it is also how a value gets copied from one field to another.
         _preview = new Rectangle
         {
-            Width = 22, Height = 22,
-            Stroke = Brushes.Gray, StrokeThickness = 1,
+            Width = 26, Height = 26,
+            Stroke = Frozen("#5F6672"), StrokeThickness = 1,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0),
         };
 
+        // No fixed height, and no fixed width beyond a minimum: the WPF UI theme
+        // gives TextBox a tall template with generous padding, and forcing it
+        // smaller hides the text inside its own chrome.
         _hexBox = new TextBox
         {
-            Width = 92, Height = 22,
+            MinWidth = 104,
             FontFamily = new FontFamily("Consolas"),
-            VerticalContentAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
             Text = Hex(FromHsv(_hue, _saturation, _value)),
         };
         _hexBox.TextChanged += (_, _) =>
@@ -226,8 +256,9 @@ public sealed class ColorPickerButton : Button
 
         var done = new Button
         {
-            Content = "完成", Width = 52, Height = 22,
+            Content = "完成",
             Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
         };
         done.Click += (_, _) => { if (_popup is not null) _popup.IsOpen = false; };
 
@@ -284,6 +315,7 @@ public sealed class ColorPickerButton : Button
         };
 
         popup.Opened += (_, _) => SyncThumbs();
+        popup.Closed += (_, _) => _closedAt = Environment.TickCount64;
         return popup;
     }
 

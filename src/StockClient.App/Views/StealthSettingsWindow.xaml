@@ -1,7 +1,7 @@
 <Window x:Class="StockClient.App.Views.StealthSettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="简洁面板设置" Width="380" SizeToContent="Height"
+        Title="简洁面板设置" Width="430" SizeToContent="Height"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#12161F" FontFamily="Microsoft YaHei" FontSize="13"
         TextOptions.TextFormattingMode="Display">
@@ -47,8 +47,15 @@
     </StackPanel>
 
     <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,10" />
-    <!-- Scrolls: with ~20 fields the list would otherwise run off the screen. -->
-    <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+    <!--
+      Scrolls: with ~20 fields the list would otherwise run off the screen.
+      HorizontalScrollBarVisibility must be Disabled, not left at its default
+      Hidden: Hidden still measures the rows against infinite width, so they
+      never shrink to the viewport and the colour pickers on the right get cut
+      off. Disabled is the one that constrains.
+    -->
+    <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
       <StackPanel x:Name="FieldsPanel" Margin="0,0,6,0" />
     </ScrollViewer>
 

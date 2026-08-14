@@ -123,6 +123,10 @@ public partial class StealthSettingsWindow : Window
                 IsChecked = field.Visible,
                 Foreground = Frozen("#EDF1F7"),
                 VerticalAlignment = VerticalAlignment.Center,
+                // WPF UI's implicit CheckBox style carries a MinWidth wide enough
+                // that the star column refuses to give ground, which pushed the
+                // colour pickers past the right edge and clipped them.
+                MinWidth = 0,
             };
             check.Checked += (_, _) => { captured.Visible = true; Apply(); };
             check.Unchecked += (_, _) =>
