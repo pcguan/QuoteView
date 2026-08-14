@@ -67,6 +67,14 @@ public enum StealthField
     AvgPrice,
     PeTtm,
     Pb,
+
+    /// <summary>
+    /// The active group's name, shown once at the left of the panel rather than
+    /// per row. It lives in this enum so it gets the same visibility/colour
+    /// controls as every other field — the alternative was a hard-coded colour
+    /// nobody could change.
+    /// </summary>
+    GroupName,
 }
 
 public static class StealthFields
@@ -172,6 +180,7 @@ public sealed class StealthConfig
             new() { Field = StealthField.AvgPrice, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.PeTtm, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.Pb, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.GroupName, Visible = true, Color = "#8B93A3" },
         },
     };
 

@@ -35,6 +35,7 @@ public partial class StealthSettingsWindow : Window
         (StealthField.AvgPrice, "均价"),
         (StealthField.PeTtm, "市盈TTM"),
         (StealthField.Pb, "市净率"),
+        (StealthField.GroupName, "分组名（面板左侧）"),
     };
 
     private static readonly (string Name, string Hex)[] Palette =
@@ -133,8 +134,15 @@ public partial class StealthSettingsWindow : Window
             check.Checked += (_, _) => { captured.Visible = true; Apply(); };
             check.Unchecked += (_, _) =>
             {
-                // Keep at least one field visible: an empty line would show nothing.
-                if (_config.Fields.Count(f => f.Visible) <= 1)
+                // Keep at least one ROW field visible: an empty line would show
+                // nothing. The group name doesn't count — it is drawn beside the
+                // rows, not in them, so leaving only it selected would still give
+                // blank rows, and turning it off on its own is perfectly fine.
+                var isRowField = captured.Field != StealthField.GroupName;
+                var rowFieldsLeft = _config.Fields.Count(
+                    f => f.Visible && f.Field != StealthField.GroupName);
+
+                if (isRowField && rowFieldsLeft <= 1)
                 {
                     check.IsChecked = true;
                     return;

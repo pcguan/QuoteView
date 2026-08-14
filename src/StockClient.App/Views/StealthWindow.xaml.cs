@@ -400,10 +400,15 @@ public partial class StealthWindow : Window
 
         // Which group these rows belong to. Worth the width: the panel cycles
         // groups on Win+Alt+PageUp/Down and the contracts alone don't say which
-        // one you landed on.
+        // one you landed on. Visibility and colour come from the settings window,
+        // same as every other field.
+        var groupField = _config.Fields.FirstOrDefault(f => f.Field == StealthField.GroupName);
         var group = _vm.ActiveGroup?.Name ?? "";
+        var showGroup = group.Length > 0 && groupField is not { Visible: false };
+
         GroupLabel.Text = group;
-        GroupLabel.Visibility = group.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        GroupLabel.Visibility = showGroup ? Visibility.Visible : Visibility.Collapsed;
+        if (showGroup) GroupLabel.Foreground = Brush(groupField?.Color ?? "#8B93A3");
 
         if (_rows.Count == 0)
         {
@@ -697,6 +702,9 @@ public partial class StealthWindow : Window
 
     private static string Value(StealthField field, QuoteRow r) => field switch
     {
+        // Not a per-row field: it is drawn once beside the whole block. Returning
+        // empty keeps RowFor from repeating the group name on every line.
+        StealthField.GroupName => "",
         StealthField.Code => r.Code,
         StealthField.Name => r.Name,
         StealthField.Price => Price(r.Now),
