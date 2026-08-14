@@ -97,12 +97,6 @@ public partial class StealthWindow : Window
         HotkeyCycleChart,
     };
 
-    private static readonly (string Name, string Hex)[] Palette =
-    {
-        ("白", "#FFFFFF"), ("红", "#EF5350"), ("绿", "#26A69A"), ("黄", "#FFC107"),
-        ("蓝", "#4C8DFF"), ("灰", "#8B93A3"), ("黑", "#000000"),
-    };
-
     private readonly QuotesViewModel _vm;
     private readonly StealthConfig _config;
     private readonly Action _save;

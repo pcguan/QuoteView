@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using StockClient.Core.Groups;
 
 namespace StockClient.App.Views;
@@ -36,12 +35,6 @@ public partial class StealthSettingsWindow : Window
         (StealthField.PeTtm, "市盈TTM"),
         (StealthField.Pb, "市净率"),
         (StealthField.GroupName, "分组名（面板左侧）"),
-    };
-
-    private static readonly (string Name, string Hex)[] Palette =
-    {
-        ("白", "#FFFFFF"), ("红", "#EF5350"), ("绿", "#26A69A"), ("黄", "#FFC107"),
-        ("蓝", "#4C8DFF"), ("灰", "#8B93A3"), ("黑", "#000000"),
     };
 
     private readonly StealthConfig _config;
@@ -160,12 +153,12 @@ public partial class StealthSettingsWindow : Window
             var colours = new StackPanel { Orientation = Orientation.Horizontal };
             if (StealthFields.IsSigned(field.Field))
             {
-                colours.Children.Add(ColorCombo(field.PositiveColor, h => captured.PositiveColor = h, "上涨颜色", 74));
-                colours.Children.Add(ColorCombo(field.NegativeColor, h => captured.NegativeColor = h, "下跌颜色", 74, leftMargin: 6));
+                colours.Children.Add(Picker(field.PositiveColor, h => captured.PositiveColor = h, "上涨颜色", 78));
+                colours.Children.Add(Picker(field.NegativeColor, h => captured.NegativeColor = h, "下跌颜色", 78, leftMargin: 6));
             }
             else
             {
-                colours.Children.Add(ColorCombo(field.Color, h => captured.Color = h, "颜色", 96));
+                colours.Children.Add(Picker(field.Color, h => captured.Color = h, "颜色", 100));
             }
 
             Grid.SetColumn(colours, 1);
@@ -175,47 +168,13 @@ public partial class StealthSettingsWindow : Window
         }
     }
 
-    /// <summary>A palette dropdown that writes the chosen hex back via <paramref name="setColor"/>.</summary>
-    private ComboBox ColorCombo(string currentHex, Action<string> setColor, string tooltip, double width, double leftMargin = 0)
-    {
-        var combo = new ComboBox
-        {
-            Width = width,
-            VerticalAlignment = VerticalAlignment.Center,
-            ToolTip = tooltip,
-            Margin = new Thickness(leftMargin, 0, 0, 0),
-        };
-
-        foreach (var (name, hex) in Palette)
-            combo.Items.Add(new ComboBoxItem { Content = ColorItem(name, hex), Tag = hex });
-
-        // Select current before wiring the handler so seeding doesn't fire Apply.
-        combo.SelectedIndex = Array.FindIndex(Palette, p =>
-            string.Equals(p.Hex, currentHex, StringComparison.OrdinalIgnoreCase));
-        combo.SelectionChanged += (_, _) =>
-        {
-            if (combo.SelectedItem is ComboBoxItem { Tag: string hex })
-            {
-                setColor(hex);
-                Apply();
-            }
-        };
-
-        return combo;
-    }
-
-    private static UIElement ColorItem(string name, string hex)
-    {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        panel.Children.Add(new Rectangle
-        {
-            Width = 12, Height = 12, Fill = Frozen(hex),
-            Stroke = Brushes.Gray, StrokeThickness = 1,
-            Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
-        });
-        panel.Children.Add(new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center });
-        return panel;
-    }
+    /// <summary>
+    /// A full colour picker (HSV field + hue strip + hex box) that writes the
+    /// chosen hex back via <paramref name="setColor"/>. It applies while dragging,
+    /// so the panel shows the colour before the popup is closed.
+    /// </summary>
+    private ColorPickerButton Picker(string currentHex, Action<string> setColor, string tooltip, double width, double leftMargin = 0) =>
+        new(currentHex, hex => { setColor(hex); Apply(); }, tooltip, width, leftMargin);
 
     private void Apply()
     {
