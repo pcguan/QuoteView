@@ -9,7 +9,7 @@
     <!-- WinForms is here only for NotifyIcon: WPF has no tray icon of its own. -->
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>QuoteView</AssemblyName>
-    <Version>1.0.35</Version>
+    <Version>1.0.36</Version>
     <RootNamespace>StockClient.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>

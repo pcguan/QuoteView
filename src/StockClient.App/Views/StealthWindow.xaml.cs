@@ -398,6 +398,13 @@ public partial class StealthWindow : Window
         Rows.Children.Clear();
         ApplyShade();
 
+        // Which group these rows belong to. Worth the width: the panel cycles
+        // groups on Win+Alt+PageUp/Down and the contracts alone don't say which
+        // one you landed on.
+        var group = _vm.ActiveGroup?.Name ?? "";
+        GroupLabel.Text = group;
+        GroupLabel.Visibility = group.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+
         if (_rows.Count == 0)
         {
             Rows.Children.Add(RowFor(null));

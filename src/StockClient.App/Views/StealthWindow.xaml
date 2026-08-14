@@ -45,8 +45,24 @@
       <!-- Intraday sparkline of the current contract; the child is set in code and
            this host stays collapsed unless the trend option is on. -->
       <Border x:Name="SparkHost" Visibility="Collapsed" Margin="0,1,0,3" />
-      <!-- One StackPanel row per contract; each row is filled with field TextBlocks in Render. -->
-      <StackPanel x:Name="Rows" Orientation="Vertical" VerticalAlignment="Center" />
+      <!-- Group name on the left, quote rows on the right. The name is vertically
+           centred against the whole block rather than sitting above it, so a
+           multi-row panel doesn't grow a header line — height is the scarcest
+           thing here. -->
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock x:Name="GroupLabel" Grid.Column="0"
+                   VerticalAlignment="Center" Margin="0,0,10,0"
+                   FontSize="11" Foreground="#8B93A3"
+                   MaxWidth="76" TextTrimming="CharacterEllipsis" />
+
+        <!-- One StackPanel row per contract; each row is filled with field TextBlocks in Render. -->
+        <StackPanel x:Name="Rows" Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center" />
+      </Grid>
     </StackPanel>
   </Border>
 </Window>
