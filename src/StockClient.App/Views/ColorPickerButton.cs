@@ -109,24 +109,98 @@ public sealed class ColorPickerButton : Border
         ShowOnFace(color);
 
         MouseEnter += (_, _) => BorderBrush = Frozen("#5C6B8A");
-        MouseLeave += (_, _) => BorderBrush = Frozen("#39435A");
-        MouseLeftButtonDown += (_, e) => { Toggle(); e.Handled = true; };
+        MouseLeave += (_, _) => { BorderBrush = Frozen("#39435A"); _pressed = false; };
+
+        // Opens on release, not on press. A popup opened on MouseDown would be
+        // dismissed by the MouseUp of that very same click — the release lands
+        // outside the popup, which is exactly what "click elsewhere to close"
+        // looks like to WPF.
+        MouseLeftButtonDown += (_, e) => { _pressed = true; e.Handled = true; };
+        MouseLeftButtonUp += (_, e) =>
+        {
+            if (!_pressed) return;
+            _pressed = false;
+            e.Handled = true;
+            Toggle();
+        };
     }
 
+    /// <summary>Set between press and release on this swatch, so a drag that merely ends here doesn't open it.</summary>
+    private bool _pressed;
+
     /// <summary>
-    /// When the popup dismisses itself on an outside click, that click can still
-    /// land here — without this the swatch would reopen what the user just closed.
+    /// When an outside click dismisses the popup, the release of that same click
+    /// can still land here — without this the swatch would reopen what the user
+    /// just closed.
     /// </summary>
     private long _closedAt;
+
+    /// <summary>The one picker whose popup is up; opening another closes it.</summary>
+    private static ColorPickerButton? _openPicker;
+
+    private Window? _owner;
 
     private void Toggle()
     {
         _popup ??= BuildPopup();
 
-        if (!_popup.IsOpen && Environment.TickCount64 - _closedAt < 250) return;
+        if (_popup.IsOpen) { ClosePopup(); return; }
+        if (Environment.TickCount64 - _closedAt < 250) return;
 
-        _popup.IsOpen = !_popup.IsOpen;
+        OpenPopup();
     }
+
+    /// <summary>
+    /// Dismissal is handled here rather than by <c>StaysOpen=false</c>: that mode
+    /// makes the popup grab mouse capture, which both swallows the opening click
+    /// and fights the capture the saturation/value square needs for dragging.
+    /// Watching the owner window for a click or a deactivate gives the same
+    /// behaviour without touching capture at all.
+    /// </summary>
+    private void OpenPopup()
+    {
+        _openPicker?.ClosePopup();
+        _openPicker = this;
+
+        _owner = Window.GetWindow(this);
+        if (_owner is not null)
+        {
+            _owner.PreviewMouseDown += OwnerMouseDown;
+            // Wheel too: the popup is anchored to where the swatch was, and
+            // scrolling the field list underneath would leave it floating over
+            // an unrelated row.
+            _owner.PreviewMouseWheel += OwnerMouseWheel;
+            _owner.Deactivated += OwnerDeactivated;
+            _owner.Closed += OwnerDeactivated;
+        }
+
+        _popup!.IsOpen = true;
+    }
+
+    private void ClosePopup()
+    {
+        if (_owner is not null)
+        {
+            _owner.PreviewMouseDown -= OwnerMouseDown;
+            _owner.PreviewMouseWheel -= OwnerMouseWheel;
+            _owner.Deactivated -= OwnerDeactivated;
+            _owner.Closed -= OwnerDeactivated;
+            _owner = null;
+        }
+
+        if (ReferenceEquals(_openPicker, this)) _openPicker = null;
+
+        if (_popup is not null) _popup.IsOpen = false;
+        _closedAt = Environment.TickCount64;
+    }
+
+    // Any click in the settings window itself — the popup lives in its own HWND,
+    // so clicks inside the picker never come through here.
+    private void OwnerMouseDown(object sender, MouseButtonEventArgs e) => ClosePopup();
+
+    private void OwnerMouseWheel(object sender, MouseWheelEventArgs e) => ClosePopup();
+
+    private void OwnerDeactivated(object? sender, EventArgs e) => ClosePopup();
 
     private Popup BuildPopup()
     {
@@ -260,7 +334,12 @@ public sealed class ColorPickerButton : Border
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        done.Click += (_, _) => { if (_popup is not null) _popup.IsOpen = false; };
+        done.Click += (_, _) => ClosePopup();
+
+        _hexBox.KeyDown += (_, e) =>
+        {
+            if (e.Key is Key.Enter or Key.Escape) ClosePopup();
+        };
 
         var hexRow = new StackPanel
         {
@@ -302,7 +381,7 @@ public sealed class ColorPickerButton : Border
         {
             PlacementTarget = this,
             Placement = PlacementMode.Bottom,
-            StaysOpen = false,           // click anywhere else to dismiss
+            StaysOpen = true,            // dismissal is driven from OpenPopup/ClosePopup
             AllowsTransparency = true,
             Child = new Border
             {
