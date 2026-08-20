@@ -579,10 +579,26 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             i = ((i + step) % Groups.Count + Groups.Count) % Groups.Count;
             if (!Groups[i].InPanel) continue;
 
-            _stealthIndex = 0;
-            SetActive(Groups[i]);
+            StealthSelectGroup(Groups[i]);
             return;
         }
+    }
+
+    /// <summary>
+    /// Activates a specific group from the panel — what the panel's right-click
+    /// list does, versus the PageUp/PageDown rotation above.
+    ///
+    /// <see cref="GroupRow.InPanel"/> is deliberately NOT consulted: it governs
+    /// which groups the rotation stops at, and an explicit pick is not the
+    /// rotation. Landing on the first contract mirrors stepping, so the panel
+    /// always opens a group at its top.
+    /// </summary>
+    public void StealthSelectGroup(GroupRow? group)
+    {
+        if (group is null || ReferenceEquals(group, _activeGroup)) return;
+
+        _stealthIndex = 0;
+        SetActive(group);
     }
 
     /// <summary>Raised so the view can open/close the suggestion popup.</summary>

@@ -38,12 +38,25 @@ else
   echo "ok   size = $asize"
 fi
 
-# 3. the one that actually bit us: version compiled INTO the binary
-scp -q "$EXE" corp-win:C:/work/_vercheck.exe 2>/dev/null || { echo "WARN 无法上传到 corp-win 校验内部版本"; exit $fail; }
-bver=$(ssh corp-win 'powershell -NoProfile -Command "(Get-Item C:\work\_vercheck.exe).VersionInfo.FileVersion"' 2>/dev/null | tr -d '\r' | tail -1)
-ssh corp-win 'cmd /c "del /q C:\work\_vercheck.exe"' >/dev/null 2>&1
+# 3. the one that actually bit us: version compiled INTO the binary.
+# Read straight out of the PE version resource here, rather than asking corp-win
+# for VersionInfo.FileVersion: the tunnel to that machine drops often enough that
+# the check kept degrading to a WARN, and a check that skips itself when the
+# network hiccups is not a gate. VS_FIXEDFILEINFO starts at signature 0xFEEF04BD;
+# the two DWORDs following it and dwStrucVersion are the file version, high word first.
+bver=$(python3 - "$EXE" <<'PYVER' 2>/dev/null
+import struct, sys
+data = open(sys.argv[1], "rb").read()
+at = data.find(b"\xbd\x04\xef\xfe")
+if at >= 0:
+    ms, ls = struct.unpack_from("<II", data, at + 8)
+    print(f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}")
+PYVER
+)
 
-if [ "$bver" != "$VER.0" ] && [ "$bver" != "$VER" ]; then
+if [ -z "$bver" ]; then
+  echo "FAIL 读不出 exe 内部版本（版本资源缺失？）"; fail=1
+elif [ "$bver" != "$VER.0" ] && [ "$bver" != "$VER" ]; then
   echo "FAIL exe 内部版本是 $bver，不是 $VER —— 八成是改了 csproj 但没重新编译"
   fail=1
 else

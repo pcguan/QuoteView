@@ -41,7 +41,8 @@ git push        # 走 .git/config 里的代理，直接 push；卡死就检查 h
 
 > ⚠️ **抬完版本必须重新编译。**改 `<Version>` 之后如果直接从上次的 `dist/` 拷 exe，
 > 文件名和 manifest 都写着新版本，而**二进制里还是旧版本号**——客户端更新完仍报旧版、
-> 于是被反复提示同一个更新。发布前跑 `tools/check_release.sh <版本>` 卡这一关。
+> 于是被反复提示同一个更新。发布前跑 `tools/check_release.sh <版本>` 卡这一关（内部版本号在本机直接读 PE 版本资源，
+> 不依赖 corp-win——那条隧道一断，检查就会退化成 WARN 而形同虚设）。
 
 先抬版本并出对应 exe：
 - `src/StockClient.App/StockClient.App.csproj` 的 `<Version>` +1（如 1.0.1→1.0.2）；
@@ -71,8 +72,11 @@ ssh nas 'chmod 644 /vol3/1000/HDD2/tool/docker/nginx/html/quoteview/*'   # 必�
 curl -s -X POST -H "Authorization: token <PAT>" -H "User-Agent: sc" \
   https://api.github.com/repos/pcguan/QuoteView/releases \
   -d '{"tag_name":"v<ver>","target_commitish":"main","name":"v<ver>","body":"本版更新说明"}'
-# 拿到返回的 release id，从 corp-win 上传资产（文件在那、外网可用）
-ssh corp-win 'powershell -NoProfile -Command "Invoke-RestMethod -Uri \"https://uploads.github.com/repos/pcguan/QuoteView/releases/<id>/assets?name=QuoteView.exe\" -Method Post -Headers @{Authorization=\"token <PAT>\";\"User-Agent\"=\"sc\"} -ContentType application/octet-stream -InFile C:\work\stock\dist\QuoteView.exe"'
+# 拿到返回的 release id，直接从本机上传资产（走代理即可，不必绕 corp-win）
+curl -s -X POST -H "Authorization: token <PAT>" -H "User-Agent: sc" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @release/QuoteView-<ver>.exe \
+  "https://uploads.github.com/repos/pcguan/QuoteView/releases/<id>/assets?name=QuoteView.exe"
 ```
 - GitHub 资产名固定 **`QuoteView.exe`**（客户端按此名找）；NAS 上是 `QuoteView-<ver>.exe`（manifest 给全 URL）。
 - 别忘了步骤 4 把 csproj/CHANGELOG 的改动 commit+push。

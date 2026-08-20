@@ -777,6 +777,15 @@ public partial class StealthWindow : Window
     {
         var menu = new ContextMenu();
 
+        // Pick a group directly. Filled on every open, not once here: groups get
+        // added, renamed and deleted in the main window while the panel is up,
+        // and a menu built at construction would still be offering yesterday's.
+        var groups = new MenuItem { Header = "分组" };
+        menu.Opened += (_, _) => FillGroups(groups);
+        menu.Items.Add(groups);
+
+        menu.Items.Add(new Separator());
+
         // Fields, colours, row count and shade now live in a dedicated settings
         // window; the menu just opens it and keeps the quick navigation actions.
         var settings = new MenuItem { Header = "设置…" };
@@ -830,6 +839,47 @@ public partial class StealthWindow : Window
         menu.Items.Add(restore);
 
         return menu;
+    }
+
+    /// <summary>
+    /// Rebuilds the 分组 submenu against the current groups, ticking the active one.
+    ///
+    /// Every group is listed, including those left out of the panel rotation:
+    /// picking one by hand is a different act from cycling, and hiding them here
+    /// would make the panel unable to reach a group the user can plainly see in
+    /// the main window. Such a group is labelled, because the next PageDown
+    /// jumping straight back out of it would otherwise look like a bug.
+    /// </summary>
+    private void FillGroups(MenuItem parent)
+    {
+        parent.Items.Clear();
+
+        if (_vm.Groups.Count == 0)
+        {
+            parent.Items.Add(new MenuItem { Header = "（还没有分组）", IsEnabled = false });
+            return;
+        }
+
+        var active = _vm.ActiveGroup;
+
+        foreach (var group in _vm.Groups)
+        {
+            var captured = group;
+
+            // The count rides along: with the panel showing one row, the name
+            // alone doesn't say whether a group has anything in it. Read from the
+            // model rather than GroupRow.Count, which only refreshes on demand.
+            var item = new MenuItem
+            {
+                Header = $"{group.Name}（{group.Model.Codes.Count}）",
+                IsCheckable = true,
+                IsChecked = ReferenceEquals(group, active),
+                InputGestureText = group.InPanel ? "" : "不参与轮换",
+            };
+
+            item.Click += (_, _) => _vm.StealthSelectGroup(captured);
+            parent.Items.Add(item);
+        }
     }
 
     /// <summary>
