@@ -1103,6 +1103,17 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     public string ExportSettingsJson() =>
         System.Text.Json.JsonSerializer.Serialize(SettingsPayload.From(_config));
 
+    /// <summary>
+    /// Stamps the preference slice as changed-now and persists quietly (no
+    /// ConfigSaved — the caller IS the save listener). The stamp is what wins
+    /// the pull-vs-local arbitration at the next start.
+    /// </summary>
+    public void StampPrefsChanged()
+    {
+        _config.PrefsUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _store.Save(_config);
+    }
+
 
 
     public async ValueTask DisposeAsync()

@@ -52,7 +52,8 @@ location /quoteview/api/ {
 | GET | /groups | Bearer | 账户的分组（切换用户时客户端恢复用） |
 | GET | /kline | Bearer | K 线代理（secid/klt/fqt/lmt 白名单校验，5 分钟缓存，空响应不缓存） |
 | GET | /admin | Basic(账户密码) | Web 管理台，仅 admin/sysadmin 角色可进 |
-| GET/POST | /admin/* | Basic(账户密码) | accounts / create / delete / disable / logout / password / role |
+| POST | /password | Bearer | 自助改密（校验旧密码；其他会话失效、当前保留） |
+| GET/POST | /admin/* | Basic(账户密码) | accounts / sessions / logs / create / delete / disable / logout / password / role |
 
 **角色**：`user` 普通用户（默认）/ `admin` 普通管理员（只能操作 user）/ `sysadmin` 系统管理员
 （唯一，可操作所有人并改角色；自身不可删除/禁用/降级）。

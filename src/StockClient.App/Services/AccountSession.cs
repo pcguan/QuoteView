@@ -197,6 +197,21 @@ public sealed class AccountSession
         CallAsync(t => _client.PutSettingsAsync(t, settingsJson, CancellationToken.None).ContinueWith(
             x => (x.Result.Ok, x.Result.Unauthorized)), false);
 
+    /// <summary>Null on success; the remembered password follows the change.</summary>
+    public async Task<string?> ChangePasswordAsync(string oldPassword, string newPassword)
+    {
+        if (_token is null) return "未登录";
+
+        var (error, unauthorized) = await _client.ChangePasswordAsync(
+            _token, oldPassword, newPassword, CancellationToken.None);
+        if (unauthorized) return "登录已失效，请重新登录";
+        if (error is not null) return error;
+
+        if (Remember) _password = newPassword;
+        Save();
+        return null;
+    }
+
     public Task<string?> KlineJsonAsync(string secid, int klt, int fqt, int lmt) =>
         CallAsync(t => _client.KlineJsonAsync(t, secid, klt, fqt, lmt, CancellationToken.None).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);

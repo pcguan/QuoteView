@@ -321,6 +321,10 @@ public sealed class SettingsPayload
     [JsonPropertyName("paneWidth")]
     public double GroupPaneWidth { get; set; }
 
+    /// <summary>Change stamp of this payload, unix seconds. Newer wins.</summary>
+    [JsonPropertyName("at")]
+    public long At { get; set; }
+
     public static SettingsPayload From(GroupConfig config) => new()
     {
         Stealth = config.Stealth,
@@ -328,6 +332,7 @@ public sealed class SettingsPayload
         Notes = config.Notes,
         AggEqualWeight = config.AggEqualWeight,
         GroupPaneWidth = config.GroupPaneWidth,
+        At = config.PrefsUpdatedAt,
     };
 
     /// <summary>Overwrites the preference slice of <paramref name="config"/>.</summary>
@@ -339,6 +344,7 @@ public sealed class SettingsPayload
             config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
         config.AggEqualWeight = AggEqualWeight;
         config.GroupPaneWidth = GroupPaneWidth;
+        config.PrefsUpdatedAt = At;
     }
 }
 
@@ -353,6 +359,15 @@ public sealed class GroupConfig
     /// <summary>The one group being polled. Exactly one, or none when empty.</summary>
     [JsonPropertyName("activeGroupId")]
     public string? ActiveGroupId { get; set; }
+
+    /// <summary>
+    /// When the preference slice (SettingsPayload) last changed, unix seconds.
+    /// The tiebreaker for account-settings sync: at startup the server copy is
+    /// applied only when it is NOT older than this — without it, a layout tweak
+    /// made while signed out was silently rolled back by the next start's pull.
+    /// </summary>
+    [JsonPropertyName("prefsAt")]
+    public long PrefsUpdatedAt { get; set; }
 
     /// <summary>
     /// The account this local file belongs to. Null = pre-account data, adopted
@@ -435,6 +450,13 @@ public sealed class GroupStore
         if (payload is null) return;
 
         var config = Load();
+
+        // Last write wins: a local change made while signed out or offline
+        // carries a newer stamp than the server copy, and must survive the
+        // next start's pull. Equal stamps apply (covers fresh installs and
+        // pre-stamp payloads, both at 0).
+        if (payload.At < config.PrefsUpdatedAt) return;
+
         payload.ApplyTo(config);
         config.Stealth = config.Stealth.Normalize();
         Save(config);

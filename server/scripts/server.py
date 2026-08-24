@@ -467,79 +467,204 @@ def role_of(account):
     return account.get("role") or "user"
 
 ADMIN_PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
 <title>QuoteView 管理台</title>
 <style>
-body{background:#12161F;color:#EDF1F7;font:13px/1.6 'Microsoft YaHei',sans-serif;margin:24px}
-h1{font-size:18px} table{border-collapse:collapse;width:100%;margin:14px 0}
-th,td{border:1px solid #2A3244;padding:6px 10px;text-align:left;vertical-align:top;font-size:12px}
-th{background:#1A2030;color:#8B93A3} tr:nth-child(even){background:#161B27}
-button{background:#1A2030;color:#EDF1F7;border:1px solid #39435A;border-radius:3px;
-padding:3px 10px;margin:0 3px 3px 0;cursor:pointer;font-size:12px}
-button:hover{border-color:#5C6B8A} .on{color:#3DD68C}.off{color:#8B93A3}.dis{color:#EF5350}
-#msg{color:#FFC107;min-height:1.4em} details{margin-top:4px} summary{cursor:pointer;color:#8B93A3}
-input{background:#0F1420;color:#EDF1F7;border:1px solid #39435A;border-radius:3px;padding:3px 8px}
+:root{--bg:#0B0F17;--card:#12161F;--line:#232B3B;--head:#1A2030;--fg:#EDF1F7;
+--mut:#8B93A3;--dim:#5F6672;--up:#3DD68C;--warn:#FFC107;--bad:#EF5350;--acc:#4C8DFF}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:13px/1.6 'Microsoft YaHei',sans-serif;margin:0}
+header{display:flex;align-items:center;gap:24px;padding:14px 28px;background:var(--card);
+border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0}
+nav{display:flex;gap:4px}
+nav button{background:none;border:none;color:var(--mut);padding:8px 16px;font-size:13px;
+cursor:pointer;border-radius:5px}
+nav button.act{background:var(--head);color:var(--fg)}
+#who{margin-left:auto;color:var(--dim);font-size:12px}
+main{padding:20px 28px;max-width:1280px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;
+padding:16px 18px;margin-bottom:18px}
+.card h2{font-size:13px;color:var(--mut);margin:0 0 12px;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{color:var(--dim);text-align:left;font-weight:normal;padding:5px 12px;
+border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:6px 12px;border-bottom:1px solid #1A2030;vertical-align:middle}
+tr:hover td{background:#161B27}
+.tag{display:inline-block;padding:0 8px;border-radius:9px;font-size:11px;line-height:18px}
+.t-on{background:#12351F;color:var(--up)}.t-off{background:#252B38;color:var(--mut)}
+.t-bad{background:#3A1520;color:var(--bad)}.t-role{background:#152743;color:var(--acc)}
+button.op{background:var(--head);color:var(--fg);border:1px solid #39435A;border-radius:4px;
+padding:3px 10px;margin:1px 2px;cursor:pointer;font-size:12px}
+button.op:hover{border-color:#5C6B8A}
+button.danger{color:var(--bad)}
+input,select{background:#0F1420;color:var(--fg);border:1px solid #39435A;border-radius:4px;
+padding:4px 9px;font-size:12px}
+#msg{position:fixed;right:24px;bottom:20px;background:var(--head);border:1px solid #39435A;
+border-radius:6px;padding:8px 16px;color:var(--warn);display:none;max-width:420px}
+.mono{font-family:Consolas,monospace}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.dim{color:var(--dim)}.mut{color:var(--mut)}
 </style>
-<h1>QuoteView 管理台 <span id=who class=off></span></h1>
-<div>
-  <input id=nu placeholder="新用户名"> <input id=np placeholder="密码" type=password>
-  <button onclick="createAccount()">新增账户</button>
-  <span id=msg></span>
-</div>
-<div id=root>加载中…</div>
-<script>
-const api = (path, body) => fetch('admin/' + path, body ? {method:'POST',
-  headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})
-  .then(r => r.json());
-const msg = t => document.getElementById('msg').textContent = t;
+<header>
+  <h1>QuoteView 管理台</h1>
+  <nav>
+    <button id=nav-acct class=act onclick="show('acct')">账户管理</button>
+    <button id=nav-sess onclick="show('sess')">会话管理</button>
+    <button id=nav-logs onclick="show('logs')">日志管理</button>
+  </nav>
+  <span id=who></span>
+</header>
+<main>
+  <section id=tab-acct>
+    <div class=card>
+      <h2>新增账户</h2>
+      <input id=nu placeholder="用户名（3~32 位字母/数字/下划线）" style="width:240px">
+      <input id=np placeholder="初始密码（≥6 位）" type=password style="width:200px">
+      <button class=op onclick="createAccount()">创建</button>
+      <span class=dim>　新账户默认为普通用户；角色由系统管理员在列表中调整</span>
+    </div>
+    <div class=card><h2>账户列表</h2><div id=acct-list>加载中…</div></div>
+  </section>
 
+  <section id=tab-sess hidden>
+    <div class=card><h2>账户状态与在线会话（在线 = 10 分钟内有活动；仅展示有效会话）</h2>
+      <div id=sess-list>加载中…</div></div>
+  </section>
+
+  <section id=tab-logs hidden>
+    <div class=card>
+      <h2>登录日志　<input id=lf placeholder="按用户/IP/日期过滤…" style="width:220px"
+          oninput="renderLogs()"></h2>
+      <div id=login-list>加载中…</div>
+    </div>
+    <div class=grid2>
+      <div class=card><h2>登录统计（按用户汇总）</h2><div id=login-stats></div></div>
+      <div class=card><h2>密码修改日志</h2><div id=pw-list></div></div>
+    </div>
+  </section>
+</main>
+<div id=msg></div>
+<script>
 const ROLE = {user:'普通用户', admin:'管理员', sysadmin:'系统管理员'};
-async function load(){
+let ME = null, LOGS = null;
+const $ = id => document.getElementById(id);
+const api = (path, body) => fetch('admin/' + path, body ? {method:'POST',
+  headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {}).then(r => r.json());
+function msg(t){ const m = $('msg'); m.textContent = t; m.style.display = 'block';
+  clearTimeout(m._t); m._t = setTimeout(() => m.style.display = 'none', 4000); }
+function show(tab){
+  for (const t of ['acct','sess','logs']){
+    $('tab-'+t).hidden = t !== tab;
+    $('nav-'+t).className = t === tab ? 'act' : '';
+  }
+  refresh(tab);
+}
+function active(){ return ['acct','sess','logs'].find(t => !$('tab-'+t).hidden); }
+
+async function refresh(tab){
+  tab = tab || active();
+  if (tab === 'acct') loadAccounts();
+  else if (tab === 'sess') loadSessions();
+  else loadLogs();
+}
+
+async function loadAccounts(){
   const d = await api('accounts');
-  const me = d.me;
+  ME = d.me;
+  $('who').textContent = `${ME.username} · ${ROLE[ME.role]}`;
   const rows = d.accounts.map(a => {
-    const canAct = me.role === 'sysadmin' ? a.role !== 'sysadmin' : a.role === 'user';
-    const canPw = me.role === 'sysadmin' || a.role === 'user';
-    const roleCell = me.role === 'sysadmin' && a.role !== 'sysadmin'
+    const canAct = ME.role === 'sysadmin' ? a.role !== 'sysadmin' : a.role === 'user';
+    const canPw = a.role !== 'sysadmin' && (ME.role === 'sysadmin' || a.role === 'user');
+    const roleCell = ME.role === 'sysadmin' && a.role !== 'sysadmin'
       ? `<select onchange="act('role',{username:'${a.username}',role:this.value})">
            <option value=user ${a.role==='user'?'selected':''}>普通用户</option>
            <option value=admin ${a.role==='admin'?'selected':''}>管理员</option></select>`
-      : ROLE[a.role] || a.role;
-    const tok = a.tokens.map(t =>
-      `<div>${t.online ? '<b class=on>在线</b>' : '<span class=off>离线</span>'}`
-      + ` ip=${t.ip||'-'} 版本=${t.ver||'-'} 登录=${t.created||'-'}`
-      + ` 活跃=${t.seen||'-'} 时长=${t.duration||'-'}</div>`).join('') || '<span class=off>无会话</span>';
-    const logs = a.logins.map(l => `<div>${l.at} ip=${l.ip||'-'} 版本=${l.ver||'-'}</div>`).join('')
-      || '<span class=off>无记录</span>';
+      : `<span class="tag t-role">${ROLE[a.role]||a.role}</span>`;
     return `<tr>
-      <td><b>${a.username}</b><br>${roleCell}<br>${a.disabled ? '<span class=dis>已禁用</span>' : '<span class=on>正常</span>'}</td>
-      <td>${a.groups} 组 / ${a.contracts} 合约<br>设置: ${a.has_settings ? '已同步' : '无'}</td>
-      <td>在线 ${a.online} / 会话 ${a.tokens.length}${tok}</td>
-      <td><details><summary>最近登录 ${a.logins.length} 条</summary>${logs}</details></td>
+      <td><b>${a.username}</b></td>
+      <td>${roleCell}</td>
+      <td>${a.disabled ? '<span class="tag t-bad">已禁用</span>' : '<span class="tag t-on">正常</span>'}</td>
+      <td class=mut>${a.groups} 组 / ${a.contracts} 合约</td>
+      <td class=mut>${a.has_settings ? '已同步' : '<span class=dim>无</span>'}</td>
+      <td class=mut>${a.online > 0 ? `<span class="tag t-on">${a.online} 在线</span>` : '<span class=dim>—</span>'}</td>
       <td>
-        ${canAct ? `<button onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
-        <button onclick="act('logout',{username:'${a.username}'})">登出全部</button>` : ''}
-        ${canPw && a.role !== 'sysadmin' ? `<button onclick="passwd('${a.username}')">改密码</button>` : ''}
-        ${canAct ? `<button onclick="del('${a.username}')">删除</button>` : ''}
-        ${!canAct && !(canPw && a.role !== 'sysadmin') ? '<span class=off>无权限</span>' : ''}
+        ${canPw ? `<button class=op onclick="passwd('${a.username}')">改密码</button>` : ''}
+        ${canAct ? `<button class=op onclick="act('logout',{username:'${a.username}'})">登出</button>
+        <button class=op onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
+        <button class="op danger" onclick="del('${a.username}')">删除</button>` : ''}
+        ${!canAct && !canPw ? '<span class=dim>无权限</span>' : ''}
       </td></tr>`;
   }).join('');
-  document.getElementById('who').textContent = `— ${me.username}（${ROLE[me.role]}）`;
-  document.getElementById('root').innerHTML =
-    `<table><tr><th>账户</th><th>数据</th><th>会话（在线判定：10 分钟内有活动）</th><th>登录日志</th><th>操作</th></tr>${rows}</table>`;
+  $('acct-list').innerHTML = `<table><tr><th>账户</th><th>角色</th><th>状态</th>
+    <th>数据</th><th>设置同步</th><th>会话</th><th>操作</th></tr>${rows}</table>`;
 }
-async function act(path, body){ const r = await api(path, body); msg(r.error || '完成'); load(); }
-async function createAccount(){
-  const u = document.getElementById('nu').value.trim(), p = document.getElementById('np').value;
-  if(!u || !p) return msg('用户名和密码都要填');
-  act('create', {username:u, password:p});
+
+async function loadSessions(){
+  const d = await api('sessions');
+  const blocks = d.accounts.map(a => {
+    const state = a.disabled ? '<span class="tag t-bad">已禁用</span>'
+      : a.online.length ? '<span class="tag t-on">在线</span>' : '<span class="tag t-off">离线</span>';
+    const rows = a.online.map(t => `<tr>
+      <td class=mono>${t.ip}</td><td class=mono>${t.ver}</td>
+      <td class=mono>${t.created}</td><td class=mono>${t.seen}</td>
+      <td class=mono>${t.duration||'-'}</td></tr>`).join('');
+    const table = a.online.length
+      ? `<table><tr><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>在线时长</th></tr>${rows}</table>`
+      : '<div class=dim style="padding:4px 12px">无在线会话</div>';
+    return `<div style="margin-bottom:14px">
+      <div style="margin-bottom:4px"><b>${a.username}</b>
+        <span class="tag t-role">${ROLE[a.role]||a.role}</span> ${state}</div>${table}</div>`;
+  }).join('');
+  $('sess-list').innerHTML = blocks || '<div class=dim>无账户</div>';
+}
+
+async function loadLogs(){
+  LOGS = await api('logs');
+  renderLogs();
+  const stats = {};
+  for (const l of LOGS.logins){
+    const st = stats[l.user] = stats[l.user] || {n:0, last:'', ips:new Set()};
+    st.n++; if (l.at > st.last) st.last = l.at; if (l.ip) st.ips.add(l.ip);
+  }
+  $('login-stats').innerHTML = `<table><tr><th>用户</th><th>登录次数</th>
+    <th>独立 IP 数</th><th>最近登录</th></tr>` +
+    Object.entries(stats).sort((a,b) => b[1].n - a[1].n).map(([u,st]) =>
+      `<tr><td><b>${u}</b></td><td>${st.n}</td><td>${st.ips.size}</td>
+       <td class=mono>${st.last}</td></tr>`).join('') + '</table>';
+  $('pw-list').innerHTML = LOGS.passwords.length
+    ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>` +
+      LOGS.passwords.map(l => `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
+        <td class=mono>${l.ip||'-'}</td><td>${l.by==='self'?'本人':l.by}</td></tr>`).join('') + '</table>'
+    : '<div class=dim>无记录</div>';
+}
+function renderLogs(){
+  if (!LOGS) return;
+  const f = $('lf').value.trim().toLowerCase();
+  const rows = LOGS.logins.filter(l =>
+    !f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f))
+    .slice(0, 200).map(l => `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
+      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+  $('login-list').innerHTML = rows
+    ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
+    : '<div class=dim>无匹配记录</div>';
+}
+
+async function act(path, body){ const r = await api(path, body); msg(r.error || '已完成'); refresh(); }
+function createAccount(){
+  const u = $('nu').value.trim(), p = $('np').value;
+  if (!u || !p) return msg('用户名和密码都要填');
+  act('create', {username:u, password:p}); $('np').value = '';
 }
 function passwd(u){
-  const p = prompt(`为 ${u} 设置新密码：`); if(!p) return;
+  const p = prompt(`为 ${u} 设置新密码（管理员重置无需旧密码）：`); if (!p) return;
   const kick = confirm('同时登出该用户当前所有登录状态？（确定=登出，取消=保留）');
   act('password', {username:u, password:p, logout:kick});
 }
-function del(u){ if(confirm(`确认删除账户 ${u}？其分组与设置数据将一并删除。`)) act('delete',{username:u}); }
-load(); setInterval(load, 30000);
+function del(u){ if (confirm(`确认删除账户 ${u}？其分组与设置数据将一并删除。`)) act('delete', {username:u}); }
+
+loadAccounts(); setInterval(() => refresh(), 30000);
 </script></html>"""
 
 
@@ -629,6 +754,67 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
+        if url.path == "/admin/sessions":
+            if self._admin() is None:
+                return
+            now = datetime.now(CN)
+            out = []
+            for name in sorted(os.listdir(ACCOUNTS)) if os.path.isdir(ACCOUNTS) else []:
+                if not name.endswith(".json"):
+                    continue
+                doc = load_account(name[:-5])
+                if doc is None:
+                    continue
+                normalize_tokens(doc)
+                sessions = []
+                for t in doc["tokens"]:
+                    seen = t.get("seen") or ""
+                    ip = t.get("ip") or ""
+                    # Online means active in the last 10 minutes; loopback/blank
+                    # IPs are pre-proxy-fix leftovers and carry no information.
+                    if not seen or ip in ("", "127.0.0.1"):
+                        continue
+                    try:
+                        seen_dt = datetime.strptime(seen, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                    except Exception:
+                        continue
+                    if now - seen_dt > timedelta(minutes=10):
+                        continue
+                    duration = ""
+                    created = t.get("created") or ""
+                    try:
+                        created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                        minutes = int((seen_dt - created_dt).total_seconds() // 60)
+                        duration = f"{minutes // 60}h{minutes % 60:02d}m"
+                    except Exception:
+                        pass
+                    sessions.append({"ip": ip, "ver": t.get("ver") or "-",
+                                     "created": created, "seen": seen, "duration": duration})
+                out.append({"username": name[:-5], "role": role_of(doc),
+                            "disabled": bool(doc.get("disabled")), "online": sessions})
+            return self._json({"accounts": out})
+
+        if url.path == "/admin/logs":
+            if self._admin() is None:
+                return
+            logins, passwords = [], []
+            for name in sorted(os.listdir(ACCOUNTS)) if os.path.isdir(ACCOUNTS) else []:
+                if not name.endswith(".json"):
+                    continue
+                user = name[:-5]
+                doc = load_account(user)
+                if doc is None:
+                    continue
+                for entry in doc.get("logins") or []:
+                    logins.append({"user": user, "at": entry.get("at") or "",
+                                   "ip": entry.get("ip") or "", "ver": entry.get("ver") or ""})
+                for entry in doc.get("pwlogs") or []:
+                    passwords.append({"user": user, "at": entry.get("at") or "",
+                                      "ip": entry.get("ip") or "", "by": entry.get("by") or ""})
+            logins.sort(key=lambda x: x["at"], reverse=True)
+            passwords.sort(key=lambda x: x["at"], reverse=True)
+            return self._json({"logins": logins[:500], "passwords": passwords[:200]})
 
         if url.path == "/admin/accounts":
             actor = self._admin()
@@ -829,6 +1015,9 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 account = load_account(user) or account
                 normalize_tokens(account)
+                cutoff = f"{datetime.now(CN) - timedelta(days=30):%F %T}"
+                account["tokens"] = [t for t in account["tokens"]
+                                     if (t.get("seen") or t.get("created") or "") >= cutoff]
                 account["tokens"] = account["tokens"][-(MAX_TOKENS - 1):] + [token]
                 logins = account.get("logins") or []
                 account["logins"] = (logins + [self._login_entry()])[-50:]
@@ -862,6 +1051,42 @@ class Handler(BaseHTTPRequestHandler):
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
+
+        if self.path == "/password":
+            authed = self._auth()
+            if authed is None:
+                return
+            user, _, token = authed
+            try:
+                doc = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
+            old_pw = str(doc.get("old") or "")
+            new_pw = str(doc.get("new") or "")
+            if len(new_pw) < 6:
+                return self._bad("新密码至少 6 位")
+            with _lock:
+                account = load_account(user)
+                if account is None:
+                    return self._bad("unauthorized", 401)
+                if not verify_password(account, old_pw):
+                    return self._bad("旧密码不正确", 403)
+                salt = secrets.token_hex(16)
+                account["auth"] = {"salt": salt, "hash": hash_pw(new_pw, salt),
+                                   "iters": PBKDF2_ITERS}
+                # Password change invalidates every OTHER session; the one that
+                # made the change keeps working.
+                normalize_tokens(account)
+                account["tokens"] = [t for t in account["tokens"] if t["t"] == token]
+                pwlogs = account.get("pwlogs") or []
+                account["pwlogs"] = (pwlogs + [{
+                    "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                    "by": "self", "ver": self._ver(),
+                }])[-50:]
+                save_account(user, account)
+            _token_cache.clear()
+            log(f"password self-change {user} from {self._ip()}")
+            return self._json({"ok": True})
 
         if self.path == "/settings":
             authed = self._auth()
@@ -991,6 +1216,11 @@ class Handler(BaseHTTPRequestHandler):
                                    "iters": PBKDF2_ITERS}
                 if doc.get("logout"):
                     account["tokens"] = []
+                pwlogs = account.get("pwlogs") or []
+                account["pwlogs"] = (pwlogs + [{
+                    "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                    "by": f"admin:{actor_name}",
+                }])[-50:]
                 save_account(user, account)
             _token_cache.clear()
             log(f"admin[{actor_name}]: password {user} (logout={bool(doc.get('logout'))})")

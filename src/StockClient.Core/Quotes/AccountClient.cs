@@ -176,6 +176,34 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>Change the signed-in account's password; the server verifies the
+    /// old one. Null on success, otherwise a display-ready error.</summary>
+    public async Task<(string? Error, bool Unauthorized)> ChangePasswordAsync(
+        string token, string oldPassword, string newPassword, CancellationToken ct)
+    {
+        try
+        {
+            var payload = JsonSerializer.Serialize(new { old = oldPassword, @new = newPassword });
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/password")
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+            };
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return ("登录已失效", true);
+            if (response.IsSuccessStatusCode) return (null, false);
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var error = doc.RootElement.TryGetProperty("error", out var e) ? e.GetString() : null;
+            return (error ?? $"服务端错误 {(int)response.StatusCode}", false);
+        }
+        catch (Exception)
+        {
+            return ("无法连接服务端", false);
+        }
+    }
+
     /// <summary>The server's /kline proxy body (EastMoney-shaped JSON), or null.
     /// lmt=0 asks for the full listed history, matching the chart's own shape.</summary>
     public async Task<(string? Json, bool Unauthorized)> KlineJsonAsync(

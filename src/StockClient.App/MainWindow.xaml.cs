@@ -253,10 +253,21 @@ public partial class MainWindow : FluentWindow
             _settingsPushTimer.Tick += async (_, _) =>
             {
                 _settingsPushTimer!.Stop();
-                if (_quotes is null || !_session.IsSignedIn) return;
+                if (_quotes is null) return;
 
                 var json = _quotes.ExportSettingsJson();
                 if (json == _lastPushedSettings) return;
+
+                // Stamp FIRST, signed in or not: the stamp is what protects an
+                // offline change from being rolled back by the next start's pull.
+                _quotes.StampPrefsChanged();
+                json = _quotes.ExportSettingsJson();
+
+                if (!_session.IsSignedIn)
+                {
+                    _lastPushedSettings = json;   // baseline so we don't re-stamp per save
+                    return;
+                }
 
                 if (await _session.PutSettingsAsync(json))
                 {

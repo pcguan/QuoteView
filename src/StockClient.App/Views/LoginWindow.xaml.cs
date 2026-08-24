@@ -86,6 +86,33 @@ public partial class LoginWindow : Window
         Close();
     }
 
+    private async void ChangePass_Click(object sender, RoutedEventArgs e)
+    {
+        var oldPw = OldPassBox.Password;
+        var newPw = NewPassBox.Password;
+
+        void Result(string text, bool ok)
+        {
+            ChangePassResult.Text = text;
+            ChangePassResult.Foreground = new System.Windows.Media.SolidColorBrush(
+                (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(
+                    ok ? "#3DD68C" : "#EF5350"));
+        }
+
+        if (oldPw.Length == 0 || newPw.Length == 0) { Result("请输入旧密码和新密码", false); return; }
+        if (newPw.Length < 6) { Result("新密码至少 6 位", false); return; }
+        if (newPw != NewPass2Box.Password) { Result("两次输入的新密码不一致", false); return; }
+
+        ChangePassButton.IsEnabled = false;
+        var error = await _session.ChangePasswordAsync(oldPw, newPw);
+        ChangePassButton.IsEnabled = true;
+
+        if (error is not null) { Result(error, false); return; }
+
+        OldPassBox.Clear(); NewPassBox.Clear(); NewPass2Box.Clear();
+        Result("修改成功（其他设备的登录已失效）", true);
+    }
+
     private void SignOut_Click(object sender, RoutedEventArgs e)
     {
         _session.SignOut();
