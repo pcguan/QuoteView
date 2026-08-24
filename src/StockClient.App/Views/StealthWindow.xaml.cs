@@ -841,6 +841,31 @@ public partial class StealthWindow : Window
         settings.Click += (_, _) => SettingsRequested?.Invoke();
         menu.Items.Add(settings);
 
+        // Template quick-switch: rebuilt on every open, applied in place.
+        var templates = new MenuItem { Header = "模板" };
+        menu.Opened += (_, _) =>
+        {
+            templates.Items.Clear();
+            if (_vm.StealthTemplates.Count == 0)
+            {
+                templates.Items.Add(new MenuItem { Header = "（在面板设置中「另存为…」创建）", IsEnabled = false });
+                return;
+            }
+            foreach (var template in _vm.StealthTemplates)
+            {
+                var captured = template;
+                var item = new MenuItem { Header = template.Name };
+                item.Click += (_, _) =>
+                {
+                    StealthConfigOps.CopyInto(_config, captured.Stealth);
+                    _save();
+                    ApplySettings();
+                };
+                templates.Items.Add(item);
+            }
+        };
+        menu.Items.Add(templates);
+
         // One item per chart rather than the old on/off, so the state is visible
         // (the hotkey cycles blind) and either chart is one click away.
         var chart = new MenuItem { Header = "面板图表", InputGestureText = "Win+Alt+Delete" };

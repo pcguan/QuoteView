@@ -116,9 +116,20 @@ public partial class TrendHistoryView : UserControl
 
         var restored = previous is { } p ? Array.IndexOf(dates, p) : -1;
         DateBox.SelectedIndex = restored >= 0 ? restored : 0;
+
+        // Compare choices: "(无)" + every other date.
+        var prevCompare = CompareBox.SelectedItem as DateOnly?;
+        var compareItems = new List<object> { "（无）" };
+        compareItems.AddRange(dates.Cast<object>());
+        CompareBox.ItemsSource = compareItems;
+        var keep = prevCompare is { } pc ? compareItems.IndexOf(pc) : -1;
+        CompareBox.SelectedIndex = keep >= 0 ? keep : 0;
     }
 
     private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        _ = LoadSelectedAsync();
+
+    private void CompareBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
         _ = LoadSelectedAsync();
 
     private int _loadRequest;
@@ -131,17 +142,8 @@ public partial class TrendHistoryView : UserControl
 
         var request = ++_loadRequest;
 
-        // Local cache first — every series fetched from the server is written
-        // back into it, so each snapshot crosses the network once per machine.
-        var series = _cache.TryLoad(item.Code, date);
-        if (series is null)
-        {
-            ShowEmpty("加载中…");
-            series = await _session.TrendAsync(item.Code, date);
-            if (request != _loadRequest) return;
-
-            if (series is not null) _cache.Save(series, date);
-        }
+        var series = await LoadDayAsync(item.Code, date);
+        if (request != _loadRequest) return;
 
         if (series is null)
         {
@@ -149,14 +151,63 @@ public partial class TrendHistoryView : UserControl
             return;
         }
 
+        TrendSeries? compare = null;
+        if (CompareBox.SelectedItem is DateOnly compareDate && compareDate != date)
+        {
+            compare = await LoadDayAsync(item.Code, compareDate);
+            if (request != _loadRequest) return;
+        }
+
         Empty.Visibility = Visibility.Collapsed;
         Chart.Visibility = Visibility.Visible;
         Chart.SetSeries(series);
+        Chart.SetCompare(compare);
+
+        ShowSummary(SummaryMain, date, series);
+        ShowSummary(SummaryCompare, (CompareBox.SelectedItem as DateOnly?) ?? default, compare);
+    }
+
+    /// <summary>Local cache first — every server fetch is written back, so each
+    /// snapshot crosses the network once per machine.</summary>
+    private async Task<TrendSeries?> LoadDayAsync(string code, DateOnly date)
+    {
+        if (_cache is null || _session is null) return null;
+
+        var series = _cache.TryLoad(code, date);
+        // Re-fetch when the cached copy predates the server's summary enrichment.
+        if (series is not null && series.Summary is not null) return series;
+
+        var fresh = await _session.TrendAsync(code, date);
+        if (fresh is not null)
+        {
+            _cache.Save(fresh, date);
+            return fresh;
+        }
+
+        return series;
+    }
+
+    private static void ShowSummary(TextBlock target, DateOnly date, TrendSeries? series)
+    {
+        if (series is null)
+        {
+            target.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var s = series.Summary;
+        target.Text = s is null
+            ? $"{date:yyyy-MM-dd}  当日指标暂无（旧快照）"
+            : $"{date:yyyy-MM-dd}  涨跌幅 {s.Percent:+0.00;-0.00;0.00}%  成交额 {s.Amount / 1e8:0.00}亿  " +
+              $"成交量 {s.Volume / 1e4:0.00}万手  外盘 {s.Outer / 1e4:0.00}万  内盘 {s.Inner / 1e4:0.00}万";
+        target.Visibility = Visibility.Visible;
     }
 
     private void ShowEmpty(string message)
     {
         Chart.Visibility = Visibility.Collapsed;
+        SummaryMain.Visibility = Visibility.Collapsed;
+        SummaryCompare.Visibility = Visibility.Collapsed;
         Empty.Text = message;
         Empty.Visibility = Visibility.Visible;
     }

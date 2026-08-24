@@ -30,7 +30,8 @@ public static class Program
         var config = StealthConfig.CreateDefault();
 
         // 1) The settings window's own content, at the width the window gives it.
-        var window = new StealthSettingsWindow(config, () => { }, () => { });
+        var window = new StealthSettingsWindow(
+            config, new List<StockClient.Core.Groups.NamedStealthTemplate>(), () => { }, () => { });
         var content = (FrameworkElement)window.Content;
         window.Content = null;   // detach before re-parenting
         // Host it at the real client width WITH its margins inside the bitmap —
@@ -132,6 +133,48 @@ public static class Program
             Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)),
             Child = loginContent,
         }, @"C:\work\preview-login.png");
+
+        // 6) History page with a compare overlay + summary strip.
+        var pts2 = new List<StockClient.Core.Quotes.TrendPoint>();
+        for (var i = 0; i < 240; i++)
+        {
+            var t = new DateTime(2026, 8, 21, 9, 30, 0).AddMinutes(i <= 120 ? i : i + 90);
+            pts2.Add(new StockClient.Core.Quotes.TrendPoint
+            {
+                Time = t.ToString("yyyy-MM-dd HH:mm"),
+                Price = Math.Round(101 + 2.2 * Math.Cos(i / 30.0) - i * 0.006, 2),
+                AvgPrice = 0, Volume = 3000,
+            });
+        }
+        var cmpSeries = new StockClient.Core.Quotes.TrendSeries
+            { Code = "SH600519", Name = "贵州茅台", PreClose = 102.2, Points = pts2 };
+
+        var history3 = new StockClient.App.Views.TrendHistoryView { Width = 1050, Height = 470 };
+        var t3 = typeof(StockClient.App.Views.TrendHistoryView);
+        var chart3 = (StockClient.App.Views.TrendChart)t3.GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
+        chart3.SetSeries(fakeSeries);
+        chart3.SetCompare(cmpSeries);
+        var sm = (System.Windows.Controls.TextBlock)t3.GetField("SummaryMain", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
+        var sc = (System.Windows.Controls.TextBlock)t3.GetField("SummaryCompare", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
+        sm.Text = "2026-08-24  涨跌幅 -6.07%  成交额 83.44亿  成交量 111.99万手  外盘 51.70万  内盘 60.29万";
+        sm.Visibility = Visibility.Visible;
+        sc.Text = "2026-08-21  涨跌幅 +1.20%  成交额 65.02亿  成交量 88.10万手  外盘 45.00万  内盘 43.10万";
+        sc.Visibility = Visibility.Visible;
+        Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history3 },
+            @"C:\work\preview-compare.png");
+
+        // 7) Settings window with the template bar.
+        var config2 = StealthConfig.CreateDefault();
+        var tmpls = new List<StockClient.Core.Groups.NamedStealthTemplate>
+        {
+            new() { Name = "白天高亮", Stealth = StealthConfigOps.Clone(config2) },
+            new() { Name = "夜间低调", Stealth = StealthConfigOps.Clone(config2) },
+        };
+        var win2 = new StealthSettingsWindow(config2, tmpls, () => { }, () => { });
+        var content2 = (FrameworkElement)win2.Content;
+        win2.Content = null;
+        Render(new Border { Width = 430, Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)), Child = content2 },
+            @"C:\work\preview-templates.png");
 
         Console.WriteLine("OK");
     }

@@ -406,8 +406,10 @@ def sweep_once():
     if state.get("holiday") == day:
         return
 
-    missing = [c for c in union_codes() if not os.path.exists(trend_path(c, day))]
+    all_codes = union_codes()
+    missing = [c for c in all_codes if not os.path.exists(trend_path(c, day))]
     if not missing:
+        enrich_summaries(day, all_codes)
         return
 
     log(f"sweep {day}: {len(missing)} contracts to fetch")
@@ -446,6 +448,82 @@ def sweep_once():
                            "at": f"{datetime.now(CN):%F %T}"}
     save_state(state)
     log(f"sweep {day}: done={done} failed={failed}")
+    enrich_summaries(day, all_codes)
+
+
+def enrich_summaries(day, codes):
+    """Attaches the day's closing metrics (change %, turnover, volume, the
+    outer/inner split) to every snapshot of `day` still missing them — ONE
+    batched Tencent quote request for all of them. Field map matches the C#
+    client: [32] pct, [6] volume(手), [37] amount(万元, A-share), [7]/[8]
+    outer/inner. Runs after the close, so the quote IS the day's final print."""
+    missing = [c for c in codes
+               if os.path.exists(trend_path(c, day))]
+    todo = []
+    for c in missing:
+        try:
+            with open(trend_path(c, day)) as f:
+                if "\"Summary\"" not in f.read(200000):
+                    todo.append(c)
+        except OSError:
+            pass
+    if not todo:
+        return
+
+    got = {}
+    for i in range(0, len(todo), 400):
+        chunk = todo[i:i + 400]
+        url = "https://qt.gtimg.cn/q=" + ",".join(c.lower() for c in chunk)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+            "Referer": "https://gu.qq.com/",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                body = r.read().decode("gbk", errors="replace")
+        except Exception as e:  # noqa: BLE001
+            log(f"enrich {day}: quote batch failed: {e}")
+            continue
+        for seg in body.split(";"):
+            seg = seg.strip()
+            if not seg.startswith("v_"):
+                continue
+            api, _, val = seg[2:].partition("=")
+            f = val.strip().strip('"').split("~")
+            if len(f) < 40:
+                continue
+            def num(i):
+                try:
+                    return float(f[i])
+                except (ValueError, IndexError):
+                    return 0.0
+            got[api.upper()] = {
+                "Percent": num(32),
+                "Volume": num(6),
+                "Amount": num(37) * 1e4,
+                "Outer": num(7),
+                "Inner": num(8),
+            }
+        time.sleep(1.0)
+
+    done = 0
+    for c in todo:
+        summary = got.get(c)
+        if summary is None:
+            continue
+        path = trend_path(c, day)
+        try:
+            with open(path) as f:
+                doc = json.load(f)
+            doc["Summary"] = summary
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(doc, f, ensure_ascii=False)
+            os.replace(tmp, path)
+            done += 1
+        except Exception:  # noqa: BLE001
+            pass
+    log(f"enrich {day}: summaries added to {done}/{len(todo)} snapshots")
 
 
 def scheduler():

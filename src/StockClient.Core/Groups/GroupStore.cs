@@ -154,6 +154,53 @@ public sealed class StealthFieldConfig
     public string NegativeColor { get; set; } = "#26A69A";
 }
 
+/// <summary>A named, reusable snapshot of the panel's setup (fields, colours,
+/// rows, shade, chart) — everything except the on-screen position.</summary>
+public sealed class NamedStealthTemplate
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("stealth")]
+    public StealthConfig Stealth { get; set; } = StealthConfig.CreateDefault();
+}
+
+public static class StealthConfigOps
+{
+    /// <summary>
+    /// In-place copy of everything a template covers, leaving Left/Top alone —
+    /// in place because open windows hold references to the live object.
+    /// </summary>
+    public static void CopyInto(StealthConfig into, StealthConfig from)
+    {
+        into.Shade = from.Shade;
+        into.Rows = from.Rows;
+        into.RowGap = from.RowGap;
+        into.Chart = from.Chart;
+        into.ShowTrend = from.ShowTrend;
+        into.Fields.Clear();
+        into.Fields.AddRange(from.Fields.Select(Clone));
+        into.Normalize();
+    }
+
+    /// <summary>Deep clone, so templates never share field objects with the live config.</summary>
+    public static StealthConfig Clone(StealthConfig source)
+    {
+        var copy = new StealthConfig();
+        CopyInto(copy, source);
+        return copy;
+    }
+
+    private static StealthFieldConfig Clone(StealthFieldConfig f) => new()
+    {
+        Field = f.Field,
+        Visible = f.Visible,
+        Color = f.Color,
+        PositiveColor = f.PositiveColor,
+        NegativeColor = f.NegativeColor,
+    };
+}
+
 public sealed class StealthConfig
 {
     /// <summary>Upper bound on visible rows, so a huge value can't fill the screen.</summary>
@@ -315,6 +362,9 @@ public sealed class SettingsPayload
     [JsonPropertyName("notes")]
     public Dictionary<string, string>? Notes { get; set; }
 
+    [JsonPropertyName("stealthTemplates")]
+    public List<NamedStealthTemplate>? StealthTemplates { get; set; }
+
     [JsonPropertyName("aggEqual")]
     public bool AggEqualWeight { get; set; }
 
@@ -330,6 +380,7 @@ public sealed class SettingsPayload
         Stealth = config.Stealth,
         QuoteColumns = config.QuoteColumns,
         Notes = config.Notes,
+        StealthTemplates = config.StealthTemplates,
         AggEqualWeight = config.AggEqualWeight,
         GroupPaneWidth = config.GroupPaneWidth,
         At = config.PrefsUpdatedAt,
@@ -351,6 +402,7 @@ public sealed class SettingsPayload
         if (QuoteColumns is not null) config.QuoteColumns = QuoteColumns;
         if (Notes is not null)
             config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
+        if (StealthTemplates is not null) config.StealthTemplates = StealthTemplates;
         config.AggEqualWeight = AggEqualWeight;
         config.GroupPaneWidth = GroupPaneWidth;
         config.PrefsUpdatedAt = At;
@@ -420,6 +472,11 @@ public sealed class GroupConfig
     /// </summary>
     [JsonPropertyName("notes")]
     public Dictionary<string, string> Notes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>User-defined panel templates, switchable from the settings
+    /// window and the panel's right-click menu.</summary>
+    [JsonPropertyName("stealthTemplates")]
+    public List<NamedStealthTemplate> StealthTemplates { get; set; } = new();
 
     public static GroupConfig CreateDefault() => new()
     {

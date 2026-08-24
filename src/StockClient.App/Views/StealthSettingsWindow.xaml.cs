@@ -63,16 +63,21 @@ public partial class StealthSettingsWindow : Window
     };
 
     private readonly StealthConfig _config;
+    private readonly IList<NamedStealthTemplate> _templates;
     private readonly Action _save;
     private readonly Action _onChanged;
+    private bool _seedingTemplates;
 
-    public StealthSettingsWindow(StealthConfig config, Action save, Action onChanged)
+    public StealthSettingsWindow(
+        StealthConfig config, IList<NamedStealthTemplate> templates, Action save, Action onChanged)
     {
         InitializeComponent();
 
         _config = config;
+        _templates = templates;
         _save = save;
         _onChanged = onChanged;
+        FillTemplates(select: null);
 
         // Set initial values BEFORE wiring events so seeding doesn't fire Apply.
         RowsSlider.Value = config.Rows;
@@ -130,6 +135,97 @@ public partial class StealthSettingsWindow : Window
         }
 
         BuildFields();
+    }
+
+    private void FillTemplates(string? select)
+    {
+        _seedingTemplates = true;
+        var items = new List<object> { "（当前设置）" };
+        items.AddRange(_templates.Select(t => (object)t.Name));
+        TemplateBox.ItemsSource = items;
+        TemplateBox.SelectedIndex = select is null ? 0 : Math.Max(0, items.IndexOf(select));
+        _seedingTemplates = false;
+    }
+
+    private void TemplateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_seedingTemplates || TemplateBox.SelectedIndex <= 0) return;
+
+        var template = _templates.FirstOrDefault(t => Equals(t.Name, TemplateBox.SelectedItem));
+        if (template is null) return;
+
+        StealthConfigOps.CopyInto(_config, template.Stealth);
+        Apply();
+
+        // The field checkboxes/pickers were built against the old field objects;
+        // rebuild them to reflect the template.
+        FieldsPanel.Children.Clear();
+        BuildFields();
+    }
+
+    private void TemplateSave_Click(object sender, RoutedEventArgs e)
+    {
+        var name = PromptName($"模板{_templates.Count + 1}");
+        if (name is not { Length: > 0 }) return;
+
+        var existing = _templates.FirstOrDefault(t => t.Name == name);
+        if (existing is not null) existing.Stealth = StealthConfigOps.Clone(_config);
+        else _templates.Add(new NamedStealthTemplate { Name = name, Stealth = StealthConfigOps.Clone(_config) });
+
+        _save();
+        FillTemplates(select: name);
+    }
+
+    private void TemplateDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (TemplateBox.SelectedIndex <= 0) return;
+        var template = _templates.FirstOrDefault(t => Equals(t.Name, TemplateBox.SelectedItem));
+        if (template is null) return;
+
+        _templates.Remove(template);
+        _save();
+        FillTemplates(select: null);
+    }
+
+    /// <summary>Tiny name prompt, same dark styling as this window.</summary>
+    private string? PromptName(string suggestion)
+    {
+        var box = new TextBox { Text = suggestion, Margin = new Thickness(0, 8, 0, 12) };
+        var ok = new Button { Content = "保存", Width = 76, IsDefault = true };
+        var cancel = new Button
+        {
+            Content = "取消", Width = 76, Margin = new Thickness(8, 0, 0, 0), IsCancel = true,
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        var body = new StackPanel { Margin = new Thickness(16, 12, 16, 12) };
+        body.Children.Add(new TextBlock { Text = "模板名称：", Foreground = Frozen("#8B93A3") });
+        body.Children.Add(box);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "另存为模板",
+            Owner = this,
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = Frozen("#12161F"),
+            FontFamily = new FontFamily("Microsoft YaHei"),
+            Content = body,
+        };
+        ok.Click += (_, _) => { dialog.DialogResult = true; };
+        dialog.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
+
+        return dialog.ShowDialog() == true ? box.Text.Trim() : null;
     }
 
     private void BuildFields()

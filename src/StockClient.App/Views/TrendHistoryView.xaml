@@ -27,16 +27,30 @@
                   DropDownOpened="DateBox_DropDownOpened"
                   SelectionChanged="DateBox_SelectionChanged" />
 
+        <TextBlock Text="对比" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
+                   Margin="18,0,8,0" />
+        <ComboBox x:Name="CompareBox" Width="150"
+                  SelectionChanged="CompareBox_SelectionChanged" />
+
         <TextBlock x:Name="Hint" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="11"
                    Foreground="{StaticResource Faint}"
-                   Text="沪深合约的当日分时由服务端在收盘后统一拉取归档；当天的在收盘约半小时后陆续可见。" />
+                   Text="收盘后由服务端统一归档；对比线按各自昨收归一化。" />
       </StackPanel>
     </Border>
 
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="8">
       <Grid>
-        <views:TrendChart x:Name="Chart" />
-        <TextBlock x:Name="Empty" HorizontalAlignment="Center" VerticalAlignment="Center"
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel Grid.Row="0" Margin="6,2,6,4">
+          <TextBlock x:Name="SummaryMain" FontSize="12" FontFamily="Consolas"
+                     Foreground="#DCE4EE" Visibility="Collapsed" />
+          <TextBlock x:Name="SummaryCompare" FontSize="12" FontFamily="Consolas"
+                     Foreground="#4C8DFF" Visibility="Collapsed" />
+        </StackPanel>
+        <views:TrendChart x:Name="Chart" Grid.Row="1" />
+        <TextBlock x:Name="Empty" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center"
                    FontSize="13" Foreground="{StaticResource Muted}" Visibility="Collapsed" />
       </Grid>
     </Border>

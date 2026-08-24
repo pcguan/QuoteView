@@ -41,7 +41,11 @@ public sealed class TrendChart : FrameworkElement
         new(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
 
     private TrendSeries? _series;
+    private TrendSeries? _compare;
     private int _hoverIndex = -1;
+
+    private static readonly Pen ComparePen = FrozenPen("#4C8DFF", 1.4);
+    private static readonly Brush CompareText = Frozen("#4C8DFF");
 
     public TrendChart()
     {
@@ -55,6 +59,18 @@ public sealed class TrendChart : FrameworkElement
     {
         _series = series;
         _hoverIndex = -1;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Overlays a second day of the SAME contract for comparison, or null to
+    /// clear. Drawn on a normalized scale: each day relative to its own previous
+    /// close, so the two lines share the percent axis even though absolute price
+    /// levels differ.
+    /// </summary>
+    public void SetCompare(TrendSeries? compare)
+    {
+        _compare = compare;
         InvalidateVisual();
     }
 
@@ -116,6 +132,18 @@ public sealed class TrendChart : FrameworkElement
 
         var pre = _series.PreClose;
         var (priceMin, priceMax) = PriceRange(points, pre);
+
+        // The compare day rides the same axis after normalization; widen the
+        // symmetric range so its swings fit too.
+        if (_compare is { Points.Count: > 0 } cmpForRange && cmpForRange.PreClose > 0 && pre > 0)
+        {
+            var dev = Math.Max(pre - priceMin, priceMax - pre);
+            foreach (var p in cmpForRange.Points)
+                dev = Math.Max(dev, Math.Abs(pre * (p.Price / cmpForRange.PreClose) - pre));
+            priceMin = pre - dev;
+            priceMax = pre + dev;
+        }
+
         var volumeMax = points.Max(p => p.Volume);
 
         double PriceToY(double p) =>
@@ -132,8 +160,10 @@ public sealed class TrendChart : FrameworkElement
 
         DrawGrid(dc, priceMin, priceMax, pre, plotTop, priceBottom, PriceToY);
         DrawVolume(dc, step, VolumeToY, plotBottom, pre, points);
+        DrawCompare(dc, step, PriceToY, pre);
         DrawLines(dc, step, PriceToY, points);
         DrawTimeAxis(dc, step, plotBottom, points);
+        DrawLegend(dc);
         DrawCrosshair(dc, step, plotTop, plotBottom, PriceToY, points);
     }
 
@@ -308,6 +338,41 @@ public sealed class TrendChart : FrameworkElement
         v >= 1e8 ? (v / 1e8).ToString("0.##", CultureInfo.InvariantCulture) + "亿"
         : v >= 1e4 ? (v / 1e4).ToString("0.##", CultureInfo.InvariantCulture) + "万"
         : v.ToString("0", CultureInfo.InvariantCulture);
+
+    /// <summary>The compare day's price line, normalized onto the primary axis.</summary>
+    private void DrawCompare(DrawingContext dc, double step, Func<double, double> priceToY, double pre)
+    {
+        if (_compare is not { Points.Count: > 1 } cmp || cmp.PreClose <= 0 || pre <= 0) return;
+
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
+        {
+            var started = false;
+            for (var i = 0; i < cmp.Points.Count; i++)
+            {
+                var mapped = pre * (cmp.Points[i].Price / cmp.PreClose);
+                var pt = new Point(X(i, step), priceToY(mapped));
+                if (!started) { ctx.BeginFigure(pt, false, false); started = true; }
+                else ctx.LineTo(pt, true, false);
+            }
+        }
+        geometry.Freeze();
+        dc.DrawGeometry(null, ComparePen, geometry);
+    }
+
+    /// <summary>Top-left legend, shown only while comparing: which date is which colour.</summary>
+    private void DrawLegend(DrawingContext dc)
+    {
+        if (_compare is not { Points.Count: > 0 } cmp || _series is null) return;
+
+        static string Day(TrendSeries s) =>
+            s.Points.Count > 0 && s.Points[0].Time.Length >= 10 ? s.Points[0].Time[..10] : "?";
+
+        var main = Label(Day(_series), Frozen("#DCE4EE"));
+        var other = Label(Day(cmp) + "（对比）", CompareText);
+        dc.DrawText(main, new Point(PadLeft + 4, 4));
+        dc.DrawText(other, new Point(PadLeft + 12 + main.Width, 4));
+    }
 
     private FormattedText Label(string text, Brush brush) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 11, brush,

@@ -27,4 +27,19 @@ public sealed record TrendSeries
     public required string Name { get; init; }
     public required double PreClose { get; init; }
     public required IReadOnlyList<TrendPoint> Points { get; init; }
+
+    /// <summary>Day-level closing metrics, attached by the server's after-close
+    /// enrichment. Null on older snapshots and intraday series.</summary>
+    public TrendDaySummary? Summary { get; init; }
+}
+
+/// <summary>The day's closing metrics for a snapshot: change %, turnover, volume
+/// and the outer/inner split (A-share only, which is all the sweep covers).</summary>
+public sealed record TrendDaySummary
+{
+    public double Percent { get; init; }
+    public double Amount { get; init; }
+    public double Volume { get; init; }
+    public double Outer { get; init; }
+    public double Inner { get; init; }
 }
