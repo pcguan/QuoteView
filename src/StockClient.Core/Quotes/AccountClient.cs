@@ -178,6 +178,22 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>Tells the server to drop this token, so the sign-out shows up in
+    /// the console's logs. Best effort — local sign-out proceeds regardless.</summary>
+    public async Task LogoutAsync(string token, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/logout");
+            Stamp(request, token);
+            using var _ = await _http.SendAsync(request, ct);
+        }
+        catch (Exception)
+        {
+            // The token dies of natural causes eventually (30-day prune).
+        }
+    }
+
     /// <summary>Change the signed-in account's password; the server verifies the
     /// old one. Null on success, otherwise a display-ready error.</summary>
     public async Task<(string? Error, bool Unauthorized)> ChangePasswordAsync(

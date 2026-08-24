@@ -782,9 +782,10 @@ async function loadLogs(){
     st.n++; if (l.at > st.last) st.last = l.at; if (l.ip) st.ips.add(l.ip);
   }
   $('login-stats').innerHTML = `<table><tr><th>用户</th><th>登录次数</th>
-    <th>独立 IP 数</th><th>最近登录</th></tr>` +
+    <th>独立 IP（去重）</th><th>最近登录</th></tr>` +
     Object.entries(stats).sort((a,b) => b[1].n - a[1].n).map(([u,st]) =>
-      `<tr><td><b>${u}</b></td><td>${st.n}</td><td>${st.ips.size}</td>
+      `<tr><td><b>${u}</b></td><td>${st.n}</td>
+       <td>${st.ips.size}<div class="dim mono" style="font-size:11px">${[...st.ips].join('<br>')}</div></td>
        <td class=mono>${st.last}</td></tr>`).join('') + '</table>';
   $('pw-list').innerHTML = LOGS.passwords.length
     ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>` +
@@ -1143,7 +1144,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/web/api/logout":
             token = self.headers.get("X-Admin-Token") or ""
+            session = web_session_check(token)
             web_session_drop(token)
+            if session is not None:
+                self._log_login(session[0], "info", "管理台登出")
             return self._json({"ok": True})
 
         if self.path.startswith("/web/api/act/"):
@@ -1250,6 +1254,21 @@ class Handler(BaseHTTPRequestHandler):
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
+
+        if self.path == "/logout":
+            authed = self._auth()
+            if authed is None:
+                return
+            user, _, token = authed
+            with _lock:
+                account = load_account(user)
+                if account is not None:
+                    normalize_tokens(account)
+                    account["tokens"] = [t for t in account["tokens"] if t["t"] != token]
+                    save_account(user, account)
+            _token_cache.pop(token, None)
+            self._log_login(user, "info", "登出")
+            return self._json({"ok": True})
 
         if self.path == "/password":
             authed = self._auth()
@@ -1416,6 +1435,7 @@ class Handler(BaseHTTPRequestHandler):
                 account["tokens"] = []
                 save_account(user, account)
             _token_cache.clear()
+            self._log_login(user, "warn", f"被管理员登出（{actor_name}）")
             log(f"admin[{actor_name}]: logout {user}")
             return self._json({"ok": True})
 

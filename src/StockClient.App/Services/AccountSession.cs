@@ -113,6 +113,10 @@ public sealed class AccountSession
 
     public void SignOut()
     {
+        // Server first (fire-and-forget) so the console's log shows the sign-out
+        // and the token stops working immediately, not in 30 days.
+        if (_token is { } token) _ = _client.LogoutAsync(token, CancellationToken.None);
+
         _token = null;
         _password = null;
         AutoLogin = false;
