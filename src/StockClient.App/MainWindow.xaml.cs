@@ -137,12 +137,12 @@ public partial class MainWindow : FluentWindow
 
             // Groups go up every 5 minutes; the server owns the after-close
             // sweep for the union of every account's contracts.
-            _ = ReconcileAsync();
+            _ = PushGroupsAsync();
             _syncTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
                 Interval = TimeSpan.FromMinutes(5),
             };
-            _syncTimer.Tick += async (_, _) => await ReconcileAsync();
+            _syncTimer.Tick += async (_, _) => await PushGroupsAsync();
             _syncTimer.Start();
         };
 
@@ -215,82 +215,18 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// The 5-minute reconcile with the server, BOTH directions for both slices:
-    /// the newer side wins. This is what keeps several machines signed into one
-    /// account convergent while they run — pushes alone only ping-pong the
-    /// server copy between machines, which is exactly the divergence this
-    /// replaced. Every failure stays silent; the next pass retries.
+    /// The 5-minute groups upload — keeps the server's per-account copy (and
+    /// with it the sweep union) fresh. Upload only: the server NEVER pushes
+    /// back mid-session; settings/groups come down exactly once, at login.
     /// </summary>
-    private async Task ReconcileAsync()
+    private async Task PushGroupsAsync()
     {
         if (_quotes is null || !_session.IsSignedIn) return;
         if (!string.Equals(_quotes.ConfigOwner, _session.Username, StringComparison.OrdinalIgnoreCase))
             return;
 
-        // Groups: compare stamps, move data toward the newer side. Equal
-        // stamps with DIFFERENT content (e.g. both machines migrated at 0)
-        // would otherwise deadlock — the tiebreak re-stamps local and pushes,
-        // so one side becomes authoritative and the other pulls it.
-        if (await _session.GroupsWithAtAsync() is { } remote)
-        {
-            var localGroups = _quotes.ExportGroupsJson();
-
-            if (remote.At > _quotes.GroupsUpdatedAt && remote.Groups.Count > 0)
-            {
-                _quotes.ApplyServerGroups(remote.Groups, remote.At);
-                _lastPushedGroups = _quotes.ExportGroupsJson();
-                Probe.Log($"reconcile: groups pulled ({remote.Groups.Count}) at={remote.At}");
-            }
-            else if (remote.At < _quotes.GroupsUpdatedAt
-                     || (remote.At == _quotes.GroupsUpdatedAt
-                         && QuotesViewModel.SlimGroupsJson(remote.Groups) != localGroups))
-            {
-                if (remote.At == _quotes.GroupsUpdatedAt) _quotes.StampGroupsChanged();
-
-                if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
-                {
-                    _lastPushedGroups = _quotes.ExportGroupsJson();
-                    Probe.Log("reconcile: groups pushed");
-                }
-            }
-        }
-
-        // Settings: BOTH directions here too. Pull-only was the column-layout
-        // divergence bug: a change made while signed out is stamped locally,
-        // refuses the server's older copy — and then nothing ever uploaded it.
-        var remoteSettings = await _session.GetSettingsAsync();
-        long remoteAt = 0;
-        if (remoteSettings is not null)
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(remoteSettings);
-                if (doc.RootElement.TryGetProperty("at", out var a)) remoteAt = a.GetInt64();
-            }
-            catch (System.Text.Json.JsonException) { }
-        }
-
-        if (remoteSettings is not null && _quotes.ApplySettingsJson(remoteSettings))
-        {
-            _lastPushedSettings = _quotes.ExportSettingsJson();
-            _stealth?.ApplySettings();
-            Quotes.ReapplyColumnLayout();
-            GroupColWidthFromConfig();
-            Probe.Log("reconcile: settings pulled+applied");
-        }
-        else if (_quotes.PrefsUpdatedAt > remoteAt
-                 || (remoteSettings is not null && remoteAt == _quotes.PrefsUpdatedAt
-                     && _quotes.ExportSettingsJson() != remoteSettings))
-        {
-            if (remoteAt == _quotes.PrefsUpdatedAt) _quotes.StampPrefsChanged();
-
-            var json = _quotes.ExportSettingsJson();
-            if (await _session.PutSettingsAsync(json))
-            {
-                _lastPushedSettings = json;
-                Probe.Log("reconcile: settings pushed");
-            }
-        }
+        if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
+            _lastPushedGroups = _quotes.ExportGroupsJson();
     }
 
     private void GroupColWidthFromConfig()
@@ -439,23 +375,18 @@ public partial class MainWindow : FluentWindow
             changed = true;
         }
 
+        // Groups: the login-time pull. Server has a copy -> adopt it (that is
+        // "whatever any client pushed last"). Server empty + this machine
+        // belonged to ANOTHER account -> start from defaults, never inherit the
+        // previous user's groups. Server empty + same owner -> keep local (the
+        // periodic upload republishes it).
         var config = store.Load();
-        if (config.Owner is null)
+        var otherOwner = config.Owner is not null
+                         && !string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase);
+
+        if (await _session.GroupsWithAtAsync() is { } remote)
         {
-            config.Owner = username;
-            store.Save(config);
-            changed = true;
-        }
-        else
-        {
-            // Groups restore when this machine's copy is either another
-            // account's or simply OLDER than the server's (the other machine
-            // pushed since we last ran). Unreachable server = keep local,
-            // retry next reconcile.
-            var otherOwner = !string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase);
-            if (await _session.GroupsWithAtAsync() is { } remote
-                && remote.Groups.Count > 0
-                && (otherOwner || remote.At > config.GroupsUpdatedAt))
+            if (remote.Groups.Count > 0)
             {
                 config = store.Load();
                 config.Groups = remote.Groups
@@ -468,7 +399,21 @@ public partial class MainWindow : FluentWindow
                     })
                     .ToList();
                 config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
-                config.GroupsUpdatedAt = remote.At;
+                config.Owner = username;
+                store.Save(config);
+                changed = true;
+            }
+            else if (otherOwner)
+            {
+                config = store.Load();
+                config.Groups = new List<Group>();
+                config.ActiveGroupId = null;
+                config.Owner = username;
+                store.Save(config);
+                changed = true;
+            }
+            else if (config.Owner is null)
+            {
                 config.Owner = username;
                 store.Save(config);
                 changed = true;
@@ -494,10 +439,13 @@ public partial class MainWindow : FluentWindow
         {
             _quotes.ReloadFromStore();
             _lastPushedSettings = _quotes.ExportSettingsJson();
+            _lastPushedGroups = _quotes.ExportGroupsJson();
             _stealth?.ApplySettings();
+            Quotes.ReapplyColumnLayout();
+            GroupColWidthFromConfig();
         }
 
-        _ = ReconcileAsync();
+        _ = PushGroupsAsync();
     }
 
     private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();

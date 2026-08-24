@@ -468,12 +468,9 @@ public sealed class GroupStore
 
         var config = Load();
 
-        // Last write wins: a local change made while signed out or offline
-        // carries a newer stamp than the server copy, and must survive the
-        // next start's pull. Equal stamps apply (covers fresh installs and
-        // pre-stamp payloads, both at 0).
-        if (payload.At < config.PrefsUpdatedAt) return;
-
+        // The login pull applies unconditionally, by design: the server holds
+        // whatever any client pushed LAST, and login adopts it. Changes made
+        // while signed out are overwritten here — accepted trade-off.
         payload.ApplyTo(config);
         config.Stealth = config.Stealth.Normalize();
         Save(config);

@@ -1224,12 +1224,8 @@ class Handler(BaseHTTPRequestHandler):
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
-                stored_at = int(account.get("groups_at") or 0)
-                # Last write wins ACROSS MACHINES: a push older than what another
-                # device already stored must not overwrite it — the pusher gets
-                # a 409 and pulls the newer copy on its next reconcile instead.
-                if at < stored_at:
-                    return self._json({"error": "stale", "at": stored_at}, 409)
+                # Arrival order IS the order: every push overwrites. Multiple
+                # clients racing is resolved by "last push wins", per design.
                 account["groups"] = clean
                 account["groups_at"] = at
                 account["synced"] = f"{datetime.now(CN):%F %T}"
@@ -1285,14 +1281,10 @@ class Handler(BaseHTTPRequestHandler):
             settings = doc.get("settings")
             if not isinstance(settings, dict):
                 return self._bad("bad settings")
-            at = int(settings.get("at") or 0)
             with _lock:
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
-                stored_at = int(((account.get("settings") or {}).get("at")) or 0)
-                if at < stored_at:
-                    return self._json({"error": "stale", "at": stored_at}, 409)
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
