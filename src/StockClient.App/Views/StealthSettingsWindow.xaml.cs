@@ -187,6 +187,7 @@ public partial class StealthSettingsWindow : Window
         }
 
         TemplateSaveButton.IsEnabled = _template is not null;
+        TemplateRenameButton.IsEnabled = _template is not null;
         TemplateDeleteButton.IsEnabled = _template is not null;
         Reseed();
     }
@@ -226,6 +227,29 @@ public partial class StealthSettingsWindow : Window
         });
         _save();
         FillTemplates(select: name);
+    }
+
+    private void TemplateRename_Click(object sender, RoutedEventArgs e)
+    {
+        if (_template is null) return;
+
+        var name = PromptName(_template.Name);
+        if (name is not { Length: > 0 } || name == _template.Name) return;
+        if (_templates.Any(t => !ReferenceEquals(t, _template) && t.Name == name)) name += "(2)";
+
+        // Rename only — buffered edits stay buffered, so renaming never
+        // silently applies or discards half-finished changes. Hence the manual
+        // dropdown refresh instead of FillTemplates: SelectTarget would re-clone
+        // the template and throw the draft away.
+        _template.Name = name;
+        _save();
+
+        _seeding = true;
+        var items = new List<object> { "（当前设置）" };
+        items.AddRange(_templates.Select(t => (object)t.Name));
+        TemplateBox.ItemsSource = items;
+        TemplateBox.SelectedIndex = Math.Max(0, items.IndexOf(name));
+        _seeding = false;
     }
 
     private void TemplateSave_Click(object sender, RoutedEventArgs e)
