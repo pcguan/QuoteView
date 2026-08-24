@@ -338,7 +338,16 @@ public sealed class SettingsPayload
     /// <summary>Overwrites the preference slice of <paramref name="config"/>.</summary>
     public void ApplyTo(GroupConfig config)
     {
-        if (Stealth is not null) config.Stealth = Stealth;
+        if (Stealth is not null)
+        {
+            // Panel position is per-machine (screen sizes differ); everything
+            // else in the stealth config travels with the account.
+            var left = config.Stealth.Left;
+            var top = config.Stealth.Top;
+            config.Stealth = Stealth;
+            config.Stealth.Left = left;
+            config.Stealth.Top = top;
+        }
         if (QuoteColumns is not null) config.QuoteColumns = QuoteColumns;
         if (Notes is not null)
             config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
@@ -368,6 +377,14 @@ public sealed class GroupConfig
     /// </summary>
     [JsonPropertyName("prefsAt")]
     public long PrefsUpdatedAt { get; set; }
+
+    /// <summary>
+    /// When the groups (membership/names/order) last changed here, unix seconds.
+    /// Reconciled against the server copy every few minutes: newer side wins,
+    /// which is what keeps several machines on one account convergent.
+    /// </summary>
+    [JsonPropertyName("groupsAt")]
+    public long GroupsUpdatedAt { get; set; }
 
     /// <summary>
     /// The account this local file belongs to. Null = pre-account data, adopted

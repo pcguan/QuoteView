@@ -207,6 +207,16 @@ public partial class QuotesView : UserControl
     }
 
     /// <summary>Persists the sidebar width once the splitter drag ends.</summary>
+    /// <summary>Sets the group sidebar width, for a mid-session settings pull.</summary>
+    public void SetGroupPaneWidth(double width) => GroupCol.Width = new GridLength(width);
+
+    /// <summary>Re-applies the saved column layout mid-session — used after an
+    /// account-settings pull replaced the layout under a running grid.</summary>
+    public void ReapplyColumnLayout()
+    {
+        if (Vm is { } vm) QuoteColumns.Restore(QuoteGrid, vm.QuoteColumns);
+    }
+
     private void GroupSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
     {
         if (Vm is { } vm) vm.GroupPaneWidth = GroupCol.ActualWidth;

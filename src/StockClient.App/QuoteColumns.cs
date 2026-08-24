@@ -62,7 +62,7 @@ public static class QuoteColumns
         }
     }
 
-    private static void Restore(DataGrid grid, List<QuoteColumnState> saved)
+    public static void Restore(DataGrid grid, List<QuoteColumnState> saved)
     {
         if (saved.Count == 0) return;
 

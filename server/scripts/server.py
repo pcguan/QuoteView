@@ -1032,7 +1032,8 @@ class Handler(BaseHTTPRequestHandler):
             if authed is None:
                 return
             _, doc, _ = authed
-            return self._json({"groups": doc.get("groups") or []})
+            return self._json({"groups": doc.get("groups") or [],
+                               "at": int(doc.get("groups_at") or 0)})
 
         if url.path == "/settings":
             authed = self._auth()
@@ -1213,15 +1214,24 @@ class Handler(BaseHTTPRequestHandler):
             groups = doc.get("groups")
             if not isinstance(groups, list) or len(groups) > 200:
                 return self._bad("bad groups")
+            at = int(doc.get("at") or 0)
             clean = []
             for g in groups[:200]:
                 codes = [str(c).upper() for c in (g.get("codes") or [])[:2000]]
-                clean.append({"name": str(g.get("name") or "")[:64], "codes": codes})
+                clean.append({"name": str(g.get("name") or "")[:64], "codes": codes,
+                              "panel": bool(g.get("panel", True))})
             with _lock:
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
+                stored_at = int(account.get("groups_at") or 0)
+                # Last write wins ACROSS MACHINES: a push older than what another
+                # device already stored must not overwrite it — the pusher gets
+                # a 409 and pulls the newer copy on its next reconcile instead.
+                if at < stored_at:
+                    return self._json({"error": "stale", "at": stored_at}, 409)
                 account["groups"] = clean
+                account["groups_at"] = at
                 account["synced"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
@@ -1275,10 +1285,14 @@ class Handler(BaseHTTPRequestHandler):
             settings = doc.get("settings")
             if not isinstance(settings, dict):
                 return self._bad("bad settings")
+            at = int(settings.get("at") or 0)
             with _lock:
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
+                stored_at = int(((account.get("settings") or {}).get("at")) or 0)
+                if at < stored_at:
+                    return self._json({"error": "stale", "at": stored_at}, 409)
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)

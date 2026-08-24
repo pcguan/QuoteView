@@ -128,6 +128,7 @@ public partial class MainWindow : FluentWindow
             // Every later config save pushes the preference slice back up,
             // debounced — colour-picker drags save on every tick of the drag.
             _lastPushedSettings = _quotes.ExportSettingsJson();
+            _lastPushedGroups = _quotes.ExportGroupsJson();
             _quotes.ConfigSaved += ScheduleSettingsPush;
 
             History.Init(_quotes, _trendCache, _vm.Repository, _session);
@@ -136,12 +137,12 @@ public partial class MainWindow : FluentWindow
 
             // Groups go up every 5 minutes; the server owns the after-close
             // sweep for the union of every account's contracts.
-            _ = SyncGroupsAsync();
+            _ = ReconcileAsync();
             _syncTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
                 Interval = TimeSpan.FromMinutes(5),
             };
-            _syncTimer.Tick += async (_, _) => await SyncGroupsAsync();
+            _syncTimer.Tick += async (_, _) => await ReconcileAsync();
             _syncTimer.Start();
         };
 
@@ -214,28 +215,58 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// One groups push to the server. Timer-driven; every failure is silent by
-    /// design — sync is a convenience, never a dialog. Not signed in = no-op.
+    /// The 5-minute reconcile with the server, BOTH directions for both slices:
+    /// the newer side wins. This is what keeps several machines signed into one
+    /// account convergent while they run — pushes alone only ping-pong the
+    /// server copy between machines, which is exactly the divergence this
+    /// replaced. Every failure stays silent; the next pass retries.
     /// </summary>
-    private async Task SyncGroupsAsync()
+    private async Task ReconcileAsync()
     {
         if (_quotes is null || !_session.IsSignedIn) return;
-
-        // Never push one account's groups into another: the local file must
-        // already belong to the signed-in user (PullAccountDataAsync sets that).
         if (!string.Equals(_quotes.ConfigOwner, _session.Username, StringComparison.OrdinalIgnoreCase))
             return;
 
-        var groups = _quotes.Groups
-            .Select(g => ((string)g.Name, (IReadOnlyList<string>)g.Model.Codes.ToArray()))
-            .ToArray();
-        if (groups.Length == 0) return;
+        // Groups: compare stamps, move data toward the newer side.
+        if (await _session.GroupsWithAtAsync() is { } remote)
+        {
+            if (remote.At > _quotes.GroupsUpdatedAt && remote.Groups.Count > 0)
+            {
+                _quotes.ApplyServerGroups(remote.Groups, remote.At);
+                _lastPushedGroups = _quotes.ExportGroupsJson();
+                Probe.Log($"reconcile: groups pulled ({remote.Groups.Count}) at={remote.At}");
+            }
+            else if (remote.At < _quotes.GroupsUpdatedAt)
+            {
+                if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
+                {
+                    _lastPushedGroups = _quotes.ExportGroupsJson();
+                    Probe.Log("reconcile: groups pushed");
+                }
+            }
+        }
 
-        var ok = await _session.SyncGroupsAsync(groups);
-        Probe.Log($"account sync: groups={groups.Length} ok={ok}");
+        // Settings: same dance. ApplySettingsJson refuses non-newer payloads.
+        if (await _session.GetSettingsAsync() is { } settingsJson)
+        {
+            if (_quotes.ApplySettingsJson(settingsJson))
+            {
+                _lastPushedSettings = _quotes.ExportSettingsJson();
+                _stealth?.ApplySettings();
+                Quotes.ReapplyColumnLayout();
+                GroupColWidthFromConfig();
+                Probe.Log("reconcile: settings pulled+applied");
+            }
+        }
+    }
+
+    private void GroupColWidthFromConfig()
+    {
+        if (_quotes is not null) Quotes.SetGroupPaneWidth(_quotes.GroupPaneWidth);
     }
 
     private string _lastPushedSettings = "";
+    private string _lastPushedGroups = "";
     private DispatcherTimer? _settingsPushTimer;
 
     /// <summary>
@@ -257,35 +288,59 @@ public partial class MainWindow : FluentWindow
                 _settingsPushTimer!.Stop();
                 if (_quotes is null) return;
 
+                var ok = true;
+
                 var json = _quotes.ExportSettingsJson();
-                if (json == _lastPushedSettings) return;
-
-                // Stamp FIRST, signed in or not: the stamp is what protects an
-                // offline change from being rolled back by the next start's pull.
-                _quotes.StampPrefsChanged();
-                json = _quotes.ExportSettingsJson();
-
-                if (!_session.IsSignedIn)
+                if (json != _lastPushedSettings)
                 {
-                    _lastPushedSettings = json;   // baseline so we don't re-stamp per save
-                    return;
+                    // Stamp FIRST, signed in or not: the stamp is what protects
+                    // an offline change from being rolled back by a later pull.
+                    _quotes.StampPrefsChanged();
+                    json = _quotes.ExportSettingsJson();
+
+                    if (!_session.IsSignedIn)
+                    {
+                        _lastPushedSettings = json;   // baseline; stamp already persisted
+                    }
+                    else if (await _session.PutSettingsAsync(json))
+                    {
+                        _lastPushedSettings = json;
+                        Probe.Log($"settings push: {json.Length}B ok");
+                    }
+                    else
+                    {
+                        ok = false;
+                    }
                 }
 
-                if (await _session.PutSettingsAsync(json))
+                var groupsJson = _quotes.ExportGroupsJson();
+                if (groupsJson != _lastPushedGroups)
                 {
-                    _lastPushedSettings = json;
-                    _settingsPushTimer.Interval = TimeSpan.FromSeconds(2);
-                    Probe.Log($"settings push: {json.Length}B ok");
+                    _quotes.StampGroupsChanged();
+
+                    if (!_session.IsSignedIn
+                        || !string.Equals(_quotes.ConfigOwner, _session.Username,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        _lastPushedGroups = groupsJson;
+                    }
+                    else if (await _session.SyncGroupsAsync(
+                        _quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
+                    {
+                        _lastPushedGroups = groupsJson;
+                        Probe.Log("groups push ok");
+                    }
+                    else
+                    {
+                        // 409 stale included: the reconcile pass pulls the newer copy.
+                        ok = false;
+                    }
                 }
-                else
-                {
-                    // 实时同步 means keep trying, not try once: a failed push
-                    // re-arms itself at a gentler cadence until it lands, so a
-                    // network blip can't leave the server behind for the day.
-                    _settingsPushTimer.Interval = TimeSpan.FromSeconds(30);
-                    _settingsPushTimer.Start();
-                    Probe.Log("settings push failed, retrying in 30s");
-                }
+
+                // 实时同步 means keep trying, not try once: failures re-arm at a
+                // gentler cadence until they land.
+                _settingsPushTimer.Interval = ok ? TimeSpan.FromSeconds(2) : TimeSpan.FromSeconds(30);
+                if (!ok) _settingsPushTimer.Start();
             };
         }
 
@@ -358,24 +413,29 @@ public partial class MainWindow : FluentWindow
             store.Save(config);
             changed = true;
         }
-        else if (!string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase))
+        else
         {
-            // Another account's machine: replace groups with this account's
-            // server copy. Unreachable server = keep looking at the old groups
-            // read-only-ish (sync up stays owner-guarded), retry next start.
-            var groups = await _session.GroupsAsync();
-            if (groups is not null)
+            // Groups restore when this machine's copy is either another
+            // account's or simply OLDER than the server's (the other machine
+            // pushed since we last ran). Unreachable server = keep local,
+            // retry next reconcile.
+            var otherOwner = !string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase);
+            if (await _session.GroupsWithAtAsync() is { } remote
+                && remote.Groups.Count > 0
+                && (otherOwner || remote.At > config.GroupsUpdatedAt))
             {
                 config = store.Load();
-                config.Groups = groups
+                config.Groups = remote.Groups
                     .Select(g => new Group
                     {
                         Id = Guid.NewGuid().ToString("N"),
                         Name = g.Name.Length > 0 ? g.Name : "分组",
                         Codes = g.Codes.ToList(),
+                        InPanel = g.InPanel,
                     })
                     .ToList();
                 config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
+                config.GroupsUpdatedAt = remote.At;
                 config.Owner = username;
                 store.Save(config);
                 changed = true;
@@ -404,7 +464,7 @@ public partial class MainWindow : FluentWindow
             _stealth?.ApplySettings();
         }
 
-        _ = SyncGroupsAsync();
+        _ = ReconcileAsync();
     }
 
     private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();

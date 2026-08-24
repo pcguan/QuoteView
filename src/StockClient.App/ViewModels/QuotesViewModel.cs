@@ -1114,6 +1114,107 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _store.Save(_config);
     }
 
+    public long GroupsUpdatedAt => _config.GroupsUpdatedAt;
+
+    /// <summary>Groups as the sync slice (name/codes/panel-flag), for change detection and upload.</summary>
+    public string ExportGroupsJson() =>
+        System.Text.Json.JsonSerializer.Serialize(
+            _config.Groups.Select(g => new { g.Name, g.Codes, g.InPanel }));
+
+    public IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> ExportGroups() =>
+        _config.Groups.Select(g => ((string)g.Name, (IReadOnlyList<string>)g.Codes.ToArray(), g.InPanel))
+            .ToArray();
+
+    /// <summary>Quiet stamp+save for the groups slice, mirroring StampPrefsChanged.</summary>
+    public void StampGroupsChanged()
+    {
+        _config.GroupsUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _store.Save(_config);
+    }
+
+    /// <summary>
+    /// Replaces the local groups with the server's newer copy, live. The
+    /// ObservableCollection instance is kept (windows hold references to it);
+    /// the active group survives by name where possible.
+    /// </summary>
+    public void ApplyServerGroups(
+        IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups, long at)
+    {
+        var activeName = _activeGroup?.Name;
+
+        _config.Groups = groups
+            .Select(g => new Group
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Name = g.Name.Length > 0 ? g.Name : "分组",
+                Codes = g.Codes.ToList(),
+                InPanel = g.InPanel,
+            })
+            .ToList();
+        _config.GroupsUpdatedAt = at;
+
+        Groups.Clear();
+        foreach (var group in _config.Groups) Groups.Add(new GroupRow(group));
+
+        var active = Groups.FirstOrDefault(g => g.Name == activeName) ?? Groups.FirstOrDefault();
+        SetActive(active);   // persists + rebuilds rows + repoints the poller
+    }
+
+    /// <summary>
+    /// Applies a NEWER server settings payload to the live session, mutating the
+    /// existing config objects in place — open windows hold references to them.
+    /// False when the payload isn't newer (or unreadable); nothing changes then.
+    /// </summary>
+    public bool ApplySettingsJson(string json)
+    {
+        SettingsPayload? payload;
+        try
+        {
+            payload = System.Text.Json.JsonSerializer.Deserialize<SettingsPayload>(json);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+        if (payload is null || payload.At <= _config.PrefsUpdatedAt) return false;
+
+        if (payload.Stealth is { } stealth)
+        {
+            var into = _config.Stealth;
+            into.Shade = stealth.Shade;
+            into.Rows = stealth.Rows;
+            into.RowGap = stealth.RowGap;
+            into.Chart = stealth.Chart;
+            into.ShowTrend = stealth.ShowTrend;
+            into.Fields.Clear();
+            into.Fields.AddRange(stealth.Fields);
+            into.Normalize();
+            // Left/Top untouched: panel position is per-machine.
+        }
+
+        if (payload.QuoteColumns is { } columns)
+        {
+            _config.QuoteColumns.Clear();
+            _config.QuoteColumns.AddRange(columns);
+        }
+
+        if (payload.Notes is { } notes)
+        {
+            _config.Notes.Clear();
+            foreach (var (code, note) in notes) _config.Notes[code] = note;
+            foreach (var (code, row) in _rows) row.Note = GetNote(code);
+        }
+
+        _config.AggEqualWeight = payload.AggEqualWeight;
+        _config.GroupPaneWidth = payload.GroupPaneWidth;
+        _config.PrefsUpdatedAt = payload.At;
+        _store.Save(_config);
+
+        RecomputeGroupIndices();
+        StealthRefresh();
+        return true;
+    }
+
 
 
     public async ValueTask DisposeAsync()

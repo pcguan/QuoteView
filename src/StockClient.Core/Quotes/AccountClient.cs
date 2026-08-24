@@ -76,14 +76,16 @@ public sealed class AccountClient
 
     public async Task<(bool Ok, bool Unauthorized)> SyncAsync(
         string token,
-        IReadOnlyList<(string Name, IReadOnlyList<string> Codes)> groups,
+        IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups,
+        long at,
         CancellationToken ct)
     {
         try
         {
             var payload = JsonSerializer.Serialize(new
             {
-                groups = groups.Select(g => new { name = g.Name, codes = g.Codes }),
+                at,
+                groups = groups.Select(g => new { name = g.Name, codes = g.Codes, panel = g.InPanel }),
             });
 
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/sync")
@@ -228,8 +230,8 @@ public sealed class AccountClient
         }
     }
 
-    /// <summary>The account's server-side groups (from its last sync), or null when unreachable.</summary>
-    public async Task<(IReadOnlyList<(string Name, IReadOnlyList<string> Codes)>? Groups, bool Unauthorized)> GroupsAsync(
+    /// <summary>The account's server-side groups plus their change stamp, or null when unreachable.</summary>
+    public async Task<((IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> Groups, long At)? Result, bool Unauthorized)> GroupsAsync(
         string token, CancellationToken ct)
     {
         try
@@ -242,16 +244,18 @@ public sealed class AccountClient
             if (!response.IsSuccessStatusCode) return (null, false);
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            var groups = new List<(string, IReadOnlyList<string>)>();
+            var at = doc.RootElement.TryGetProperty("at", out var a) ? a.GetInt64() : 0;
+            var groups = new List<(string, IReadOnlyList<string>, bool)>();
             foreach (var g in doc.RootElement.GetProperty("groups").EnumerateArray())
             {
                 var name = g.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
                 var codes = g.TryGetProperty("codes", out var c) && c.ValueKind == JsonValueKind.Array
                     ? c.EnumerateArray().Select(e => e.GetString() ?? "").Where(x => x.Length > 0).ToArray()
                     : Array.Empty<string>();
-                groups.Add((name, codes));
+                var panel = !g.TryGetProperty("panel", out var pnl) || pnl.ValueKind != JsonValueKind.False;
+                groups.Add((name, codes, panel));
             }
-            return (groups, false);
+            return ((groups, at), false);
         }
         catch (Exception)
         {

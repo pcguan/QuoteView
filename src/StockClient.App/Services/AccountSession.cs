@@ -181,9 +181,15 @@ public sealed class AccountSession
         return unauthorized ? fallback : result;
     }
 
-    public Task<bool> SyncGroupsAsync(IReadOnlyList<(string Name, IReadOnlyList<string> Codes)> groups) =>
-        CallAsync(t => _client.SyncAsync(t, groups, CancellationToken.None).ContinueWith(
+    public Task<bool> SyncGroupsAsync(
+        IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups, long at) =>
+        CallAsync(t => _client.SyncAsync(t, groups, at, CancellationToken.None).ContinueWith(
             x => (x.Result.Ok, x.Result.Unauthorized)), false);
+
+    public Task<(IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> Groups, long At)?> GroupsWithAtAsync() =>
+        CallAsync(t => _client.GroupsAsync(t, CancellationToken.None).ContinueWith(
+            x => (x.Result.Result, x.Result.Unauthorized)),
+            ((IReadOnlyList<(string, IReadOnlyList<string>, bool)>, long)?)null);
 
     public Task<IReadOnlyList<DateOnly>> DatesAsync(string code) =>
         CallAsync(t => _client.DatesAsync(t, code, CancellationToken.None).ContinueWith(
@@ -215,11 +221,6 @@ public sealed class AccountSession
     public Task<string?> KlineJsonAsync(string secid, int klt, int fqt, int lmt) =>
         CallAsync(t => _client.KlineJsonAsync(t, secid, klt, fqt, lmt, CancellationToken.None).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);
-
-    public Task<IReadOnlyList<(string Name, IReadOnlyList<string> Codes)>?> GroupsAsync() =>
-        CallAsync(t => _client.GroupsAsync(t, CancellationToken.None).ContinueWith(
-            x => (x.Result.Groups, x.Result.Unauthorized)),
-            (IReadOnlyList<(string, IReadOnlyList<string>)>?)null);
 
     public Task<TrendSeries?> TrendAsync(string code, DateOnly date) =>
         CallAsync(t => _client.TrendAsync(t, code, date, CancellationToken.None).ContinueWith(
