@@ -506,6 +506,18 @@ border-radius:6px;padding:8px 16px;color:var(--warn);display:none;max-width:420p
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
 .dim{color:var(--dim)}.mut{color:var(--mut)}
+button.icon{background:var(--head);border:1px solid #39435A;border-radius:4px;width:26px;
+height:26px;padding:0;cursor:pointer;vertical-align:middle;color:var(--mut)}
+button.icon:hover{border-color:#5C6B8A;color:var(--fg)}
+button.icon svg{width:14px;height:14px;display:block;margin:auto}
+button.icon.spin svg{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lv{display:inline-block;padding:0 7px;border-radius:8px;font-size:11px;line-height:17px}
+.lv-info{background:#152743;color:var(--acc)}
+.lv-warn{background:#3A2F10;color:var(--warn)}
+.lv-error{background:#3A1520;color:var(--bad)}
+tr.err td{background:#2A1218}
+tr.err:hover td{background:#331722}
 </style>
 <header>
   <h1>QuoteView 管理台</h1>
@@ -535,8 +547,21 @@ border-radius:6px;padding:8px 16px;color:var(--warn);display:none;max-width:420p
 
   <section id=tab-logs hidden>
     <div class=card>
-      <h2>登录日志　<input id=lf placeholder="按用户/IP/日期过滤…" style="width:220px"
-          oninput="renderLogs()"></h2>
+      <h2>登录日志　
+        <select id=ll onchange="renderLogs()">
+          <option value="">全部级别</option>
+          <option value=info>INFO</option>
+          <option value=warn>WARN</option>
+          <option value=error>ERROR</option>
+        </select>
+        <input id=lf placeholder="按用户/IP/日期/事件过滤…" style="width:220px"
+          oninput="renderLogs()">
+        <button id=rl class=icon title="刷新日志" onclick="reloadLogs()">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
+                  stroke-linejoin="round"/></svg>
+        </button>
+      </h2>
       <div id=login-list>加载中…</div>
     </div>
     <div class=grid2>
@@ -620,11 +645,16 @@ async function loadSessions(){
   $('sess-list').innerHTML = blocks || '<div class=dim>无账户</div>';
 }
 
+async function reloadLogs(){
+  const b = $('rl'); b.classList.add('spin');
+  try { await loadLogs(); } finally { setTimeout(() => b.classList.remove('spin'), 300); }
+}
 async function loadLogs(){
   LOGS = await api('logs');
   renderLogs();
   const stats = {};
   for (const l of LOGS.logins){
+    if ((l.level || 'info') !== 'info') continue;   // stats = successful logins
     const st = stats[l.user] = stats[l.user] || {n:0, last:'', ips:new Set()};
     st.n++; if (l.at > st.last) st.last = l.at; if (l.ip) st.ips.add(l.ip);
   }
@@ -642,12 +672,21 @@ async function loadLogs(){
 function renderLogs(){
   if (!LOGS) return;
   const f = $('lf').value.trim().toLowerCase();
+  const lv = $('ll').value;
   const rows = LOGS.logins.filter(l =>
-    !f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f))
-    .slice(0, 200).map(l => `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
-      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+    (!lv || (l.level||'info') === lv) &&
+    (!f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f)
+        || (l.event||'').toLowerCase().includes(f)))
+    .slice(0, 200).map(l => {
+      const level = l.level || 'info';
+      return `<tr${level === 'error' ? ' class=err' : ''}>
+        <td><span class="lv lv-${level}">${level.toUpperCase()}</span></td>
+        <td><b>${l.user}</b></td><td>${l.event||'登录成功'}</td>
+        <td class=mono>${l.at}</td><td class=mono>${l.ip||'-'}</td>
+        <td class=mono>${l.ver||'-'}</td></tr>`;
+    }).join('');
   $('login-list').innerHTML = rows
-    ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
+    ? `<table><tr><th>级别</th><th>用户</th><th>事件</th><th>时间</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
     : '<div class=dim>无匹配记录</div>';
 }
 
@@ -808,7 +847,9 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 for entry in doc.get("logins") or []:
                     logins.append({"user": user, "at": entry.get("at") or "",
-                                   "ip": entry.get("ip") or "", "ver": entry.get("ver") or ""})
+                                   "ip": entry.get("ip") or "", "ver": entry.get("ver") or "",
+                                   "level": entry.get("level") or "info",
+                                   "event": entry.get("event") or "登录成功"})
                 for entry in doc.get("pwlogs") or []:
                     passwords.append({"user": user, "at": entry.get("at") or "",
                                       "ip": entry.get("ip") or "", "by": entry.get("by") or ""})
@@ -1003,13 +1044,10 @@ class Handler(BaseHTTPRequestHandler):
             if account is None:
                 return self._bad("用户名或密码错误", 401)
             if account.get("disabled"):
+                self._log_login(user, "error", "登录失败：账户已禁用")
                 return self._bad("账户已禁用", 403)
-            auth = account.get("auth") or {}
-            expect = auth.get("hash") or ""
-            got = hashlib.pbkdf2_hmac("sha256", password.encode(),
-                                      bytes.fromhex(auth.get("salt") or "00"),
-                                      int(auth.get("iters") or PBKDF2_ITERS)).hex()
-            if not secrets.compare_digest(expect, got):
+            if not verify_password(account, password):
+                self._log_login(user, "error", "登录失败：密码错误")
                 return self._bad("用户名或密码错误", 401)
             token = self._mint()
             with _lock:
@@ -1020,7 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
                                      if (t.get("seen") or t.get("created") or "") >= cutoff]
                 account["tokens"] = account["tokens"][-(MAX_TOKENS - 1):] + [token]
                 logins = account.get("logins") or []
-                account["logins"] = (logins + [self._login_entry()])[-50:]
+                account["logins"] = (logins + [self._login_entry()])[-100:]
                 save_account(user, account)
             _token_cache[token["t"]] = user
             log(f"login {user} from {self._ip()} ver={self._ver() or '-'}")
@@ -1116,7 +1154,21 @@ class Handler(BaseHTTPRequestHandler):
                 "ip": self._ip(), "ver": self._ver(), "seen": f"{datetime.now(CN):%F %T}"}
 
     def _login_entry(self):
-        return {"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(), "ver": self._ver()}
+        return {"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(), "ver": self._ver(),
+                "level": "info", "event": "登录成功"}
+
+    def _log_login(self, user, level, event):
+        """Appends a login-stream entry (e.g. a failed attempt) to the account."""
+        with _lock:
+            account = load_account(user)
+            if account is None:
+                return
+            logins = account.get("logins") or []
+            account["logins"] = (logins + [{
+                "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                "ver": self._ver(), "level": level, "event": event,
+            }])[-100:]
+            save_account(user, account)
 
     def _admin_post(self, action, raw):
         actor = self._admin()
