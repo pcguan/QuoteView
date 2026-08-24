@@ -1,0 +1,35 @@
+services:
+  quoteview-server:
+    # Reuses an image already on this host — the server is stdlib-only python,
+    # so any image with python3 works and nothing needs to be pulled or built.
+    image: mine/claude:latest
+    container_name: quoteview-server
+    restart: unless-stopped
+
+    # Host networking on purpose: nginx (itself host-network) proxies
+    # /quoteview/api/ to this loopback port. The server binds 127.0.0.1 only,
+    # so nothing is reachable from outside except through nginx.
+    network_mode: host
+
+    environment:
+      TZ: Asia/Shanghai
+      QV_DATA: /data
+      QV_PORT: "8388"
+      # QV_RETAIN_DAYS: "7"     # snapshot retention per contract
+      # QV_FETCH_GAP: "1.5"     # seconds between EastMoney requests
+
+    # The image's own entrypoint is a Claude Code launcher; this container only
+    # wants its python3.
+    entrypoint: ["python3", "/app/server.py"]
+
+    volumes:
+      - ./app:/app:ro
+      - ./data:/data
+
+    mem_limit: 256m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

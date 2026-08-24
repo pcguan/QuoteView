@@ -2,18 +2,23 @@
 
 NAS 容器，为所有 QuoteView 客户端统一抓取并归档沪深合约的收盘分时快照。
 
-## 部署（NAS）
+## 部署（NAS，compose 管理，与该主机其他容器同一套规范）
+
+仓库里的 `server/` 就是部署源；NAS 目录布局：
+
+```
+/vol3/1000/HDD2/tool/docker/quoteview-server/
+  docker-compose.yml     # 本目录的 docker-compose.yml
+  app/server.py          # 本目录的 server.py
+  data/                  # clients/ trends/ state.json（容器数据，勿动）
+```
+
+发布改动：
 
 ```bash
-# 代码与数据目录
-/vol3/1000/HDD2/tool/docker/quoteview-server/app/server.py   # 本文件旁的 server.py
-/vol3/1000/HDD2/tool/docker/quoteview-server/data/           # clients/ trends/ state.json
-
-docker run -d --name quoteview-server --network host --restart unless-stopped \
-  -e TZ=Asia/Shanghai -e QV_DATA=/data -e QV_PORT=8388 \
-  -v /vol3/1000/HDD2/tool/docker/quoteview-server/app:/app:ro \
-  -v /vol3/1000/HDD2/tool/docker/quoteview-server/data:/data \
-  --entrypoint python3 mine/claude:latest /app/server.py
+scp server/docker-compose.yml nas:/vol3/1000/HDD2/tool/docker/quoteview-server/
+scp server/server.py nas:/vol3/1000/HDD2/tool/docker/quoteview-server/app/
+ssh nas 'cd /vol3/1000/HDD2/tool/docker/quoteview-server && docker compose up -d --force-recreate'
 ```
 
 nginx（`cfg/nginx.conf`，nas.pcguan.cn server 块）已加：
