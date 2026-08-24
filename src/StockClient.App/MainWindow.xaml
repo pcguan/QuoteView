@@ -45,13 +45,46 @@
 
     <TabControl Grid.Row="1" Margin="16,0,16,0" Background="Transparent" BorderThickness="0">
       <TabItem Header="实时行情">
-        <views:QuotesView x:Name="Quotes" Margin="-16,0,-16,0" />
+        <Grid>
+          <Grid.Resources />
+          <views:QuotesView x:Name="Quotes" Margin="-16,0,-16,0" />
+          <Border x:Name="QuotesGate" Background="#E6121620" Visibility="Visible">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+              <TextBlock Text="登录后查看实时行情" Foreground="#8B93A3" FontSize="14"
+                         HorizontalAlignment="Center" Margin="0,0,0,12" />
+              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+                      Click="Account_Click" />
+            </StackPanel>
+          </Border>
+        </Grid>
       </TabItem>
       <TabItem Header="历史分时">
-        <views:TrendHistoryView x:Name="History" Margin="-16,0,-16,0" />
+        <Grid>
+          <Grid.Resources />
+          <views:TrendHistoryView x:Name="History" Margin="-16,0,-16,0" />
+          <Border x:Name="HistoryGate" Background="#E6121620" Visibility="Visible">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+              <TextBlock Text="登录后查询历史分时" Foreground="#8B93A3" FontSize="14"
+                         HorizontalAlignment="Center" Margin="0,0,0,12" />
+              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+                      Click="Account_Click" />
+            </StackPanel>
+          </Border>
+        </Grid>
       </TabItem>
       <TabItem Header="资讯">
-        <views:BriefView x:Name="Brief" Margin="-16,0,-16,0" />
+        <Grid>
+          <Grid.Resources />
+          <views:BriefView x:Name="Brief" Margin="-16,0,-16,0" />
+          <Border x:Name="BriefGate" Background="#E6121620" Visibility="Visible">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+              <TextBlock Text="登录后查看每日资讯" Foreground="#8B93A3" FontSize="14"
+                         HorizontalAlignment="Center" Margin="0,0,0,12" />
+              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+                      Click="Account_Click" />
+            </StackPanel>
+          </Border>
+        </Grid>
       </TabItem>
       <TabItem Header="合约查询">
         <Grid>

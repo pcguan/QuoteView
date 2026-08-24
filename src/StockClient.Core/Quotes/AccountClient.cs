@@ -176,6 +176,61 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>The server's /kline proxy body (EastMoney-shaped JSON), or null.
+    /// lmt=0 asks for the full listed history, matching the chart's own shape.</summary>
+    public async Task<(string? Json, bool Unauthorized)> KlineJsonAsync(
+        string token, string secid, int klt, int fqt, int lmt, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{Base}/kline?secid={Uri.EscapeDataString(secid)}&klt={klt}&fqt={fqt}&lmt={lmt}");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+
+            return (await response.Content.ReadAsStringAsync(ct), false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
+    /// <summary>The account's server-side groups (from its last sync), or null when unreachable.</summary>
+    public async Task<(IReadOnlyList<(string Name, IReadOnlyList<string> Codes)>? Groups, bool Unauthorized)> GroupsAsync(
+        string token, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{Base}/groups");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var groups = new List<(string, IReadOnlyList<string>)>();
+            foreach (var g in doc.RootElement.GetProperty("groups").EnumerateArray())
+            {
+                var name = g.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                var codes = g.TryGetProperty("codes", out var c) && c.ValueKind == JsonValueKind.Array
+                    ? c.EnumerateArray().Select(e => e.GetString() ?? "").Where(x => x.Length > 0).ToArray()
+                    : Array.Empty<string>();
+                groups.Add((name, codes));
+            }
+            return (groups, false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
     public async Task<(TrendSeries? Series, bool Unauthorized)> TrendAsync(
         string token, string code, DateOnly date, CancellationToken ct)
     {

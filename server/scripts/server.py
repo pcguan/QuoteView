@@ -337,6 +337,59 @@ def fetch_trend(code):
     return series, day
 
 
+KLINES = os.path.join(DATA, "klines")
+KLINE_TTL_S = 300
+_kline_lock = threading.Lock()
+
+
+def kline_body(secid, klt, fqt, lmt):
+    """The upstream EastMoney kline response, verbatim, cached for a few
+    minutes: the client keeps its own settled-day cache, so what lands here is
+    mostly first-opens — the TTL just keeps N clients opening the same chart
+    from turning into N upstream hits. Serves stale on upstream failure."""
+    safe = secid.replace(".", "_")
+    path = os.path.join(KLINES, safe, f"{klt}-{fqt}-{lmt}.json")
+
+    meta = None
+    try:
+        with open(path) as f:
+            meta = json.load(f)
+    except Exception:
+        pass
+    if meta and time.time() - meta.get("at", 0) < KLINE_TTL_S:
+        return meta["body"]
+
+    url = ("https://push2his.eastmoney.com/api/qt/stock/kline/get"
+           "?fields1=f1,f2,f3,f4,f5,f6"
+           "&fields2=f51,f52,f53,f54,f55,f56,f57"
+           f"&klt={klt}&fqt={fqt}&secid={secid}&end=20500101&lmt={lmt}")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+        "Referer": "https://quote.eastmoney.com/",
+    })
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                body = r.read().decode("utf-8")
+            doc = json.loads(body)
+            # An empty answer ({"data": null}) is EastMoney throttling politely.
+            # Caching it would poison this key until a good fetch happens to
+            # replace it — treat it as a failure like any other.
+            if not ((doc.get("data") or {}).get("klines") or []):
+                raise ValueError("empty klines")
+            with _kline_lock:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump({"at": time.time(), "body": body}, f)
+                os.replace(tmp, path)
+            return body
+        except Exception:
+            time.sleep(1.5)
+
+    return meta["body"] if meta else None
+
+
 def sweep_once():
     """One throttled pass over whatever is missing for today. Returns idle time hint."""
     now = datetime.now(CN)
@@ -402,7 +455,16 @@ def scheduler():
 
 # ---------------------------------------------------------------- http
 
-ADMIN_PASSWORD = os.environ.get("QV_ADMIN_PASSWORD", "")
+def verify_password(account, password):
+    auth = account.get("auth") or {}
+    got = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                              bytes.fromhex(auth.get("salt") or "00"),
+                              int(auth.get("iters") or PBKDF2_ITERS)).hex()
+    return secrets.compare_digest(auth.get("hash") or "", got)
+
+
+def role_of(account):
+    return account.get("role") or "user"
 
 ADMIN_PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
 <title>QuoteView 管理台</title>
@@ -417,7 +479,7 @@ button:hover{border-color:#5C6B8A} .on{color:#3DD68C}.off{color:#8B93A3}.dis{col
 #msg{color:#FFC107;min-height:1.4em} details{margin-top:4px} summary{cursor:pointer;color:#8B93A3}
 input{background:#0F1420;color:#EDF1F7;border:1px solid #39435A;border-radius:3px;padding:3px 8px}
 </style>
-<h1>QuoteView 管理台</h1>
+<h1>QuoteView 管理台 <span id=who class=off></span></h1>
 <div>
   <input id=nu placeholder="新用户名"> <input id=np placeholder="密码" type=password>
   <button onclick="createAccount()">新增账户</button>
@@ -430,9 +492,18 @@ const api = (path, body) => fetch('admin/' + path, body ? {method:'POST',
   .then(r => r.json());
 const msg = t => document.getElementById('msg').textContent = t;
 
+const ROLE = {user:'普通用户', admin:'管理员', sysadmin:'系统管理员'};
 async function load(){
   const d = await api('accounts');
+  const me = d.me;
   const rows = d.accounts.map(a => {
+    const canAct = me.role === 'sysadmin' ? a.role !== 'sysadmin' : a.role === 'user';
+    const canPw = me.role === 'sysadmin' || a.role === 'user';
+    const roleCell = me.role === 'sysadmin' && a.role !== 'sysadmin'
+      ? `<select onchange="act('role',{username:'${a.username}',role:this.value})">
+           <option value=user ${a.role==='user'?'selected':''}>普通用户</option>
+           <option value=admin ${a.role==='admin'?'selected':''}>管理员</option></select>`
+      : ROLE[a.role] || a.role;
     const tok = a.tokens.map(t =>
       `<div>${t.online ? '<b class=on>在线</b>' : '<span class=off>离线</span>'}`
       + ` ip=${t.ip||'-'} 版本=${t.ver||'-'} 登录=${t.created||'-'}`
@@ -440,17 +511,19 @@ async function load(){
     const logs = a.logins.map(l => `<div>${l.at} ip=${l.ip||'-'} 版本=${l.ver||'-'}</div>`).join('')
       || '<span class=off>无记录</span>';
     return `<tr>
-      <td><b>${a.username}</b><br>${a.disabled ? '<span class=dis>已禁用</span>' : '<span class=on>正常</span>'}</td>
+      <td><b>${a.username}</b><br>${roleCell}<br>${a.disabled ? '<span class=dis>已禁用</span>' : '<span class=on>正常</span>'}</td>
       <td>${a.groups} 组 / ${a.contracts} 合约<br>设置: ${a.has_settings ? '已同步' : '无'}</td>
       <td>在线 ${a.online} / 会话 ${a.tokens.length}${tok}</td>
       <td><details><summary>最近登录 ${a.logins.length} 条</summary>${logs}</details></td>
       <td>
-        <button onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
-        <button onclick="act('logout',{username:'${a.username}'})">登出全部</button>
-        <button onclick="passwd('${a.username}')">改密码</button>
-        <button onclick="del('${a.username}')">删除</button>
+        ${canAct ? `<button onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
+        <button onclick="act('logout',{username:'${a.username}'})">登出全部</button>` : ''}
+        ${canPw && a.role !== 'sysadmin' ? `<button onclick="passwd('${a.username}')">改密码</button>` : ''}
+        ${canAct ? `<button onclick="del('${a.username}')">删除</button>` : ''}
+        ${!canAct && !(canPw && a.role !== 'sysadmin') ? '<span class=off>无权限</span>' : ''}
       </td></tr>`;
   }).join('');
+  document.getElementById('who').textContent = `— ${me.username}（${ROLE[me.role]}）`;
   document.getElementById('root').innerHTML =
     `<table><tr><th>账户</th><th>数据</th><th>会话（在线判定：10 分钟内有活动）</th><th>登录日志</th><th>操作</th></tr>${rows}</table>`;
 }
@@ -519,25 +592,26 @@ class Handler(BaseHTTPRequestHandler):
         return user, load_account(user) or doc, token
 
     def _admin(self):
-        """HTTP Basic auth for the console, password from QV_ADMIN_PASSWORD."""
+        """HTTP Basic auth for the console, against ACCOUNT credentials — the
+        same username/password the client uses. Only admin/sysadmin roles get
+        in. Returns (username, role) or None (401 already sent)."""
         import base64
-        if not ADMIN_PASSWORD:
-            self._bad("管理台未配置（QV_ADMIN_PASSWORD 为空）", 503)
-            return False
         header = self.headers.get("Authorization") or ""
-        ok = False
         if header.startswith("Basic "):
             try:
-                _, _, pw = base64.b64decode(header[6:]).decode().partition(":")
-                ok = secrets.compare_digest(pw, ADMIN_PASSWORD)
+                user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+                account = load_account(user) if USER_RE.match(user) else None
+                if (account is not None and not account.get("disabled")
+                        and role_of(account) in ("admin", "sysadmin")
+                        and verify_password(account, pw)):
+                    return user, role_of(account)
             except Exception:
-                ok = False
-        if not ok:
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="QuoteView Admin"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        return ok
+                pass
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="QuoteView Admin"')
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return None
 
     # ------------------------------------------------------------ GET
 
@@ -546,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(url.query)
 
         if url.path == "/admin" or url.path == "/admin/":
-            if not self._admin():
+            if self._admin() is None:
                 return
             body = ADMIN_PAGE.encode()
             self.send_response(200)
@@ -557,9 +631,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if url.path == "/admin/accounts":
-            if not self._admin():
+            actor = self._admin()
+            if actor is None:
                 return
-            return self._json({"accounts": self._account_summaries()})
+            return self._json({"me": {"username": actor[0], "role": actor[1]},
+                               "accounts": self._account_summaries()})
 
         if url.path == "/dates":
             if self._auth() is None:
@@ -587,6 +663,35 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+
+        if url.path == "/kline":
+            if self._auth() is None:
+                return
+            secid = (q.get("secid") or [""])[0]
+            klt = (q.get("klt") or [""])[0]
+            fqt = (q.get("fqt") or [""])[0]
+            lmt = (q.get("lmt") or [""])[0]
+            if not re.match(r"^\d{1,3}\.[A-Za-z0-9]{1,12}$", secid) \
+                    or klt not in ("101", "102", "103") or fqt not in ("0", "1", "2") \
+                    or not lmt.isdigit() or not 1 <= int(lmt) <= 1000:
+                return self._bad("bad kline params")
+            body = kline_body(secid, klt, fqt, int(lmt))
+            if body is None:
+                return self._bad("upstream unavailable", 502)
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if url.path == "/groups":
+            authed = self._auth()
+            if authed is None:
+                return
+            _, doc, _ = authed
+            return self._json({"groups": doc.get("groups") or []})
 
         if url.path == "/settings":
             authed = self._auth()
@@ -647,6 +752,7 @@ class Handler(BaseHTTPRequestHandler):
             groups = doc.get("groups") or []
             out.append({
                 "username": user,
+                "role": role_of(doc),
                 "disabled": bool(doc.get("disabled")),
                 "groups": len(groups),
                 "contracts": sum(len(g.get("codes") or []) for g in groups),
@@ -788,8 +894,10 @@ class Handler(BaseHTTPRequestHandler):
         return {"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(), "ver": self._ver()}
 
     def _admin_post(self, action, raw):
-        if not self._admin():
+        actor = self._admin()
+        if actor is None:
             return
+        actor_name, actor_role = actor
         try:
             doc = json.loads(raw) if raw else {}
         except Exception:
@@ -815,12 +923,35 @@ class Handler(BaseHTTPRequestHandler):
                     "tokens": [], "groups": [], "logins": [],
                     "created": f"{datetime.now(CN):%F %T}",
                 })
-            log(f"admin: create {user}")
+            log(f"admin[{actor_name}]: create {user}")
             return self._json({"ok": True})
 
         account = load_account(user)
         if account is None:
             return self._bad("账户不存在", 404)
+
+        target_role = role_of(account)
+
+        # Permission wall. 普通管理员 only touches ordinary users; 系统管理员
+        # touches everyone except the one thing that must stay intact — the
+        # single sysadmin account itself (delete/disable/demote would orphan
+        # the system).
+        if actor_role == "admin" and target_role != "user":
+            return self._bad("无权操作管理员账户", 403)
+        if target_role == "sysadmin" and action in ("delete", "disable", "role"):
+            return self._bad("系统管理员账户不可删除/禁用/改角色", 403)
+
+        if action == "role":
+            if actor_role != "sysadmin":
+                return self._bad("仅系统管理员可修改角色", 403)
+            role = str(doc.get("role") or "")
+            if role not in ("user", "admin"):
+                return self._bad("角色只能是 user 或 admin")
+            with _lock:
+                account["role"] = role
+                save_account(user, account)
+            log(f"admin[{actor_name}]: role {user} -> {role}")
+            return self._json({"ok": True})
 
         if action == "delete":
             with _lock:
@@ -829,7 +960,7 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             _token_cache.clear()
-            log(f"admin: delete {user}")
+            log(f"admin[{actor_name}]: delete {user}")
             return self._json({"ok": True})
 
         if action == "disable":
@@ -839,7 +970,7 @@ class Handler(BaseHTTPRequestHandler):
                     account["tokens"] = []   # 禁用即踢下线
                 save_account(user, account)
             _token_cache.clear()
-            log(f"admin: disable {user} -> {account['disabled']}")
+            log(f"admin[{actor_name}]: disable {user} -> {account['disabled']}")
             return self._json({"ok": True})
 
         if action == "logout":
@@ -847,7 +978,7 @@ class Handler(BaseHTTPRequestHandler):
                 account["tokens"] = []
                 save_account(user, account)
             _token_cache.clear()
-            log(f"admin: logout {user}")
+            log(f"admin[{actor_name}]: logout {user}")
             return self._json({"ok": True})
 
         if action == "password":
@@ -862,7 +993,7 @@ class Handler(BaseHTTPRequestHandler):
                     account["tokens"] = []
                 save_account(user, account)
             _token_cache.clear()
-            log(f"admin: password {user} (logout={bool(doc.get('logout'))})")
+            log(f"admin[{actor_name}]: password {user} (logout={bool(doc.get('logout'))})")
             return self._json({"ok": True})
 
         return self._bad("not found", 404)

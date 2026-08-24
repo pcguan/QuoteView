@@ -355,6 +355,14 @@ public sealed class GroupConfig
     public string? ActiveGroupId { get; set; }
 
     /// <summary>
+    /// The account this local file belongs to. Null = pre-account data, adopted
+    /// by whoever signs in first; a DIFFERENT signed-in user triggers a restore
+    /// from the server instead, so accounts never leak groups into each other.
+    /// </summary>
+    [JsonPropertyName("owner")]
+    public string? Owner { get; set; }
+
+    /// <summary>
     /// How each group's aggregate move (整体涨跌幅) is weighted. False = free-float
     /// cap weighted at yesterday's close, the CSI-index method; true = equal
     /// weight, "the average performance of these contracts".

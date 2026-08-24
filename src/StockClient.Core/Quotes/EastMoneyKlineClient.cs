@@ -56,7 +56,27 @@ public sealed class EastMoneyKlineClient
             $"&secid={Uri.EscapeDataString(contract.EastMoneySecId)}" +
             range;
 
-        var response = await GetAsync(url, cancellationToken);
+        var json = await GetAsync(url, cancellationToken);
+        return ParseSeries(json, contract, period, adjust);
+    }
+
+    /// <summary>
+    /// Builds a series from the endpoint's raw JSON. Public and static so the
+    /// same parsing serves both the direct fetch above and the snapshot-server
+    /// proxy, which returns this exact body verbatim.
+    /// </summary>
+    public static KlineSeries ParseSeries(
+        string json, Contract contract, KlinePeriod period, KlineAdjust adjust)
+    {
+        KlineResponse? response;
+        try
+        {
+            response = JsonSerializer.Deserialize<KlineResponse>(json);
+        }
+        catch (JsonException)
+        {
+            response = null;
+        }
 
         var candles = (response?.Data?.Klines ?? new List<string>())
             .Select(ParseRow)
@@ -94,21 +114,21 @@ public sealed class EastMoneyKlineClient
         };
     }
 
-    private static int PeriodCode(KlinePeriod period) => period switch
+    public static int PeriodCode(KlinePeriod period) => period switch
     {
         KlinePeriod.Week => 102,
         KlinePeriod.Month => 103,
         _ => 101,
     };
 
-    private static int AdjustCode(KlineAdjust adjust) => adjust switch
+    public static int AdjustCode(KlineAdjust adjust) => adjust switch
     {
         KlineAdjust.Qfq => 1,
         KlineAdjust.Hfq => 2,
         _ => 0,
     };
 
-    private async Task<KlineResponse?> GetAsync(string path, CancellationToken cancellationToken)
+    private async Task<string> GetAsync(string path, CancellationToken cancellationToken)
     {
         // A few retries to ride out EastMoney's frequent transient drops
         // (connection reset / response ended prematurely). When it throttles the
@@ -127,8 +147,7 @@ public sealed class EastMoneyKlineClient
                 using var response = await _http.SendAsync(request, cancellationToken);
                 response.EnsureSuccessStatusCode();
 
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                return JsonSerializer.Deserialize<KlineResponse>(json);
+                return await response.Content.ReadAsStringAsync(cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

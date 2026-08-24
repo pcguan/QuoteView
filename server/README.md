@@ -49,8 +49,13 @@ location /quoteview/api/ {
 | GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
 | GET/POST | /settings | Bearer | 账户个性化设置（客户端启动拉取、修改后上传） |
 | GET | /status | - | 账户数/合约并集/上次扫描 |
-| GET | /admin | Basic | Web 管理台（口令 = cfg/server.env 的 QV_ADMIN_PASSWORD，仅 NAS 侧配置） |
-| GET/POST | /admin/* | Basic | accounts / create / delete / disable / logout / password |
+| GET | /groups | Bearer | 账户的分组（切换用户时客户端恢复用） |
+| GET | /kline | Bearer | K 线代理（secid/klt/fqt/lmt 白名单校验，5 分钟缓存，空响应不缓存） |
+| GET | /admin | Basic(账户密码) | Web 管理台，仅 admin/sysadmin 角色可进 |
+| GET/POST | /admin/* | Basic(账户密码) | accounts / create / delete / disable / logout / password / role |
+
+**角色**：`user` 普通用户（默认）/ `admin` 普通管理员（只能操作 user）/ `sysadmin` 系统管理员
+（唯一，可操作所有人并改角色；自身不可删除/禁用/降级）。
 
 ## 行为
 

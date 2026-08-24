@@ -64,11 +64,31 @@ public partial class MainWindow : FluentWindow
 
         _klineHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         _klineHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
+
+        var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version?.ToString(3) ?? "";
+        _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
+        _session.Changed += () => Dispatcher.InvokeAsync(() =>
+        {
+            UpdateAccountButton();
+            UpdateGates();
+        });
+
         _klineRepo = new KlineRepository(
             new EastMoneyKlineClient(_klineHttp),
             new TencentKlineClient(_klineHttp),
             new KlineCache(),
-            new MarketClock());
+            new MarketClock(),
+            // Server-first: one upstream hit serves every signed-in client; the
+            // direct chain above remains the fallback when it is unreachable.
+            server: (contract, period, adjust, count, _) =>
+                _session.IsSignedIn
+                    ? _session.KlineJsonAsync(
+                        contract.EastMoneySecId,
+                        EastMoneyKlineClient.PeriodCode(period),
+                        EastMoneyKlineClient.AdjustCode(adjust),
+                        Math.Max(count, 0))
+                    : Task.FromResult<string?>(null));
         _trendClient = new EastMoneyTrendClient(_klineHttp);
         // Tencent as the backup source: EastMoney throttles trends2 with connection
         // resets, which used to leave the panel thumbnail simply blank.
@@ -76,10 +96,7 @@ public partial class MainWindow : FluentWindow
         _trendCache = new TrendCache();
         _trendRepo = new TrendRepository(
             _trendClient, new MarketClock(), _trendFallback, _trendCache);
-        var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
-            .GetName().Version?.ToString(3) ?? "";
-        _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
-        _session.Changed += () => Dispatcher.InvokeAsync(UpdateAccountButton);
+
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
         // yields a window with no backdrop at all — it renders invisible.
@@ -97,15 +114,11 @@ public partial class MainWindow : FluentWindow
 
             await _vm.LoadAsync();
 
-            // Sign in and pull the account's settings BEFORE the view model
-            // loads: the merge lands in groups.json, and every view then simply
-            // reads the merged result — no live re-apply plumbing.
+            // Sign in and pull the account's data BEFORE the view model loads:
+            // the merge lands in groups.json, and every view then simply reads
+            // the merged result — no live re-apply plumbing.
             await _session.TryAutoLoginAsync();
-            if (_session.IsSignedIn
-                && await _session.GetSettingsAsync() is { } remoteSettings)
-            {
-                new GroupStore().MergeSettings(remoteSettings);
-            }
+            await PullAccountDataAsync();
 
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
@@ -119,6 +132,7 @@ public partial class MainWindow : FluentWindow
 
             History.Init(_quotes, _trendCache, _vm.Repository, _session);
             UpdateAccountButton();
+            UpdateGates();
 
             // Groups go up every 5 minutes; the server owns the after-close
             // sweep for the union of every account's contracts.
@@ -144,7 +158,7 @@ public partial class MainWindow : FluentWindow
         {
             if (_stealth is not null) return;
 
-            if (WindowState == WindowState.Minimized) _quotes?.Pause();
+            if (WindowState == WindowState.Minimized || !_session.IsSignedIn) _quotes?.Pause();
             else _quotes?.Resume();
         };
 
@@ -205,6 +219,11 @@ public partial class MainWindow : FluentWindow
     {
         if (_quotes is null || !_session.IsSignedIn) return;
 
+        // Never push one account's groups into another: the local file must
+        // already belong to the signed-in user (PullAccountDataAsync sets that).
+        if (!string.Equals(_quotes.ConfigOwner, _session.Username, StringComparison.OrdinalIgnoreCase))
+            return;
+
         var groups = _quotes.Groups
             .Select(g => ((string)g.Name, (IReadOnlyList<string>)g.Model.Codes.ToArray()))
             .ToArray();
@@ -254,14 +273,97 @@ public partial class MainWindow : FluentWindow
     private void UpdateAccountButton() =>
         AccountButton.Content = _session.IsSignedIn ? _session.Username : "登录";
 
-    private void Account_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Sign-in gate: signed out, only 合约查询 works — the other tabs show a
+    /// login prompt and quote polling stops. 简洁面板 rides on the same pause,
+    /// so it goes quiet too rather than showing stale numbers.
+    /// </summary>
+    private void UpdateGates()
     {
+        var open = _session.IsSignedIn;
+        var gate = open ? Visibility.Collapsed : Visibility.Visible;
+
+        QuotesGate.Visibility = gate;
+        HistoryGate.Visibility = gate;
+        BriefGate.Visibility = gate;
+
+        if (!open) _quotes?.Pause();
+        else if (WindowState != WindowState.Minimized || _stealth is not null) _quotes?.Resume();
+    }
+
+    /// <summary>
+    /// Post-sign-in pull: the account's settings always merge in; groups are
+    /// restored from the server only when this machine's file belongs to a
+    /// DIFFERENT account (ownerless pre-account data is adopted by the first
+    /// sign-in instead). Returns true when the store file changed.
+    /// </summary>
+    private async Task<bool> PullAccountDataAsync()
+    {
+        if (!_session.IsSignedIn || _session.Username is not { } username) return false;
+
+        var store = new GroupStore();
+        var changed = false;
+
+        if (await _session.GetSettingsAsync() is { } settingsJson)
+        {
+            store.MergeSettings(settingsJson);
+            changed = true;
+        }
+
+        var config = store.Load();
+        if (config.Owner is null)
+        {
+            config.Owner = username;
+            store.Save(config);
+            changed = true;
+        }
+        else if (!string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase))
+        {
+            // Another account's machine: replace groups with this account's
+            // server copy. Unreachable server = keep looking at the old groups
+            // read-only-ish (sync up stays owner-guarded), retry next start.
+            var groups = await _session.GroupsAsync();
+            if (groups is not null)
+            {
+                config = store.Load();
+                config.Groups = groups
+                    .Select(g => new Group
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        Name = g.Name.Length > 0 ? g.Name : "分组",
+                        Codes = g.Codes.ToList(),
+                    })
+                    .ToList();
+                config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
+                config.Owner = username;
+                store.Save(config);
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private async void Account_Click(object sender, RoutedEventArgs e)
+    {
+        var wasUser = _session.Username;
         var dialog = new Views.LoginWindow(_session) { Owner = this };
         dialog.ShowDialog();
         UpdateAccountButton();
+        UpdateGates();
+        if (!_session.IsSignedIn) return;
 
-        // A fresh sign-in should sync promptly rather than wait out the timer.
-        if (_session.IsSignedIn) _ = SyncGroupsAsync();
+        // Fresh sign-in: pull the account's data and reload the views if the
+        // store changed (always true on a user switch, usually false otherwise).
+        var changed = await PullAccountDataAsync();
+        if (changed && _quotes is not null)
+        {
+            _quotes.ReloadFromStore();
+            _lastPushedSettings = _quotes.ExportSettingsJson();
+            _stealth?.ApplySettings();
+        }
+
+        _ = SyncGroupsAsync();
     }
 
     private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();

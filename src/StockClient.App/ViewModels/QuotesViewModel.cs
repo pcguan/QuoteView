@@ -316,7 +316,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly Dispatcher _dispatcher;
     private readonly HttpClient _http;
     private readonly GroupStore _store;
-    private readonly GroupConfig _config;
+    private GroupConfig _config;
     private readonly QuotePoller _poller;
     private readonly EastMoneyExtraPoller _extraPoller;
     private readonly ReturnBaselineRepository _returns;
@@ -541,6 +541,24 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         GroupStore.ExportGroups(path, _config.Groups, _config.ActiveGroupId);
 
     /// <summary>Replaces all groups with an imported file's, then rebuilds the list.</summary>
+    /// <summary>
+    /// Reloads groups, stealth and columns from the store file — used after the
+    /// account layer merged server-side data into it (sign-in as another user).
+    /// </summary>
+    public void ReloadFromStore()
+    {
+        _config = _store.Load();
+
+        Groups.Clear();
+        foreach (var group in _config.Groups) Groups.Add(new GroupRow(group));
+
+        var active = Groups.FirstOrDefault(g => g.Id == _config.ActiveGroupId) ?? Groups.FirstOrDefault();
+        SetActive(active);
+    }
+
+    /// <summary>The account this config belongs to (see GroupConfig.Owner).</summary>
+    public string? ConfigOwner => _config.Owner;
+
     public void ImportGroups(string path)
     {
         var payload = GroupStore.ImportGroups(path);

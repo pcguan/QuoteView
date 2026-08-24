@@ -197,6 +197,15 @@ public sealed class AccountSession
         CallAsync(t => _client.PutSettingsAsync(t, settingsJson, CancellationToken.None).ContinueWith(
             x => (x.Result.Ok, x.Result.Unauthorized)), false);
 
+    public Task<string?> KlineJsonAsync(string secid, int klt, int fqt, int lmt) =>
+        CallAsync(t => _client.KlineJsonAsync(t, secid, klt, fqt, lmt, CancellationToken.None).ContinueWith(
+            x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);
+
+    public Task<IReadOnlyList<(string Name, IReadOnlyList<string> Codes)>?> GroupsAsync() =>
+        CallAsync(t => _client.GroupsAsync(t, CancellationToken.None).ContinueWith(
+            x => (x.Result.Groups, x.Result.Unauthorized)),
+            (IReadOnlyList<(string, IReadOnlyList<string>)>?)null);
+
     public Task<TrendSeries?> TrendAsync(string code, DateOnly date) =>
         CallAsync(t => _client.TrendAsync(t, code, date, CancellationToken.None).ContinueWith(
             x => (x.Result.Series, x.Result.Unauthorized)), (TrendSeries?)null);

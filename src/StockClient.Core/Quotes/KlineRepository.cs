@@ -37,16 +37,25 @@ public sealed class KlineRepository
     private readonly KlineCache _cache;
     private readonly IMarketClock _clock;
     private readonly Func<DateTimeOffset> _now;
+    private readonly Func<Contract, KlinePeriod, KlineAdjust, int, CancellationToken, Task<string?>>? _server;
 
+    /// <param name="server">
+    /// Optional primary source: the snapshot server's /kline proxy, returning
+    /// the EastMoney response body verbatim (null = unavailable). Centralises
+    /// upstream traffic on the server; the direct EastMoney/Tencent chain stays
+    /// as the fallback so charts survive the server being down.
+    /// </param>
     public KlineRepository(
         EastMoneyKlineClient east, TencentKlineClient tencent, KlineCache cache, IMarketClock clock,
-        Func<DateTimeOffset>? now = null)
+        Func<DateTimeOffset>? now = null,
+        Func<Contract, KlinePeriod, KlineAdjust, int, CancellationToken, Task<string?>>? server = null)
     {
         _east = east;
         _tencent = tencent;
         _cache = cache;
         _clock = clock;
         _now = now ?? (() => DateTimeOffset.Now);
+        _server = server;
     }
 
     public async Task<(KlineSeries Series, string Source)> GetAsync(
@@ -58,6 +67,25 @@ public sealed class KlineRepository
         var cached = _cache.TryLoad(contract.Code, period, adjust, date);
         if (cached is not null && IsFresh(cached, contract.Market, settled))
             return (cached, Label(cached));
+
+        // Server first: one upstream hit serves every client.
+        if (_server is not null)
+        {
+            try
+            {
+                var json = await _server(contract, period, adjust, count, cancellationToken);
+                if (json is not null)
+                {
+                    var fromServer = EastMoneyKlineClient.ParseSeries(json, contract, period, adjust);
+                    if (fromServer.Candles.Count > 0)
+                        return Store(fromServer with { Source = "服务端" }, date, settled);
+                }
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Fall through to the direct chain.
+            }
+        }
 
         try
         {
