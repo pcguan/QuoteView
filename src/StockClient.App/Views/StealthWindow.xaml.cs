@@ -1203,7 +1203,23 @@ public partial class StealthWindow : Window
         Probe.Log($"Root_Drag clicks={e.ClickCount} before: size={ActualWidth:F0}x{ActualHeight:F0} " +
                   $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
 
-        if (e.ClickCount == 1) DragMove();
+        if (e.ClickCount == 1)
+        {
+            DragMove();
+        }
+        else if (e.ClickCount == 2)
+        {
+            // Double-click = instant blackout: shade straight to 0, the same
+            // endpoint holding Win+Alt+Down reaches one step at a time. At 0 the
+            // window's pixels are fully transparent and the mouse falls through,
+            // so the way back is Win+Alt+Up — which is also why this is a one-way
+            // gesture rather than a toggle: an invisible panel can't be
+            // double-clicked again.
+            _config.Shade = 0;
+            ApplyShade();
+            _save();
+            Snapshot("double-click -> INVISIBLE (Win+Alt+Up to bring back)");
+        }
 
         Probe.Log($"Root_Drag after:  size={ActualWidth:F0}x{ActualHeight:F0} " +
                   $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");

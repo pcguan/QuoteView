@@ -12,6 +12,10 @@
     One alpha step is invisible but still catches the mouse.
   -->
   <!--
+    Double-click drops the shade straight to 0 (handled in Root_Drag by
+    ClickCount, not a MouseDoubleClick handler: the first press of the pair
+    must still reach DragMove so a slow "click, click" doesn't eat a drag).
+
     No MouseDoubleClick -> restore, deliberately.
 
     Restoring closes this panel, and double-click is far too easy to hit by
