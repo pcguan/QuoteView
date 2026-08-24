@@ -455,6 +455,72 @@ def scheduler():
 
 # ---------------------------------------------------------------- http
 
+WEB_SESSION_IDLE_H = 12
+
+
+def web_sessions():
+    return load_state().get("websessions") or {}
+
+
+def web_session_check(token):
+    """(user, role) for a live web-admin session, refreshing last-seen; None
+    when missing/expired. Sessions live in state.json so a container restart
+    doesn't log every admin out."""
+    if not TOKEN_RE.match(token or ""):
+        return None
+    now = datetime.now(CN)
+    with _lock:
+        state = load_state()
+        sessions = state.get("websessions") or {}
+        entry = sessions.get(token)
+        if not entry:
+            return None
+        try:
+            seen = datetime.strptime(entry["seen"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+        except Exception:
+            seen = now
+        if now - seen > timedelta(hours=WEB_SESSION_IDLE_H):
+            del sessions[token]
+            state["websessions"] = sessions
+            save_state(state)
+            return None
+        entry["seen"] = f"{now:%F %T}"
+        state["websessions"] = sessions
+        save_state(state)
+        return entry["user"], entry["role"]
+
+
+def web_session_create(user, role, ip):
+    token = secrets.token_hex(32)
+    with _lock:
+        state = load_state()
+        sessions = state.get("websessions") or {}
+        # Drop stale entries while we're here; cap total.
+        now = datetime.now(CN)
+        for t in list(sessions):
+            try:
+                seen = datetime.strptime(sessions[t]["seen"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                if now - seen > timedelta(hours=WEB_SESSION_IDLE_H):
+                    del sessions[t]
+            except Exception:
+                del sessions[t]
+        sessions[token] = {"user": user, "role": role, "ip": ip,
+                           "at": f"{now:%F %T}", "seen": f"{now:%F %T}"}
+        state["websessions"] = dict(list(sessions.items())[-20:])
+        save_state(state)
+    return token
+
+
+def web_session_drop(token):
+    with _lock:
+        state = load_state()
+        sessions = state.get("websessions") or {}
+        if token in sessions:
+            del sessions[token]
+            state["websessions"] = sessions
+            save_state(state)
+
+
 def verify_password(account, password):
     auth = account.get("auth") or {}
     got = hashlib.pbkdf2_hmac("sha256", password.encode(),
@@ -519,6 +585,20 @@ button.icon.spin svg{animation:spin .8s linear infinite}
 tr.err td{background:#2A1218}
 tr.err:hover td{background:#331722}
 </style>
+<section id=login-view style="display:none;max-width:340px;margin:120px auto">
+  <div class=card>
+    <h2 style="font-size:15px;color:var(--fg)">QuoteView 管理台</h2>
+    <div style="margin:12px 0 6px" class=mut>管理员账户</div>
+    <input id=lu style="width:100%" autocomplete=username>
+    <div style="margin:12px 0 6px" class=mut>密码</div>
+    <input id=lp type=password style="width:100%" autocomplete=current-password
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <div id=lerr style="color:var(--bad);min-height:1.5em;margin-top:8px"></div>
+    <button class=op style="width:100%;padding:7px 0;margin-top:4px" onclick="doLogin()">登 录</button>
+    <div class=dim style="margin-top:10px;font-size:11px">仅管理员角色可登录；与客户端同一套账户密码。</div>
+  </div>
+</section>
+<div id=console-view style="display:none">
 <header>
   <h1>QuoteView 管理台</h1>
   <nav>
@@ -527,6 +607,7 @@ tr.err:hover td{background:#331722}
     <button id=nav-logs onclick="show('logs')">日志管理</button>
   </nav>
   <span id=who></span>
+  <button class=op onclick="doLogout()" style="margin-left:12px">登出</button>
 </header>
 <main>
   <section id=tab-acct>
@@ -570,13 +651,51 @@ tr.err:hover td{background:#331722}
     </div>
   </section>
 </main>
+</div>
 <div id=msg></div>
 <script>
 const ROLE = {user:'普通用户', admin:'管理员', sysadmin:'系统管理员'};
 let ME = null, LOGS = null;
 const $ = id => document.getElementById(id);
-const api = (path, body) => fetch('admin/' + path, body ? {method:'POST',
-  headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {}).then(r => r.json());
+const tok = () => sessionStorage.getItem('qvadm') || '';
+async function api(path, body){
+  const r = await fetch('api/' + path, {
+    method: body ? 'POST' : 'GET',
+    headers: Object.assign({'X-Admin-Token': tok()},
+      body ? {'Content-Type':'application/json'} : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401 && path !== 'login'){ toLogin(); throw new Error('unauthorized'); }
+  return r.json();
+}
+function toLogin(){
+  sessionStorage.removeItem('qvadm');
+  $('console-view').style.display = 'none';
+  $('login-view').style.display = 'block';
+  $('lp').value = ''; $('lerr').textContent = '';
+}
+async function doLogin(){
+  const r = await fetch('api/login', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username: $('lu').value.trim(), password: $('lp').value})});
+  const d = await r.json();
+  if (!r.ok){ $('lerr').textContent = d.error || '登录失败'; return; }
+  sessionStorage.setItem('qvadm', d.token);
+  enterConsole();
+}
+async function doLogout(){
+  try { await api('logout', {}); } catch(e){}
+  toLogin();
+}
+function enterConsole(){
+  $('login-view').style.display = 'none';
+  $('console-view').style.display = 'block';
+  show('acct');
+}
+async function boot(){
+  if (!tok()) return toLogin();
+  try { await api('me'); enterConsole(); } catch(e){ /* toLogin already ran */ }
+}
 function msg(t){ const m = $('msg'); m.textContent = t; m.style.display = 'block';
   clearTimeout(m._t); m._t = setTimeout(() => m.style.display = 'none', 4000); }
 function show(tab){
@@ -690,7 +809,7 @@ function renderLogs(){
     : '<div class=dim>无匹配记录</div>';
 }
 
-async function act(path, body){ const r = await api(path, body); msg(r.error || '已完成'); refresh(); }
+async function act(path, body){ const r = await api('act/' + path, body); msg(r.error || '已完成'); refresh(); }
 function createAccount(){
   const u = $('nu').value.trim(), p = $('np').value;
   if (!u || !p) return msg('用户名和密码都要填');
@@ -703,7 +822,8 @@ function passwd(u){
 }
 function del(u){ if (confirm(`确认删除账户 ${u}？其分组与设置数据将一并删除。`)) act('delete', {username:u}); }
 
-loadAccounts(); setInterval(() => refresh(), 30000);
+boot();
+setInterval(() => { if ($('console-view').style.display !== 'none') refresh(); }, 30000);
 </script></html>"""
 
 
@@ -736,7 +856,8 @@ class Handler(BaseHTTPRequestHandler):
         return real or self.client_address[0]
 
     def _ver(self):
-        return (self.headers.get("X-QV-Version") or "")[:32]
+        raw = (self.headers.get("X-QV-Version") or "")[:32]
+        return re.sub(r"[^A-Za-z0-9._-]", "", raw)
 
     def _auth(self):
         """(user, doc, token) behind the Bearer token, or None (response sent).
@@ -756,26 +877,13 @@ class Handler(BaseHTTPRequestHandler):
         return user, load_account(user) or doc, token
 
     def _admin(self):
-        """HTTP Basic auth for the console, against ACCOUNT credentials — the
-        same username/password the client uses. Only admin/sysadmin roles get
-        in. Returns (username, role) or None (401 already sent)."""
-        import base64
-        header = self.headers.get("Authorization") or ""
-        if header.startswith("Basic "):
-            try:
-                user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
-                account = load_account(user) if USER_RE.match(user) else None
-                if (account is not None and not account.get("disabled")
-                        and role_of(account) in ("admin", "sysadmin")
-                        and verify_password(account, pw)):
-                    return user, role_of(account)
-            except Exception:
-                pass
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="QuoteView Admin"')
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-        return None
+        """Web-console auth: the X-Admin-Token header must name a live admin
+        session (minted by /web/api/login). Returns (username, role) or None
+        (401 already sent)."""
+        result = web_session_check(self.headers.get("X-Admin-Token") or "")
+        if result is None:
+            self._bad("unauthorized", 401)
+        return result
 
     # ------------------------------------------------------------ GET
 
@@ -783,9 +891,9 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = parse_qs(url.query)
 
-        if url.path == "/admin" or url.path == "/admin/":
-            if self._admin() is None:
-                return
+        if url.path == "/web" or url.path == "/web/":
+            # The page itself is public; it decides login-vs-console by asking
+            # /web/api/me with its stored token.
             body = ADMIN_PAGE.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -794,7 +902,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if url.path == "/admin/sessions":
+        if url.path == "/web/api/me":
+            actor = self._admin()
+            if actor is None:
+                return
+            return self._json({"username": actor[0], "role": actor[1]})
+
+        if url.path == "/web/api/sessions":
             if self._admin() is None:
                 return
             now = datetime.now(CN)
@@ -834,7 +948,7 @@ class Handler(BaseHTTPRequestHandler):
                             "disabled": bool(doc.get("disabled")), "online": sessions})
             return self._json({"accounts": out})
 
-        if url.path == "/admin/logs":
+        if url.path == "/web/api/logs":
             if self._admin() is None:
                 return
             logins, passwords = [], []
@@ -857,7 +971,7 @@ class Handler(BaseHTTPRequestHandler):
             passwords.sort(key=lambda x: x["at"], reverse=True)
             return self._json({"logins": logins[:500], "passwords": passwords[:200]})
 
-        if url.path == "/admin/accounts":
+        if url.path == "/web/api/accounts":
             actor = self._admin()
             if actor is None:
                 return
@@ -998,8 +1112,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._bad("payload too large", 413)
         raw = self.rfile.read(length) if length else b""
 
-        if self.path.startswith("/admin/"):
-            return self._admin_post(self.path[7:], raw)
+        if self.path == "/web/api/login":
+            try:
+                doc = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
+            user = str(doc.get("username") or "")
+            password = str(doc.get("password") or "")
+            account = load_account(user) if USER_RE.match(user) else None
+            if account is None or account.get("disabled") \
+                    or role_of(account) not in ("admin", "sysadmin") \
+                    or not verify_password(account, password):
+                self._log_login(user, "error", "管理台登录失败") if account is not None else None
+                return self._bad("用户名或密码错误，或无管理权限", 401)
+            token = web_session_create(user, role_of(account), self._ip())
+            self._log_login(user, "info", "管理台登录")
+            log(f"web login {user} from {self._ip()}")
+            return self._json({"token": token, "username": user, "role": role_of(account)})
+
+        if self.path == "/web/api/logout":
+            token = self.headers.get("X-Admin-Token") or ""
+            web_session_drop(token)
+            return self._json({"ok": True})
+
+        if self.path.startswith("/web/api/act/"):
+            return self._admin_post(self.path[13:], raw)
 
         if self.path == "/register":
             try:

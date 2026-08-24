@@ -38,6 +38,9 @@ location /quoteview/api/ {
 
 改动后 `docker exec nginx nginx -t && docker exec nginx nginx -s reload`。
 
+nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quoteview/api/`（客户端接口）、
+`/quoteview/web/`（Web 管理台，反代到容器 `/web/`）。
+
 ## 接口
 
 | 方法 | 路径 | 鉴权 | 说明 |
