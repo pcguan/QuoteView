@@ -58,6 +58,21 @@ _lock = threading.Lock()
 _token_cache = {}          # token -> username, rebuilt on miss
 
 
+def log(msg):
+    line = f"{datetime.now(CN):%F %T} {msg}"
+    print(line, flush=True)
+    if not LOG_FILE:
+        return
+    try:
+        # Size-capped by simple rotation: server.log -> server.log.1 at 10MB.
+        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 10 * 1024 * 1024:
+            os.replace(LOG_FILE, LOG_FILE + ".1")
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
 def hash_pw(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
                                PBKDF2_ITERS).hex()
@@ -85,42 +100,58 @@ def save_account(user, doc):
 
 
 def user_for_token(token):
-    """Bearer token -> username, or None. Cached; a miss rescans the accounts
-    directory once (a handful of files) before giving up."""
+    """Bearer token -> (username, account_doc), or (None, None). Tokens are
+    dicts carrying created/ip/version/last-seen; legacy plain strings from the
+    first deployment are upgraded on read."""
     if not TOKEN_RE.match(token or ""):
-        return None
+        return None, None
     user = _token_cache.get(token)
-    if user:
-        doc = load_account(user)
-        if doc and token in doc.get("tokens", []):
-            return user
-        _token_cache.pop(token, None)
-    if not os.path.isdir(ACCOUNTS):
-        return None
-    for name in os.listdir(ACCOUNTS):
-        if not name.endswith(".json"):
-            continue
-        candidate = name[:-5]
+    candidates = [user] if user else []
+    if not candidates and os.path.isdir(ACCOUNTS):
+        candidates = [n[:-5] for n in os.listdir(ACCOUNTS) if n.endswith(".json")]
+    for candidate in candidates:
         doc = load_account(candidate)
-        if doc and token in doc.get("tokens", []):
+        if doc is None:
+            continue
+        normalize_tokens(doc)
+        if any(t["t"] == token for t in doc["tokens"]):
             _token_cache[token] = candidate
-            return candidate
-    return None
+            return candidate, doc
+    _token_cache.pop(token, None)
+    return None, None
 
 
-def log(msg):
-    line = f"{datetime.now(CN):%F %T} {msg}"
-    print(line, flush=True)
-    if not LOG_FILE:
-        return
-    try:
-        # Size-capped by simple rotation: server.log -> server.log.1 at 10MB.
-        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 10 * 1024 * 1024:
-            os.replace(LOG_FILE, LOG_FILE + ".1")
-        with open(LOG_FILE, "a") as f:
-            f.write(line + "\n")
-    except OSError:
-        pass
+def normalize_tokens(doc):
+    """Upgrades legacy plain-string tokens to the dict shape in place."""
+    tokens = doc.get("tokens") or []
+    doc["tokens"] = [
+        t if isinstance(t, dict) else {"t": t, "created": "", "ip": "", "ver": "", "seen": ""}
+        for t in tokens
+    ]
+
+
+def touch_token(user, token, ip, ver):
+    """Records activity on a token: last-seen, ip and client version.
+
+    Reloads inside the lock on purpose: the doc the auth check read is a
+    snapshot from before the lock, and saving that snapshot would silently
+    undo any write (a settings PUT, a sync) that landed in between — the
+    classic lost update, and exactly how the first /settings write vanished."""
+    stamp = f"{datetime.now(CN):%F %T}"
+    with _lock:
+        doc = load_account(user)
+        if doc is None:
+            return
+        normalize_tokens(doc)
+        for t in doc["tokens"]:
+            if t["t"] == token:
+                t["seen"] = stamp
+                if ip:
+                    t["ip"] = ip
+                if ver:
+                    t["ver"] = ver
+                break
+        save_account(user, doc)
 
 
 # ---------------------------------------------------------------- storage
@@ -371,6 +402,74 @@ def scheduler():
 
 # ---------------------------------------------------------------- http
 
+ADMIN_PASSWORD = os.environ.get("QV_ADMIN_PASSWORD", "")
+
+ADMIN_PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
+<title>QuoteView 管理台</title>
+<style>
+body{background:#12161F;color:#EDF1F7;font:13px/1.6 'Microsoft YaHei',sans-serif;margin:24px}
+h1{font-size:18px} table{border-collapse:collapse;width:100%;margin:14px 0}
+th,td{border:1px solid #2A3244;padding:6px 10px;text-align:left;vertical-align:top;font-size:12px}
+th{background:#1A2030;color:#8B93A3} tr:nth-child(even){background:#161B27}
+button{background:#1A2030;color:#EDF1F7;border:1px solid #39435A;border-radius:3px;
+padding:3px 10px;margin:0 3px 3px 0;cursor:pointer;font-size:12px}
+button:hover{border-color:#5C6B8A} .on{color:#3DD68C}.off{color:#8B93A3}.dis{color:#EF5350}
+#msg{color:#FFC107;min-height:1.4em} details{margin-top:4px} summary{cursor:pointer;color:#8B93A3}
+input{background:#0F1420;color:#EDF1F7;border:1px solid #39435A;border-radius:3px;padding:3px 8px}
+</style>
+<h1>QuoteView 管理台</h1>
+<div>
+  <input id=nu placeholder="新用户名"> <input id=np placeholder="密码" type=password>
+  <button onclick="createAccount()">新增账户</button>
+  <span id=msg></span>
+</div>
+<div id=root>加载中…</div>
+<script>
+const api = (path, body) => fetch('admin/' + path, body ? {method:'POST',
+  headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {})
+  .then(r => r.json());
+const msg = t => document.getElementById('msg').textContent = t;
+
+async function load(){
+  const d = await api('accounts');
+  const rows = d.accounts.map(a => {
+    const tok = a.tokens.map(t =>
+      `<div>${t.online ? '<b class=on>在线</b>' : '<span class=off>离线</span>'}`
+      + ` ip=${t.ip||'-'} 版本=${t.ver||'-'} 登录=${t.created||'-'}`
+      + ` 活跃=${t.seen||'-'} 时长=${t.duration||'-'}</div>`).join('') || '<span class=off>无会话</span>';
+    const logs = a.logins.map(l => `<div>${l.at} ip=${l.ip||'-'} 版本=${l.ver||'-'}</div>`).join('')
+      || '<span class=off>无记录</span>';
+    return `<tr>
+      <td><b>${a.username}</b><br>${a.disabled ? '<span class=dis>已禁用</span>' : '<span class=on>正常</span>'}</td>
+      <td>${a.groups} 组 / ${a.contracts} 合约<br>设置: ${a.has_settings ? '已同步' : '无'}</td>
+      <td>在线 ${a.online} / 会话 ${a.tokens.length}${tok}</td>
+      <td><details><summary>最近登录 ${a.logins.length} 条</summary>${logs}</details></td>
+      <td>
+        <button onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
+        <button onclick="act('logout',{username:'${a.username}'})">登出全部</button>
+        <button onclick="passwd('${a.username}')">改密码</button>
+        <button onclick="del('${a.username}')">删除</button>
+      </td></tr>`;
+  }).join('');
+  document.getElementById('root').innerHTML =
+    `<table><tr><th>账户</th><th>数据</th><th>会话（在线判定：10 分钟内有活动）</th><th>登录日志</th><th>操作</th></tr>${rows}</table>`;
+}
+async function act(path, body){ const r = await api(path, body); msg(r.error || '完成'); load(); }
+async function createAccount(){
+  const u = document.getElementById('nu').value.trim(), p = document.getElementById('np').value;
+  if(!u || !p) return msg('用户名和密码都要填');
+  act('create', {username:u, password:p});
+}
+function passwd(u){
+  const p = prompt(`为 ${u} 设置新密码：`); if(!p) return;
+  const kick = confirm('同时登出该用户当前所有登录状态？（确定=登出，取消=保留）');
+  act('password', {username:u, password:p, logout:kick});
+}
+function del(u){ if(confirm(`确认删除账户 ${u}？其分组与设置数据将一并删除。`)) act('delete',{username:u}); }
+load(); setInterval(load, 30000);
+</script></html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "QuoteViewServer/1.0"
 
@@ -388,18 +487,79 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # default logger spams stderr per request
         pass
 
+    def _ip(self):
+        # Behind EdgeOne + the nginx SNI stream layer, the socket peer and even
+        # X-Real-IP are loopback; the visitor's address arrives in the CDN's
+        # X-Forwarded-For (first hop).
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        real = self.headers.get("X-Real-IP") or ""
+        for candidate in (forwarded, real):
+            if candidate and candidate != "127.0.0.1":
+                return candidate
+        return real or self.client_address[0]
+
+    def _ver(self):
+        return (self.headers.get("X-QV-Version") or "")[:32]
+
     def _auth(self):
-        """The account behind the Bearer token, or None (401 already sent)."""
+        """(user, doc, token) behind the Bearer token, or None (response sent).
+        Also refreshes the token's last-seen/ip/version — the admin page's
+        online view is built from exactly these touches."""
         header = self.headers.get("Authorization") or ""
         token = header[7:] if header.startswith("Bearer ") else ""
-        user = user_for_token(token)
-        if user is None:
+        user, doc = user_for_token(token)
+        if user is None or doc is None:
             self._bad("unauthorized", 401)
-        return user
+            return None
+        if doc.get("disabled"):
+            self._bad("账户已禁用", 401)
+            return None
+        touch_token(user, token, self._ip(), self._ver())
+        # Re-read after the touch so callers see the freshest doc.
+        return user, load_account(user) or doc, token
+
+    def _admin(self):
+        """HTTP Basic auth for the console, password from QV_ADMIN_PASSWORD."""
+        import base64
+        if not ADMIN_PASSWORD:
+            self._bad("管理台未配置（QV_ADMIN_PASSWORD 为空）", 503)
+            return False
+        header = self.headers.get("Authorization") or ""
+        ok = False
+        if header.startswith("Basic "):
+            try:
+                _, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+                ok = secrets.compare_digest(pw, ADMIN_PASSWORD)
+            except Exception:
+                ok = False
+        if not ok:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="QuoteView Admin"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        return ok
+
+    # ------------------------------------------------------------ GET
 
     def do_GET(self):
         url = urlparse(self.path)
         q = parse_qs(url.query)
+
+        if url.path == "/admin" or url.path == "/admin/":
+            if not self._admin():
+                return
+            body = ADMIN_PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if url.path == "/admin/accounts":
+            if not self._admin():
+                return
+            return self._json({"accounts": self._account_summaries()})
 
         if url.path == "/dates":
             if self._auth() is None:
@@ -428,6 +588,16 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if url.path == "/settings":
+            authed = self._auth()
+            if authed is None:
+                return
+            _, doc, _ = authed
+            settings = doc.get("settings")
+            if settings is None:
+                return self._bad("not found", 404)
+            return self._json({"settings": settings, "updated": doc.get("settings_updated")})
+
         if url.path == "/status":
             state = load_state()
             accounts = (len([n for n in os.listdir(ACCOUNTS) if n.endswith(".json")])
@@ -441,11 +611,62 @@ class Handler(BaseHTTPRequestHandler):
 
         self._bad("not found", 404)
 
+    def _account_summaries(self):
+        now = datetime.now(CN)
+        out = []
+        if not os.path.isdir(ACCOUNTS):
+            return out
+        for name in sorted(os.listdir(ACCOUNTS)):
+            if not name.endswith(".json"):
+                continue
+            user = name[:-5]
+            doc = load_account(user)
+            if doc is None:
+                continue
+            normalize_tokens(doc)
+            tokens = []
+            online = 0
+            for t in doc["tokens"]:
+                seen = t.get("seen") or ""
+                is_online = False
+                duration = ""
+                try:
+                    if seen:
+                        seen_dt = datetime.strptime(seen, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                        is_online = (now - seen_dt) <= timedelta(minutes=10)
+                    created = t.get("created") or ""
+                    if created and seen:
+                        created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                        minutes = int((seen_dt - created_dt).total_seconds() // 60)
+                        duration = f"{minutes // 60}h{minutes % 60:02d}m"
+                except Exception:
+                    pass
+                online += 1 if is_online else 0
+                tokens.append({"online": is_online, "ip": t.get("ip"), "ver": t.get("ver"),
+                               "created": t.get("created"), "seen": seen, "duration": duration})
+            groups = doc.get("groups") or []
+            out.append({
+                "username": user,
+                "disabled": bool(doc.get("disabled")),
+                "groups": len(groups),
+                "contracts": sum(len(g.get("codes") or []) for g in groups),
+                "has_settings": doc.get("settings") is not None,
+                "online": online,
+                "tokens": tokens,
+                "logins": list(reversed((doc.get("logins") or [])[-20:])),
+            })
+        return out
+
+    # ------------------------------------------------------------ POST
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
         if length > 512 * 1024:
             return self._bad("payload too large", 413)
         raw = self.rfile.read(length) if length else b""
+
+        if self.path.startswith("/admin/"):
+            return self._admin_post(self.path[7:], raw)
 
         if self.path == "/register":
             try:
@@ -466,17 +687,18 @@ class Handler(BaseHTTPRequestHandler):
                 if existing >= MAX_ACCOUNTS:
                     return self._bad("注册已关闭", 403)
                 salt = secrets.token_hex(16)
-                token = secrets.token_hex(32)
+                token = self._mint()
                 save_account(user, {
                     "auth": {"salt": salt, "hash": hash_pw(password, salt),
                              "iters": PBKDF2_ITERS},
                     "tokens": [token],
                     "groups": [],
+                    "logins": [self._login_entry()],
                     "created": f"{datetime.now(CN):%F %T}",
                 })
-            _token_cache[token] = user
-            log(f"register account {user}")
-            return self._json({"token": token, "username": user})
+            _token_cache[token["t"]] = user
+            log(f"register account {user} from {self._ip()}")
+            return self._json({"token": token["t"], "username": user})
 
         if self.path == "/login":
             try:
@@ -488,6 +710,8 @@ class Handler(BaseHTTPRequestHandler):
             account = load_account(user) if USER_RE.match(user) else None
             if account is None:
                 return self._bad("用户名或密码错误", 401)
+            if account.get("disabled"):
+                return self._bad("账户已禁用", 403)
             auth = account.get("auth") or {}
             expect = auth.get("hash") or ""
             got = hashlib.pbkdf2_hmac("sha256", password.encode(),
@@ -495,21 +719,23 @@ class Handler(BaseHTTPRequestHandler):
                                       int(auth.get("iters") or PBKDF2_ITERS)).hex()
             if not secrets.compare_digest(expect, got):
                 return self._bad("用户名或密码错误", 401)
-            token = secrets.token_hex(32)
+            token = self._mint()
             with _lock:
                 account = load_account(user) or account
-                tokens = (account.get("tokens") or [])[-(MAX_TOKENS - 1):]
-                tokens.append(token)
-                account["tokens"] = tokens
+                normalize_tokens(account)
+                account["tokens"] = account["tokens"][-(MAX_TOKENS - 1):] + [token]
+                logins = account.get("logins") or []
+                account["logins"] = (logins + [self._login_entry()])[-50:]
                 save_account(user, account)
-            _token_cache[token] = user
-            log(f"login {user}")
-            return self._json({"token": token, "username": user})
+            _token_cache[token["t"]] = user
+            log(f"login {user} from {self._ip()} ver={self._ver() or '-'}")
+            return self._json({"token": token["t"], "username": user})
 
         if self.path == "/sync":
-            user = self._auth()
-            if user is None:
+            authed = self._auth()
+            if authed is None:
                 return
+            user, _, _ = authed
             try:
                 doc = json.loads(raw)
             except Exception:
@@ -531,7 +757,115 @@ class Handler(BaseHTTPRequestHandler):
             total = sum(len(g["codes"]) for g in clean)
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
 
+        if self.path == "/settings":
+            authed = self._auth()
+            if authed is None:
+                return
+            user, _, _ = authed
+            try:
+                doc = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
+            settings = doc.get("settings")
+            if not isinstance(settings, dict):
+                return self._bad("bad settings")
+            with _lock:
+                account = load_account(user)
+                if account is None:
+                    return self._bad("unauthorized", 401)
+                account["settings"] = settings
+                account["settings_updated"] = f"{datetime.now(CN):%F %T}"
+                save_account(user, account)
+            return self._json({"ok": True})
+
         self._bad("not found", 404)
+
+    def _mint(self):
+        return {"t": secrets.token_hex(32), "created": f"{datetime.now(CN):%F %T}",
+                "ip": self._ip(), "ver": self._ver(), "seen": f"{datetime.now(CN):%F %T}"}
+
+    def _login_entry(self):
+        return {"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(), "ver": self._ver()}
+
+    def _admin_post(self, action, raw):
+        if not self._admin():
+            return
+        try:
+            doc = json.loads(raw) if raw else {}
+        except Exception:
+            return self._bad("bad json")
+        user = str(doc.get("username") or "")
+        if action != "create" and not USER_RE.match(user):
+            return self._bad("bad username")
+
+        if action == "create":
+            user = str(doc.get("username") or "")
+            password = str(doc.get("password") or "")
+            if not USER_RE.match(user):
+                return self._bad("用户名需为 3~32 位字母/数字/下划线")
+            if len(password) < 6:
+                return self._bad("密码至少 6 位")
+            with _lock:
+                if os.path.exists(account_path(user)):
+                    return self._bad("用户名已存在", 409)
+                salt = secrets.token_hex(16)
+                save_account(user, {
+                    "auth": {"salt": salt, "hash": hash_pw(password, salt),
+                             "iters": PBKDF2_ITERS},
+                    "tokens": [], "groups": [], "logins": [],
+                    "created": f"{datetime.now(CN):%F %T}",
+                })
+            log(f"admin: create {user}")
+            return self._json({"ok": True})
+
+        account = load_account(user)
+        if account is None:
+            return self._bad("账户不存在", 404)
+
+        if action == "delete":
+            with _lock:
+                try:
+                    os.remove(account_path(user))
+                except OSError:
+                    pass
+            _token_cache.clear()
+            log(f"admin: delete {user}")
+            return self._json({"ok": True})
+
+        if action == "disable":
+            with _lock:
+                account["disabled"] = bool(doc.get("disabled"))
+                if account["disabled"]:
+                    account["tokens"] = []   # 禁用即踢下线
+                save_account(user, account)
+            _token_cache.clear()
+            log(f"admin: disable {user} -> {account['disabled']}")
+            return self._json({"ok": True})
+
+        if action == "logout":
+            with _lock:
+                account["tokens"] = []
+                save_account(user, account)
+            _token_cache.clear()
+            log(f"admin: logout {user}")
+            return self._json({"ok": True})
+
+        if action == "password":
+            password = str(doc.get("password") or "")
+            if len(password) < 6:
+                return self._bad("密码至少 6 位")
+            with _lock:
+                salt = secrets.token_hex(16)
+                account["auth"] = {"salt": salt, "hash": hash_pw(password, salt),
+                                   "iters": PBKDF2_ITERS}
+                if doc.get("logout"):
+                    account["tokens"] = []
+                save_account(user, account)
+            _token_cache.clear()
+            log(f"admin: password {user} (logout={bool(doc.get('logout'))})")
+            return self._json({"ok": True})
+
+        return self._bad("not found", 404)
 
 
 def main():

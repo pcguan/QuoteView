@@ -1072,7 +1072,20 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _extraPoller.Resume();
     }
 
-    private void Save() => _store.Save(_config);
+    /// <summary>Raised after every config save — the settings-sync debouncer listens.</summary>
+    public event Action? ConfigSaved;
+
+    private void Save()
+    {
+        _store.Save(_config);
+        ConfigSaved?.Invoke();
+    }
+
+    /// <summary>The account-synced preference slice, as JSON for the server.</summary>
+    public string ExportSettingsJson() =>
+        System.Text.Json.JsonSerializer.Serialize(SettingsPayload.From(_config));
+
+
 
     public async ValueTask DisposeAsync()
     {

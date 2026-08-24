@@ -189,6 +189,14 @@ public sealed class AccountSession
         CallAsync(t => _client.DatesAsync(t, code, CancellationToken.None).ContinueWith(
             x => (x.Result.Dates, x.Result.Unauthorized)), (IReadOnlyList<DateOnly>)Array.Empty<DateOnly>());
 
+    public Task<string?> GetSettingsAsync() =>
+        CallAsync(t => _client.GetSettingsAsync(t, CancellationToken.None).ContinueWith(
+            x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);
+
+    public Task<bool> PutSettingsAsync(string settingsJson) =>
+        CallAsync(t => _client.PutSettingsAsync(t, settingsJson, CancellationToken.None).ContinueWith(
+            x => (x.Result.Ok, x.Result.Unauthorized)), false);
+
     public Task<TrendSeries?> TrendAsync(string code, DateOnly date) =>
         CallAsync(t => _client.TrendAsync(t, code, date, CancellationToken.None).ContinueWith(
             x => (x.Result.Series, x.Result.Unauthorized)), (TrendSeries?)null);

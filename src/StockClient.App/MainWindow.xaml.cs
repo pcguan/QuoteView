@@ -8,6 +8,7 @@ using StockClient.App.Services;
 using StockClient.App.ViewModels;
 using StockClient.App.Views;
 using StockClient.Core.Contracts;
+using StockClient.Core.Groups;
 using StockClient.Core.Quotes;
 using StockClient.Core.Updates;
 using Wpf.Ui.Controls;
@@ -75,7 +76,9 @@ public partial class MainWindow : FluentWindow
         _trendCache = new TrendCache();
         _trendRepo = new TrendRepository(
             _trendClient, new MarketClock(), _trendFallback, _trendCache);
-        _session = new AccountSession(new AccountClient(_klineHttp));
+        var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetName().Version?.ToString(3) ?? "";
+        _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
         _session.Changed += () => Dispatcher.InvokeAsync(UpdateAccountButton);
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
@@ -94,18 +97,31 @@ public partial class MainWindow : FluentWindow
 
             await _vm.LoadAsync();
 
+            // Sign in and pull the account's settings BEFORE the view model
+            // loads: the merge lands in groups.json, and every view then simply
+            // reads the merged result — no live re-apply plumbing.
+            await _session.TryAutoLoginAsync();
+            if (_session.IsSignedIn
+                && await _session.GetSettingsAsync() is { } remoteSettings)
+            {
+                new GroupStore().MergeSettings(remoteSettings);
+            }
+
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
 
+            // Every later config save pushes the preference slice back up,
+            // debounced — colour-picker drags save on every tick of the drag.
+            _lastPushedSettings = _quotes.ExportSettingsJson();
+            _quotes.ConfigSaved += ScheduleSettingsPush;
+
             History.Init(_quotes, _trendCache, _vm.Repository, _session);
             UpdateAccountButton();
 
-            // 自动登录 first so the initial sync isn't an unauthenticated miss;
-            // groups then go up every 5 minutes. The server owns the after-close
+            // Groups go up every 5 minutes; the server owns the after-close
             // sweep for the union of every account's contracts.
-            await _session.TryAutoLoginAsync();
             _ = SyncGroupsAsync();
             _syncTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
             {
@@ -196,6 +212,43 @@ public partial class MainWindow : FluentWindow
 
         var ok = await _session.SyncGroupsAsync(groups);
         Probe.Log($"account sync: groups={groups.Length} ok={ok}");
+    }
+
+    private string _lastPushedSettings = "";
+    private DispatcherTimer? _settingsPushTimer;
+
+    /// <summary>
+    /// Debounced settings push: many UI paths save the config several times a
+    /// second (slider drags, colour picking), so the upload waits for 2s of
+    /// quiet and skips entirely when nothing in the synced slice changed
+    /// (group switching saves the config too, but touches no preference).
+    /// </summary>
+    private void ScheduleSettingsPush()
+    {
+        if (_settingsPushTimer is null)
+        {
+            _settingsPushTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromSeconds(2),
+            };
+            _settingsPushTimer.Tick += async (_, _) =>
+            {
+                _settingsPushTimer!.Stop();
+                if (_quotes is null || !_session.IsSignedIn) return;
+
+                var json = _quotes.ExportSettingsJson();
+                if (json == _lastPushedSettings) return;
+
+                if (await _session.PutSettingsAsync(json))
+                {
+                    _lastPushedSettings = json;
+                    Probe.Log($"settings push: {json.Length}B ok");
+                }
+            };
+        }
+
+        _settingsPushTimer.Stop();
+        _settingsPushTimer.Start();
     }
 
     private void UpdateAccountButton() =>

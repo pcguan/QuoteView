@@ -298,6 +298,50 @@ public sealed class QuoteColumnState
     public bool Visible { get; set; } = true;
 }
 
+/// <summary>
+/// The account-synced slice of <see cref="GroupConfig"/>: everything that is a
+/// personal preference (field visibility/colours, column layout, notes, the
+/// aggregate mode, pane width) and nothing that is structural (groups live in
+/// their own sync channel; the active group is a per-machine cursor).
+/// </summary>
+public sealed class SettingsPayload
+{
+    [JsonPropertyName("stealth")]
+    public StealthConfig? Stealth { get; set; }
+
+    [JsonPropertyName("quoteColumns")]
+    public List<QuoteColumnState>? QuoteColumns { get; set; }
+
+    [JsonPropertyName("notes")]
+    public Dictionary<string, string>? Notes { get; set; }
+
+    [JsonPropertyName("aggEqual")]
+    public bool AggEqualWeight { get; set; }
+
+    [JsonPropertyName("paneWidth")]
+    public double GroupPaneWidth { get; set; }
+
+    public static SettingsPayload From(GroupConfig config) => new()
+    {
+        Stealth = config.Stealth,
+        QuoteColumns = config.QuoteColumns,
+        Notes = config.Notes,
+        AggEqualWeight = config.AggEqualWeight,
+        GroupPaneWidth = config.GroupPaneWidth,
+    };
+
+    /// <summary>Overwrites the preference slice of <paramref name="config"/>.</summary>
+    public void ApplyTo(GroupConfig config)
+    {
+        if (Stealth is not null) config.Stealth = Stealth;
+        if (QuoteColumns is not null) config.QuoteColumns = QuoteColumns;
+        if (Notes is not null)
+            config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
+        config.AggEqualWeight = AggEqualWeight;
+        config.GroupPaneWidth = GroupPaneWidth;
+    }
+}
+
 public sealed class GroupConfig
 {
     [JsonPropertyName("stealth")]
@@ -363,6 +407,30 @@ public sealed class GroupStore
             "StockClient", "groups.json");
 
     public string FilePath => _path;
+
+    /// <summary>
+    /// Applies an account's server-side settings onto the stored config file.
+    /// Runs at startup BEFORE the view model loads, so every view simply reads
+    /// the merged result — no live re-apply plumbing anywhere.
+    /// </summary>
+    public void MergeSettings(string settingsJson)
+    {
+        SettingsPayload? payload;
+        try
+        {
+            payload = JsonSerializer.Deserialize<SettingsPayload>(settingsJson);
+        }
+        catch (JsonException)
+        {
+            return;   // a bad blob must never break startup
+        }
+        if (payload is null) return;
+
+        var config = Load();
+        payload.ApplyTo(config);
+        config.Stealth = config.Stealth.Normalize();
+        Save(config);
+    }
 
     public GroupConfig Load()
     {

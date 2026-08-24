@@ -47,7 +47,10 @@ location /quoteview/api/ {
 | POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，5 分钟一次，按账户存 |
 | GET | /dates?code=SH600519 | Bearer | 该合约已归档的日期 |
 | GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
+| GET/POST | /settings | Bearer | 账户个性化设置（客户端启动拉取、修改后上传） |
 | GET | /status | - | 账户数/合约并集/上次扫描 |
+| GET | /admin | Basic | Web 管理台（口令 = cfg/server.env 的 QV_ADMIN_PASSWORD，仅 NAS 侧配置） |
+| GET/POST | /admin/* | Basic | accounts / create / delete / disable / logout / password |
 
 ## 行为
 
