@@ -31,6 +31,7 @@ public static class DragReorder
     {
         var start = default(Point);
         var armed = false;
+        var claimed = false;
         InsertionAdorner? adorner = null;
 
         control.AllowDrop = true;
@@ -58,12 +59,35 @@ public static class DragReorder
         {
             start = e.GetPosition(control);
             var source = e.OriginalSource as DependencyObject;
-            armed = (canDrag?.Invoke() ?? true) && ContainerIndex(control, source) >= 0 && !OnButton(source);
+
+            // A plain press on a row claims the drag gesture for reordering; with
+            // Ctrl/Shift held it stays a selection gesture. The split matters on
+            // the Extended-selection grid, where dragging across rows is ALSO the
+            // rubber-band multi-select — without claiming, that swallowed every
+            // reorder attempt (drag always turned into a growing selection).
+            var onRow = ContainerIndex(control, source) >= 0 && !OnButton(source);
+            var plain = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) == 0;
+
+            claimed = onRow && plain;
+            armed = claimed && (canDrag?.Invoke() ?? true);
         };
 
         control.PreviewMouseMove += (_, e) =>
         {
-            if (!armed || e.LeftButton != MouseButtonState.Pressed) return;
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                claimed = false;
+                armed = false;
+                return;
+            }
+
+            // While a plain row-drag is claimed, the cells must not see the move:
+            // handling it here is what keeps the Extended grid's drag-extend from
+            // running. Claimed-but-not-armed is the sorted view, where the drag
+            // deliberately does nothing at all (a reorder wouldn't match what's
+            // on screen, and rubber-banding in its place just looks broken).
+            if (claimed) e.Handled = true;
+            if (!armed) return;
 
             var p = e.GetPosition(control);
             if (Math.Abs(p.X - start.X) < SystemParameters.MinimumHorizontalDragDistance &&
@@ -72,10 +96,17 @@ public static class DragReorder
 
             var from = ContainerIndex(control, e.OriginalSource as DependencyObject);
             armed = false;
+            claimed = false;
             if (from < 0) return;
 
             DragDrop.DoDragDrop(control, new DataObject(Format, from), DragDropEffects.Move);
             RemoveAdorner(); // drag ended (dropped or cancelled)
+        };
+
+        control.PreviewMouseLeftButtonUp += (_, _) =>
+        {
+            claimed = false;
+            armed = false;
         };
 
         control.DragOver += (_, e) =>

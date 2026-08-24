@@ -818,9 +818,24 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     /// fund-flow column is on. Non-A-share codes are excluded (those fields don't
     /// exist for them), and an all-non-A group polls nothing.
     /// </summary>
+    /// <summary>
+    /// Re-evaluates the demand-driven polls after the stealth panel's field set
+    /// changes — turning a fund-flow field on there must start the secondary poll
+    /// even while the grid's fund-flow columns are all hidden.
+    /// </summary>
+    public void StealthSettingsChanged() => RefreshExtraPolling();
+
+    /// <summary>
+    /// Whether the stealth panel is configured to show any fund-flow field. Kept
+    /// simple on purpose: it counts even while the panel window is closed — one
+    /// batched request per tick is a fair price for not tracking window state here.
+    /// </summary>
+    private bool StealthWantsFundFlow =>
+        _config.Stealth?.Fields.Any(f => f.Visible && StealthFields.IsFundFlow(f.Field)) == true;
+
     private void RefreshExtraPolling()
     {
-        if (!_fundFlowActive || _activeGroup is null)
+        if ((!_fundFlowActive && !StealthWantsFundFlow) || _activeGroup is null)
         {
             _extraPoller.SetTarget(Array.Empty<(string, string)>());
             return;

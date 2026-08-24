@@ -691,6 +691,20 @@ public partial class StealthWindow : Window
         StealthField.Open => r.Yesterday > 0 ? r.Open - r.Yesterday : r.Percent,
         StealthField.High => r.Yesterday > 0 ? r.High - r.Yesterday : r.Percent,
         StealthField.Low => r.Yesterday > 0 ? r.Low - r.Yesterday : r.Percent,
+        StealthField.PrevDay => r.PrevDayPercent ?? 0,
+        StealthField.Return3 => r.Return3 ?? 0,
+        StealthField.Return5 => r.Return5 ?? 0,
+        StealthField.Return10 => r.Return10 ?? 0,
+        StealthField.Return20 => r.Return20 ?? 0,
+        StealthField.Return60 => r.Return60 ?? 0,
+        StealthField.ReturnYtd => r.ReturnYtd ?? 0,
+        StealthField.Speed => r.Speed ?? 0,
+        StealthField.MainInflow => r.MainInflow ?? 0,
+        StealthField.MainInflowPct => r.MainInflowPct ?? 0,
+        StealthField.SuperInflow => r.SuperInflow ?? 0,
+        StealthField.BigInflow => r.BigInflow ?? 0,
+        StealthField.MidInflow => r.MidInflow ?? 0,
+        StealthField.SmallInflow => r.SmallInflow ?? 0,
         _ => 0,
     };
 
@@ -719,8 +733,43 @@ public partial class StealthWindow : Window
         StealthField.AvgPrice => r.AvgPrice is { } a ? Price(a) : "",
         StealthField.PeTtm => Plain(r.PeTtm),
         StealthField.Pb => Plain(r.Pb),
+        StealthField.PrevDay => SignedPct(r.PrevDayPercent),
+        StealthField.Return3 => SignedPct(r.Return3),
+        StealthField.Return5 => SignedPct(r.Return5),
+        StealthField.Return10 => SignedPct(r.Return10),
+        StealthField.Return20 => SignedPct(r.Return20),
+        StealthField.Return60 => SignedPct(r.Return60),
+        StealthField.ReturnYtd => SignedPct(r.ReturnYtd),
+        StealthField.Speed => SignedPct(r.Speed),
+        StealthField.MainInflow => Scale(r.MainInflow),
+        StealthField.MainInflowPct => SignedPct(r.MainInflowPct),
+        StealthField.SuperInflow => Scale(r.SuperInflow),
+        StealthField.BigInflow => Scale(r.BigInflow),
+        StealthField.MidInflow => Scale(r.MidInflow),
+        StealthField.SmallInflow => Scale(r.SmallInflow),
+        StealthField.OuterVolume => Scale(r.OuterVolume),
+        StealthField.InnerVolume => Scale(r.InnerVolume),
+        StealthField.LimitUp => r.LimitUp is { } lu ? Price(lu) : "",
+        StealthField.LimitDown => r.LimitDown is { } ld ? Price(ld) : "",
+        StealthField.Week52High => r.Week52High is { } wh ? Price(wh) : "",
+        StealthField.Week52Low => r.Week52Low is { } wl ? Price(wl) : "",
+        StealthField.DividendYield => Pct(r.DividendYield),
+        StealthField.Industry => r.Industry,
+        StealthField.Region => r.Region,
+        StealthField.Concepts => Clip(r.Concepts),
+        StealthField.Note => Clip(r.Note),
         _ => "",
     };
+
+    /// <summary>Signed percentage; empty while the source hasn't reported (baselines
+    /// not fetched yet, non-A-share for fund flow) so the row doesn't show a fake 0.</summary>
+    private static string SignedPct(double? v) =>
+        v is { } x ? x.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%" : "";
+
+    /// <summary>Free-text fields (concepts, note) capped so one contract can't
+    /// stretch the panel across the screen. HoldWidth only ever grows.</summary>
+    private static string Clip(string text) =>
+        text.Length <= 16 ? text : text[..15] + "…";
 
     /// <summary>进位显示 (311.01万 / 1.66万亿); empty when the market didn't report it.</summary>
     private static string Scale(double? value)
@@ -914,6 +963,31 @@ public partial class StealthWindow : Window
         StealthField.AvgPrice => "均价",
         StealthField.PeTtm => "市盈TTM",
         StealthField.Pb => "市净率",
+        StealthField.PrevDay => "昨日涨幅",
+        StealthField.Return3 => "3日涨幅",
+        StealthField.Return5 => "5日涨幅",
+        StealthField.Return10 => "10日涨幅",
+        StealthField.Return20 => "20日涨幅",
+        StealthField.Return60 => "60日涨幅",
+        StealthField.ReturnYtd => "年初至今",
+        StealthField.Speed => "涨速",
+        StealthField.MainInflow => "主力净流入",
+        StealthField.MainInflowPct => "主力占比",
+        StealthField.SuperInflow => "超大单",
+        StealthField.BigInflow => "大单",
+        StealthField.MidInflow => "中单",
+        StealthField.SmallInflow => "小单",
+        StealthField.OuterVolume => "外盘",
+        StealthField.InnerVolume => "内盘",
+        StealthField.LimitUp => "涨停价",
+        StealthField.LimitDown => "跌停价",
+        StealthField.Week52High => "52周最高",
+        StealthField.Week52Low => "52周最低",
+        StealthField.DividendYield => "股息率",
+        StealthField.Industry => "行业",
+        StealthField.Region => "地区",
+        StealthField.Concepts => "概念",
+        StealthField.Note => "备注",
         _ => f.ToString(),
     };
 

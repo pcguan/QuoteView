@@ -75,6 +75,34 @@ public enum StealthField
     /// nobody could change.
     /// </summary>
     GroupName,
+
+    // Appended for parity with the main grid's columns (the panel's field list
+    // must offer everything the table can show). Same append-only rule as above.
+    PrevDay,
+    Return3,
+    Return5,
+    Return10,
+    Return20,
+    Return60,
+    ReturnYtd,
+    Speed,
+    MainInflow,
+    MainInflowPct,
+    SuperInflow,
+    BigInflow,
+    MidInflow,
+    SmallInflow,
+    OuterVolume,
+    InnerVolume,
+    LimitUp,
+    LimitDown,
+    Week52High,
+    Week52Low,
+    DividendYield,
+    Industry,
+    Region,
+    Concepts,
+    Note,
 }
 
 public static class StealthFields
@@ -86,7 +114,23 @@ public static class StealthFields
     /// </summary>
     public static bool IsSigned(StealthField field) => field
         is StealthField.Price or StealthField.Change or StealthField.Percent
-        or StealthField.Open or StealthField.High or StealthField.Low;
+        or StealthField.Open or StealthField.High or StealthField.Low
+        or StealthField.PrevDay or StealthField.Return3 or StealthField.Return5
+        or StealthField.Return10 or StealthField.Return20 or StealthField.Return60
+        or StealthField.ReturnYtd or StealthField.Speed
+        or StealthField.MainInflow or StealthField.MainInflowPct
+        or StealthField.SuperInflow or StealthField.BigInflow
+        or StealthField.MidInflow or StealthField.SmallInflow;
+
+    /// <summary>
+    /// Fields served by the secondary EastMoney fund-flow poll (A-shares only).
+    /// The poll is demand-driven, so showing one of these — in the grid or on the
+    /// stealth panel — is what turns that request on.
+    /// </summary>
+    public static bool IsFundFlow(StealthField field) => field
+        is StealthField.Speed or StealthField.MainInflow or StealthField.MainInflowPct
+        or StealthField.SuperInflow or StealthField.BigInflow
+        or StealthField.MidInflow or StealthField.SmallInflow;
 }
 
 public sealed class StealthFieldConfig
@@ -181,6 +225,31 @@ public sealed class StealthConfig
             new() { Field = StealthField.PeTtm, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.Pb, Visible = false, Color = "#FFFFFF" },
             new() { Field = StealthField.GroupName, Visible = true, Color = "#8B93A3" },
+            new() { Field = StealthField.PrevDay, Visible = false },
+            new() { Field = StealthField.Return3, Visible = false },
+            new() { Field = StealthField.Return5, Visible = false },
+            new() { Field = StealthField.Return10, Visible = false },
+            new() { Field = StealthField.Return20, Visible = false },
+            new() { Field = StealthField.Return60, Visible = false },
+            new() { Field = StealthField.ReturnYtd, Visible = false },
+            new() { Field = StealthField.Speed, Visible = false },
+            new() { Field = StealthField.MainInflow, Visible = false },
+            new() { Field = StealthField.MainInflowPct, Visible = false },
+            new() { Field = StealthField.SuperInflow, Visible = false },
+            new() { Field = StealthField.BigInflow, Visible = false },
+            new() { Field = StealthField.MidInflow, Visible = false },
+            new() { Field = StealthField.SmallInflow, Visible = false },
+            new() { Field = StealthField.OuterVolume, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.InnerVolume, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.LimitUp, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.LimitDown, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Week52High, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Week52Low, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.DividendYield, Visible = false, Color = "#FFFFFF" },
+            new() { Field = StealthField.Industry, Visible = false, Color = "#8B93A3" },
+            new() { Field = StealthField.Region, Visible = false, Color = "#8B93A3" },
+            new() { Field = StealthField.Concepts, Visible = false, Color = "#8B93A3" },
+            new() { Field = StealthField.Note, Visible = false, Color = "#8B93A3" },
         },
     };
 
