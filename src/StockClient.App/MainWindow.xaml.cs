@@ -227,17 +227,26 @@ public partial class MainWindow : FluentWindow
         if (!string.Equals(_quotes.ConfigOwner, _session.Username, StringComparison.OrdinalIgnoreCase))
             return;
 
-        // Groups: compare stamps, move data toward the newer side.
+        // Groups: compare stamps, move data toward the newer side. Equal
+        // stamps with DIFFERENT content (e.g. both machines migrated at 0)
+        // would otherwise deadlock — the tiebreak re-stamps local and pushes,
+        // so one side becomes authoritative and the other pulls it.
         if (await _session.GroupsWithAtAsync() is { } remote)
         {
+            var localGroups = _quotes.ExportGroupsJson();
+
             if (remote.At > _quotes.GroupsUpdatedAt && remote.Groups.Count > 0)
             {
                 _quotes.ApplyServerGroups(remote.Groups, remote.At);
                 _lastPushedGroups = _quotes.ExportGroupsJson();
                 Probe.Log($"reconcile: groups pulled ({remote.Groups.Count}) at={remote.At}");
             }
-            else if (remote.At < _quotes.GroupsUpdatedAt)
+            else if (remote.At < _quotes.GroupsUpdatedAt
+                     || (remote.At == _quotes.GroupsUpdatedAt
+                         && QuotesViewModel.SlimGroupsJson(remote.Groups) != localGroups))
             {
+                if (remote.At == _quotes.GroupsUpdatedAt) _quotes.StampGroupsChanged();
+
                 if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
                 {
                     _lastPushedGroups = _quotes.ExportGroupsJson();
@@ -246,16 +255,40 @@ public partial class MainWindow : FluentWindow
             }
         }
 
-        // Settings: same dance. ApplySettingsJson refuses non-newer payloads.
-        if (await _session.GetSettingsAsync() is { } settingsJson)
+        // Settings: BOTH directions here too. Pull-only was the column-layout
+        // divergence bug: a change made while signed out is stamped locally,
+        // refuses the server's older copy — and then nothing ever uploaded it.
+        var remoteSettings = await _session.GetSettingsAsync();
+        long remoteAt = 0;
+        if (remoteSettings is not null)
         {
-            if (_quotes.ApplySettingsJson(settingsJson))
+            try
             {
-                _lastPushedSettings = _quotes.ExportSettingsJson();
-                _stealth?.ApplySettings();
-                Quotes.ReapplyColumnLayout();
-                GroupColWidthFromConfig();
-                Probe.Log("reconcile: settings pulled+applied");
+                using var doc = System.Text.Json.JsonDocument.Parse(remoteSettings);
+                if (doc.RootElement.TryGetProperty("at", out var a)) remoteAt = a.GetInt64();
+            }
+            catch (System.Text.Json.JsonException) { }
+        }
+
+        if (remoteSettings is not null && _quotes.ApplySettingsJson(remoteSettings))
+        {
+            _lastPushedSettings = _quotes.ExportSettingsJson();
+            _stealth?.ApplySettings();
+            Quotes.ReapplyColumnLayout();
+            GroupColWidthFromConfig();
+            Probe.Log("reconcile: settings pulled+applied");
+        }
+        else if (_quotes.PrefsUpdatedAt > remoteAt
+                 || (remoteSettings is not null && remoteAt == _quotes.PrefsUpdatedAt
+                     && _quotes.ExportSettingsJson() != remoteSettings))
+        {
+            if (remoteAt == _quotes.PrefsUpdatedAt) _quotes.StampPrefsChanged();
+
+            var json = _quotes.ExportSettingsJson();
+            if (await _session.PutSettingsAsync(json))
+            {
+                _lastPushedSettings = json;
+                Probe.Log("reconcile: settings pushed");
             }
         }
     }

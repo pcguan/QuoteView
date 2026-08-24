@@ -1116,6 +1116,15 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
     public long GroupsUpdatedAt => _config.GroupsUpdatedAt;
 
+    public long PrefsUpdatedAt => _config.PrefsUpdatedAt;
+
+    /// <summary>The same slim shape ExportGroupsJson uses, for remote-vs-local
+    /// content comparison during reconcile.</summary>
+    public static string SlimGroupsJson(
+        IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups) =>
+        System.Text.Json.JsonSerializer.Serialize(
+            groups.Select(g => new { Name = g.Name, Codes = g.Codes, InPanel = g.InPanel }));
+
     /// <summary>Groups as the sync slice (name/codes/panel-flag), for change detection and upload.</summary>
     public string ExportGroupsJson() =>
         System.Text.Json.JsonSerializer.Serialize(
