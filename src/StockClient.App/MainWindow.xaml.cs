@@ -179,6 +179,8 @@ public partial class MainWindow : FluentWindow
             foreach (var window in _klineWindows.ToArray()) window.Close();
 
             _syncTimer?.Stop();
+            _settingsPushTimer?.Stop();
+            await FlushSettingsPushAsync();
             if (_quotes is not null) await _quotes.DisposeAsync();
             _vm.Dispose();
             _klineHttp.Dispose();
@@ -272,13 +274,41 @@ public partial class MainWindow : FluentWindow
                 if (await _session.PutSettingsAsync(json))
                 {
                     _lastPushedSettings = json;
+                    _settingsPushTimer.Interval = TimeSpan.FromSeconds(2);
                     Probe.Log($"settings push: {json.Length}B ok");
+                }
+                else
+                {
+                    // 实时同步 means keep trying, not try once: a failed push
+                    // re-arms itself at a gentler cadence until it lands, so a
+                    // network blip can't leave the server behind for the day.
+                    _settingsPushTimer.Interval = TimeSpan.FromSeconds(30);
+                    _settingsPushTimer.Start();
+                    Probe.Log("settings push failed, retrying in 30s");
                 }
             };
         }
 
+        _settingsPushTimer.Interval = TimeSpan.FromSeconds(2);
         _settingsPushTimer.Stop();
         _settingsPushTimer.Start();
+    }
+
+    /// <summary>
+    /// Last-chance flush on exit: a change made moments before closing hasn't
+    /// cleared the debounce yet. Capped at 3s so a dead network can't hold the
+    /// window open — the timestamp arbitration covers whatever this misses.
+    /// </summary>
+    private async Task FlushSettingsPushAsync()
+    {
+        if (_quotes is null || !_session.IsSignedIn) return;
+
+        var json = _quotes.ExportSettingsJson();
+        if (json == _lastPushedSettings) return;
+
+        _quotes.StampPrefsChanged();
+        json = _quotes.ExportSettingsJson();
+        await Task.WhenAny(_session.PutSettingsAsync(json), Task.Delay(3000));
     }
 
     private void UpdateAccountButton() =>
