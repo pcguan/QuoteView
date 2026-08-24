@@ -700,11 +700,18 @@ tr.err:hover td{background:#331722}
       <button class=op onclick="createAccount()">创建</button>
       <span class=dim>　新账户默认为普通用户；角色由系统管理员在列表中调整</span>
     </div>
-    <div class=card><h2>账户列表</h2><div id=acct-list>加载中…</div></div>
+    <div class=card><h2>账户列表
+        <button id=ra class=icon title="刷新" onclick="spinReload('ra', loadAccounts)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
+                  stroke-linejoin="round"/></svg></button></h2>
+      <div id=acct-list>加载中…</div></div>
   </section>
 
   <section id=tab-sess hidden>
-    <div class=card><h2>账户状态与在线会话（在线 = 10 分钟内有活动；仅展示有效会话）</h2>
+    <div class=card><h2>账户状态与在线会话（在线 = 10 分钟内有活动；仅展示有效会话）
+        <button id=rs class=icon title="刷新" onclick="spinReload('rs', loadSessions)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
+                  stroke-linejoin="round"/></svg></button></h2>
       <div id=sess-list>加载中…</div></div>
   </section>
 
@@ -719,7 +726,7 @@ tr.err:hover td{background:#331722}
         </select>
         <input id=lf placeholder="按用户/IP/日期/事件过滤…" style="width:220px"
           oninput="renderLogs()">
-        <button id=rl class=icon title="刷新日志" onclick="reloadLogs()">
+        <button id=rl class=icon title="刷新日志" onclick="spinReload('rl', loadLogs)">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
                   stroke-linejoin="round"/></svg>
@@ -846,9 +853,9 @@ async function loadSessions(){
   $('sess-list').innerHTML = blocks || '<div class=dim>无账户</div>';
 }
 
-async function reloadLogs(){
-  const b = $('rl'); b.classList.add('spin');
-  try { await loadLogs(); } finally { setTimeout(() => b.classList.remove('spin'), 300); }
+async function spinReload(btnId, loader){
+  const b = $(btnId); b.classList.add('spin');
+  try { await loader(); } finally { setTimeout(() => b.classList.remove('spin'), 300); }
 }
 async function loadLogs(){
   LOGS = await api('logs');
