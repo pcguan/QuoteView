@@ -131,8 +131,8 @@ def union_codes():
 
 # ---------------------------------------------------------------- fetching
 
-def fetch_trend(code):
-    """One contract's day series from EastMoney, in the client's JSON shape."""
+def fetch_eastmoney(code):
+    """(series, data_day) from EastMoney trends2, or (None, None)."""
     market = "1" if code.startswith("SH") else "0"
     secid = f"{market}.{code[2:]}"
     url = ("https://push2his.eastmoney.com/api/qt/stock/trends2/get"
@@ -144,8 +144,7 @@ def fetch_trend(code):
         "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
         "Referer": "https://quote.eastmoney.com/",
     })
-    last = None
-    for _ in range(3):
+    for _ in range(2):
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
                 doc = json.load(r)
@@ -164,18 +163,86 @@ def fetch_trend(code):
                     "Volume": float(c[5]),
                 })
             if not points:
-                return None
-            return {
+                return None, None
+            series = {
                 "Code": code,
                 "Name": data.get("name") or code,
                 "PreClose": float(data.get("preClose") or 0),
                 "Points": points,
             }
-        except Exception as e:  # noqa: BLE001 - retry then give up
-            last = e
+            return series, points[-1]["Time"][:10]
+        except Exception:  # noqa: BLE001
             time.sleep(2)
-    log(f"fetch {code} failed: {last}")
-    return None
+    return None, None
+
+
+def fetch_tencent(code):
+    """(series, data_day) from Tencent minute/query — the fallback for when
+    EastMoney throttles the trends2 path with connection resets (it does, in
+    bursts; the desktop client grew this same second source for that reason).
+
+    Row shape is `HHmm price cumulativeVolume [cumulativeAmount]`: volume is
+    differenced into per-minute bars, the average line is cumulative
+    amount / (cumulative volume × 100) — A-share volumes are in 手 — and the
+    times get the response's own date prepended so stored files look exactly
+    like the EastMoney ones.
+    """
+    api = code.lower()
+    url = f"https://web.ifzq.gtimg.cn/appstock/app/minute/query?code={api}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+    })
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                doc = json.load(r)
+            node = (doc.get("data") or {}).get(api) or {}
+            inner = node.get("data") or {}
+            raw_day = str(inner.get("date") or "")
+            day = f"{raw_day[:4]}-{raw_day[4:6]}-{raw_day[6:8]}" if len(raw_day) == 8 else None
+
+            qt = (node.get("qt") or {}).get(api) or []
+            name = qt[1] if len(qt) > 1 else code
+            pre_close = float(qt[4]) if len(qt) > 4 else 0.0
+
+            points = []
+            prev_cum = 0.0
+            for row in inner.get("data") or []:
+                c = str(row).split()
+                if len(c) < 3:
+                    continue
+                price = float(c[1])
+                if price <= 0:
+                    continue
+                cum = float(c[2])
+                amount = float(c[3]) if len(c) > 3 else 0.0
+                t = f"{c[0][:2]}:{c[0][2:]}" if len(c[0]) == 4 else c[0]
+                points.append({
+                    "Time": f"{day} {t}" if day else t,
+                    "Price": price,
+                    "AvgPrice": amount / (cum * 100) if amount > 0 and cum > 0 else 0.0,
+                    "Volume": max(0.0, cum - prev_cum),
+                })
+                prev_cum = cum
+            if not points:
+                return None, None
+            return {
+                "Code": code,
+                "Name": name,
+                "PreClose": pre_close,
+                "Points": points,
+            }, day
+        except Exception:  # noqa: BLE001
+            time.sleep(2)
+    return None, None
+
+
+def fetch_trend(code):
+    """Dual-source: (series, data_day) or (None, None)."""
+    series, day = fetch_eastmoney(code)
+    if series is None:
+        series, day = fetch_tencent(code)
+    return series, day
 
 
 def sweep_once():
@@ -195,19 +262,28 @@ def sweep_once():
         return
 
     log(f"sweep {day}: {len(missing)} contracts to fetch")
-    done = failed = 0
+    done = failed = streak = 0
     for code in missing:
-        series = fetch_trend(code)
+        series, data_day = fetch_trend(code)
         if series is None:
             failed += 1
-        elif not series["Points"][-1]["Time"].startswith(day):
+            streak += 1
+            # Both sources down N times in a row = we're being throttled.
+            # Continuing just feeds the throttle; the next 5-minute tick
+            # resumes from wherever this stopped (file existence = done).
+            if streak >= 5:
+                log(f"sweep {day}: {streak} consecutive failures, backing off "
+                    f"(done={done} failed={failed})")
+                return
+        elif data_day != day:
             # A weekday whose data belongs to an older session: holiday. One
             # probe settles it for the whole list.
             state["holiday"] = day
             save_state(state)
-            log(f"sweep {day}: stale data returned -> holiday, aborting")
+            log(f"sweep {day}: stale data ({data_day}) -> holiday, aborting")
             return
         else:
+            streak = 0
             os.makedirs(trend_dir(code), exist_ok=True)
             tmp = trend_path(code, day) + ".tmp"
             with open(tmp, "w") as f:
