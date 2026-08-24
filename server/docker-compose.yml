@@ -11,20 +11,18 @@ services:
     # so nothing is reachable from outside except through nginx.
     network_mode: host
 
-    environment:
-      TZ: Asia/Shanghai
-      QV_DATA: /data
-      QV_PORT: "8388"
-      # QV_RETAIN_DAYS: "7"     # snapshot retention per contract
-      # QV_FETCH_GAP: "1.5"     # seconds between EastMoney requests
+    # All tunables live in cfg/, per this host's cfg/data/log/scripts layout.
+    env_file:
+      - ./cfg/server.env
 
     # The image's own entrypoint is a Claude Code launcher; this container only
     # wants its python3.
-    entrypoint: ["python3", "/app/server.py"]
+    entrypoint: ["python3", "/scripts/server.py"]
 
     volumes:
-      - ./app:/app:ro
+      - ./scripts:/scripts:ro
       - ./data:/data
+      - ./log:/log
 
     mem_limit: 256m
 

@@ -29,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 DATA = os.environ.get("QV_DATA", "/data")
+LOG_FILE = os.environ.get("QV_LOG", "")
 PORT = int(os.environ.get("QV_PORT", "8388"))
 RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "7"))
 FETCH_GAP_S = float(os.environ.get("QV_FETCH_GAP", "1.5"))
@@ -47,7 +48,18 @@ _lock = threading.Lock()
 
 
 def log(msg):
-    print(f"{datetime.now(CN):%F %T} {msg}", flush=True)
+    line = f"{datetime.now(CN):%F %T} {msg}"
+    print(line, flush=True)
+    if not LOG_FILE:
+        return
+    try:
+        # Size-capped by simple rotation: server.log -> server.log.1 at 10MB.
+        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 10 * 1024 * 1024:
+            os.replace(LOG_FILE, LOG_FILE + ".1")
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- storage

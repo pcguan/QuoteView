@@ -6,18 +6,23 @@ NAS 容器，为所有 QuoteView 客户端统一抓取并归档沪深合约的�
 
 仓库里的 `server/` 就是部署源；NAS 目录布局：
 
+目录结构遵循该主机的 `cfg/data/log/scripts` 容器家规（同 nginx、sub2api）：
+
 ```
 /vol3/1000/HDD2/tool/docker/quoteview-server/
-  docker-compose.yml     # 本目录的 docker-compose.yml
-  app/server.py          # 本目录的 server.py
+  docker-compose.yml
+  cfg/server.env         # 全部可调参数（TZ/端口/保留天数/限流间隔）
+  scripts/server.py      # 服务端代码
   data/                  # clients/ trends/ state.json（容器数据，勿动）
+  log/server.log         # 应用日志（10MB 自轮转一份 .1）
 ```
 
-发布改动：
+仓库 `server/` 与之一一对应（少 data/ 与 log/）。发布改动：
 
 ```bash
 scp server/docker-compose.yml nas:/vol3/1000/HDD2/tool/docker/quoteview-server/
-scp server/server.py nas:/vol3/1000/HDD2/tool/docker/quoteview-server/app/
+scp server/cfg/server.env    nas:/vol3/1000/HDD2/tool/docker/quoteview-server/cfg/
+scp server/scripts/server.py nas:/vol3/1000/HDD2/tool/docker/quoteview-server/scripts/
 ssh nas 'cd /vol3/1000/HDD2/tool/docker/quoteview-server && docker compose up -d --force-recreate'
 ```
 
@@ -53,6 +58,7 @@ location /quoteview/api/ {
 ## 运维
 
 ```bash
-docker logs quoteview-server --tail 50
+ssh nas 'tail -50 /vol3/1000/HDD2/tool/docker/quoteview-server/log/server.log'
+docker logs quoteview-server --tail 50        # 同样内容的 stdout 副本
 curl -s https://nas.pcguan.cn/quoteview/api/status
 ```
