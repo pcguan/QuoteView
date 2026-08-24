@@ -41,7 +41,8 @@ public partial class MainWindow : FluentWindow
     private readonly TencentTrendClient _trendFallback;
     private readonly TrendCache _trendCache;
     private readonly TrendRepository _trendRepo;
-    private TrendSweeper? _trendSweeper;
+    private readonly SnapshotServerClient _snapshotServer;
+    private DispatcherTimer? _syncTimer;
     private readonly UpdateService _updates = new();
     private DispatcherTimer? _updateTimer;
 
@@ -74,6 +75,7 @@ public partial class MainWindow : FluentWindow
         _trendCache = new TrendCache();
         _trendRepo = new TrendRepository(
             _trendClient, new MarketClock(), _trendFallback, _trendCache);
+        _snapshotServer = new SnapshotServerClient(_klineHttp);
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
         // yields a window with no backdrop at all — it renders invisible.
@@ -96,22 +98,17 @@ public partial class MainWindow : FluentWindow
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
 
-            History.Init(_quotes, _trendCache, _vm.Repository);
+            History.Init(_quotes, _trendCache, _vm.Repository, _snapshotServer);
 
-            // After-close snapshot sweep, SH/SZ only. The target list is read on
-            // the UI thread each round — group membership is UI-owned state.
-            _trendSweeper = new TrendSweeper(
-                _trendClient, _trendFallback, _trendCache, new MarketClock(),
-                () => Dispatcher.Invoke(() =>
-                    _quotes is null
-                        ? Array.Empty<Contract>()
-                        : _quotes.Groups
-                            .SelectMany(g => g.Model.Codes)
-                            .Select(code => _vm.Repository.Find(code))
-                            .OfType<Contract>()
-                            .ToArray()));
-            _trendSweeper.Progress += Probe.Log;
-            _trendSweeper.Start();
+            // Groups go to the snapshot server every 5 minutes; the server owns
+            // the after-close sweep for the union of every client's contracts.
+            _ = SyncGroupsAsync();
+            _syncTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromMinutes(5),
+            };
+            _syncTimer.Tick += async (_, _) => await SyncGroupsAsync();
+            _syncTimer.Start();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -147,7 +144,7 @@ public partial class MainWindow : FluentWindow
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
 
-            if (_trendSweeper is not null) await _trendSweeper.DisposeAsync();
+            _syncTimer?.Stop();
             if (_quotes is not null) await _quotes.DisposeAsync();
             _vm.Dispose();
             _klineHttp.Dispose();
@@ -178,6 +175,23 @@ public partial class MainWindow : FluentWindow
             });
         _stealthSettings.Closed += (_, _) => _stealthSettings = null;
         _stealthSettings.Show();
+    }
+
+    /// <summary>
+    /// One groups push to the snapshot server. Timer-driven; every failure is
+    /// silent by design — sync is a convenience, never a dialog.
+    /// </summary>
+    private async Task SyncGroupsAsync()
+    {
+        if (_quotes is null) return;
+
+        var groups = _quotes.Groups
+            .Select(g => ((string)g.Name, (IReadOnlyList<string>)g.Model.Codes.ToArray()))
+            .ToArray();
+        if (groups.Length == 0) return;
+
+        var ok = await _snapshotServer.SyncAsync(groups, CancellationToken.None);
+        Probe.Log($"snapshot sync: groups={groups.Length} ok={ok}");
     }
 
     private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();

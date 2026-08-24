@@ -29,7 +29,7 @@
 
         <TextBlock x:Name="Hint" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="11"
                    Foreground="{StaticResource Faint}"
-                   Text="收盘后自动为全部分组的沪深合约拉取当日分时并保留 7 天；当天的在收盘约 20 分钟后陆续可见。" />
+                   Text="沪深合约的当日分时由服务端在收盘后统一拉取归档；当天的在收盘约半小时后陆续可见。" />
       </StackPanel>
     </Border>
 

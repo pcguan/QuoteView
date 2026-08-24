@@ -16,6 +16,7 @@ public partial class TrendHistoryView : UserControl
     private QuotesViewModel? _vm;
     private TrendCache? _cache;
     private ContractRepository? _contracts;
+    private SnapshotServerClient? _server;
 
     public TrendHistoryView() => InitializeComponent();
 
@@ -25,11 +26,13 @@ public partial class TrendHistoryView : UserControl
         public override string ToString() => Name.Length > 0 ? $"{Code}  {Name}" : Code;
     }
 
-    public void Init(QuotesViewModel vm, TrendCache cache, ContractRepository contracts)
+    public void Init(QuotesViewModel vm, TrendCache cache, ContractRepository contracts,
+        SnapshotServerClient server)
     {
         _vm = vm;
         _cache = cache;
         _contracts = contracts;
+        _server = server;
 
         // ObservableCollection: groups added/renamed later show up on their own.
         GroupBox.ItemsSource = vm.Groups;
@@ -70,42 +73,78 @@ public partial class TrendHistoryView : UserControl
         else ShowEmpty("该分组没有沪深合约（快照仅覆盖沪深交易所）");
     }
 
-    private void CodeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => FillDates();
+    private void CodeBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        _ = FillDatesAsync();
 
-    private void DateBox_DropDownOpened(object? sender, EventArgs e) => FillDates(keepSelection: true);
+    private void DateBox_DropDownOpened(object? sender, EventArgs e) =>
+        _ = FillDatesAsync(keepSelection: true);
 
-    private void FillDates(bool keepSelection = false)
+    /// <summary>
+    /// Guards against a slow /dates answer landing after the user has already
+    /// switched contracts: only the newest request may touch the dropdown.
+    /// </summary>
+    private int _datesRequest;
+
+    private async Task FillDatesAsync(bool keepSelection = false)
     {
-        if (CodeBox.SelectedItem is not CodeItem item || _cache is null)
+        if (CodeBox.SelectedItem is not CodeItem item || _cache is null || _server is null)
         {
             DateBox.ItemsSource = null;
             return;
         }
 
+        var request = ++_datesRequest;
         var previous = keepSelection ? DateBox.SelectedItem as DateOnly? : null;
-        var dates = _cache.Dates(item.Code);
+
+        // Local first so the list is usable immediately; the server's answer is
+        // merged in when (and if) it arrives — offline just means local-only.
+        var local = _cache.Dates(item.Code);
+        var remote = await _server.DatesAsync(item.Code, CancellationToken.None);
+        if (request != _datesRequest) return;
+
+        var dates = local.Concat(remote).Distinct().OrderByDescending(d => d).ToArray();
         DateBox.ItemsSource = dates;
 
-        if (dates.Count == 0)
+        if (dates.Length == 0)
         {
-            ShowEmpty("该合约还没有分时快照（收盘后由后台自动拉取）");
+            ShowEmpty(remote.Count == 0 && local.Count == 0
+                ? "该合约还没有分时快照（收盘后由服务端统一拉取）"
+                : "该合约还没有分时快照");
             return;
         }
 
-        var restored = previous is { } p ? dates.IndexOf(p) : -1;
+        var restored = previous is { } p ? Array.IndexOf(dates, p) : -1;
         DateBox.SelectedIndex = restored >= 0 ? restored : 0;
     }
 
-    private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        _ = LoadSelectedAsync();
+
+    private int _loadRequest;
+
+    private async Task LoadSelectedAsync()
     {
         if (CodeBox.SelectedItem is not CodeItem item || DateBox.SelectedItem is not DateOnly date
-            || _cache is null)
+            || _cache is null || _server is null)
             return;
 
+        var request = ++_loadRequest;
+
+        // Local cache first — every series fetched from the server is written
+        // back into it, so each snapshot crosses the network once per machine.
         var series = _cache.TryLoad(item.Code, date);
         if (series is null)
         {
-            ShowEmpty("快照文件缺失或损坏");
+            ShowEmpty("加载中…");
+            series = await _server.TrendAsync(item.Code, date, CancellationToken.None);
+            if (request != _loadRequest) return;
+
+            if (series is not null) _cache.Save(series, date);
+        }
+
+        if (series is null)
+        {
+            ShowEmpty("该日快照获取失败(服务端不可达或缺失)");
             return;
         }
 
@@ -119,16 +158,5 @@ public partial class TrendHistoryView : UserControl
         Chart.Visibility = Visibility.Collapsed;
         Empty.Text = message;
         Empty.Visibility = Visibility.Visible;
-    }
-}
-
-internal static class DateListExtensions
-{
-    public static int IndexOf(this IReadOnlyList<DateOnly> list, DateOnly value)
-    {
-        for (var i = 0; i < list.Count; i++)
-            if (list[i] == value)
-                return i;
-        return -1;
     }
 }
