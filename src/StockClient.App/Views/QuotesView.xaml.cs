@@ -22,6 +22,7 @@ public partial class QuotesView : UserControl
             if (e.NewValue is QuotesViewModel vm)
             {
                 vm.SuggestionsChanged += has => SuggestPopup.IsOpen = has && CodeBox.IsKeyboardFocusWithin;
+                GroupCol.Width = new GridLength(vm.GroupPaneWidth);   // restore the dragged width
             }
         };
 
@@ -203,6 +204,12 @@ public partial class QuotesView : UserControl
     private void AggEqual_Click(object sender, RoutedEventArgs e)
     {
         if (Vm is { } vm) vm.AggEqualWeight = true;
+    }
+
+    /// <summary>Persists the sidebar width once the splitter drag ends.</summary>
+    private void GroupSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e)
+    {
+        if (Vm is { } vm) vm.GroupPaneWidth = GroupCol.ActualWidth;
     }
 
     private void GroupInPanel_Click(object sender, RoutedEventArgs e)

@@ -14,11 +14,13 @@
   </UserControl.Resources>
   <Grid Margin="16,4,16,8">
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="210" />
+      <!-- Pixel-sized so the splitter drags it directly; loaded/saved via config. -->
+      <ColumnDefinition x:Name="GroupCol" Width="210" MinWidth="170" MaxWidth="480" />
+      <ColumnDefinition Width="Auto" />
       <ColumnDefinition Width="*" />
     </Grid.ColumnDefinitions>
 
-    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,10,0" Padding="0">
+    <Border Grid.Column="0" Style="{StaticResource Card}" Margin="0,0,4,0" Padding="0">
       <DockPanel>
         <Grid DockPanel.Dock="Top" Margin="14,12,10,10">
           <TextBlock Text="分组" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
@@ -56,10 +58,13 @@
           </ListBox.ContextMenu>
           <ListBox.ItemTemplate>
             <DataTemplate>
-              <Grid Height="30">
+              <Grid MinHeight="30">
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0"
                           IsChecked="{Binding InPanel, Mode=TwoWay}" Click="GroupInPanel_Click"
@@ -88,13 +93,19 @@
                 <TextBlock Grid.Column="2" Text="{Binding Name}" VerticalAlignment="Center"
                            Background="Transparent" ToolTip="双击重命名"
                            TextTrimming="CharacterEllipsis" MouseDown="GroupName_MouseDown" />
-                <TextBlock Grid.Column="3" Text="{Binding IndexText}" FontSize="11"
-                           FontFamily="Consolas" VerticalAlignment="Center" Margin="6,0,6,0"
+                <!-- Second line, under the name: keeps the name's full width. -->
+                <TextBlock Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2"
+                           Text="{Binding IndexText}" FontSize="10"
+                           FontFamily="Consolas" Margin="0,0,0,3"
                            ToolTip="该组整体涨跌幅（右键切换 市值加权/等权）">
                   <TextBlock.Style>
                     <Style TargetType="TextBlock">
                       <Setter Property="Foreground" Value="{StaticResource Muted}" />
                       <Style.Triggers>
+                        <!-- No aggregate yet: collapse so the row stays one line. -->
+                        <DataTrigger Binding="{Binding IndexText}" Value="">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
                         <DataTrigger Binding="{Binding IndexSign}" Value="1">
                           <Setter Property="Foreground" Value="#EF5350" />
                         </DataTrigger>
@@ -105,10 +116,10 @@
                     </Style>
                   </TextBlock.Style>
                 </TextBlock>
-                <Border Grid.Column="4" Style="{StaticResource TagChip}" VerticalAlignment="Center">
+                <Border Grid.Column="3" Style="{StaticResource TagChip}" VerticalAlignment="Center">
                   <TextBlock Text="{Binding Count}" FontSize="10" Foreground="{StaticResource Muted}" />
                 </Border>
-                <ui:Button Grid.Column="5" Height="24" Width="26" Padding="0" Margin="2,0,0,0"
+                <ui:Button Grid.Column="4" Height="24" Width="26" Padding="0" Margin="2,0,0,0"
                            Icon="{ui:SymbolIcon Delete24}" Click="RemoveGroup_Click" ToolTip="删除分组" />
               </Grid>
             </DataTemplate>
@@ -117,7 +128,11 @@
       </DockPanel>
     </Border>
 
-    <Grid Grid.Column="1">
+    <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                  Background="Transparent" ShowsPreview="False" Cursor="SizeWE"
+                  DragCompleted="GroupSplitter_DragCompleted" />
+
+    <Grid Grid.Column="2">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
       </Grid.RowDefinitions>

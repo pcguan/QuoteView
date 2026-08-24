@@ -14,6 +14,11 @@ namespace Preview;
 // resources (WPF UI's implicit styles included) and renders them to PNG with
 // RenderTargetBitmap. No desktop session needed, which is the point — SSH lands
 // in session 0 where nothing can be shown.
+public sealed class FakeVm
+{
+    public System.Collections.ObjectModel.ObservableCollection<StockClient.App.ViewModels.GroupRow>? Groups { get; set; }
+}
+
 public static class Program
 {
     [STAThread]
@@ -62,6 +67,28 @@ public static class Program
         typeof(ColorPickerButton).GetMethod("SyncThumbs", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(picker, null);
         Render(body, @"C:\work\preview-popup.png");
+
+        // 3) The group sidebar with aggregate percents: two-line rows, one group
+        // still waiting for its first tick (second line must collapse).
+        var g1 = new StockClient.App.ViewModels.GroupRow(new StockClient.Core.Groups.Group
+            { Id = "a", Name = "自选核心持仓监控", Codes = { "SH600519", "SZ000651" } }) { IndexPercent = 2.09 };
+        var g2 = new StockClient.App.ViewModels.GroupRow(new StockClient.Core.Groups.Group
+            { Id = "b", Name = "半导体", Codes = { "SH688981" } }) { IndexPercent = -1.37, IsActive = true };
+        var g3 = new StockClient.App.ViewModels.GroupRow(new StockClient.Core.Groups.Group
+            { Id = "c", Name = "港美观察" }) ;
+        var quotesView = new StockClient.App.Views.QuotesView
+        {
+            DataContext = new FakeVm
+            {
+                Groups = new System.Collections.ObjectModel.ObservableCollection<StockClient.App.ViewModels.GroupRow> { g1, g2, g3 },
+            },
+            Width = 560, Height = 420,
+        };
+        Render(new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)),
+            Child = quotesView,
+        }, @"C:\work\preview-groups.png");
 
         Console.WriteLine("OK");
     }

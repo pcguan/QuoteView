@@ -954,6 +954,18 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _poller.SetTarget(_activeGroup.Id, merged);
     }
 
+    /// <summary>Sidebar width in pixels; clamped to the XAML column's own bounds.</summary>
+    public double GroupPaneWidth
+    {
+        get => _config.GroupPaneWidth is >= 170 and <= 480 ? _config.GroupPaneWidth : 210;
+        set
+        {
+            if (Math.Abs(_config.GroupPaneWidth - value) < 0.5) return;
+            _config.GroupPaneWidth = value;
+            Save();
+        }
+    }
+
     /// <summary>整体涨跌幅口径：false=流通市值加权（昨收口径）, true=等权平均。</summary>
     public bool AggEqualWeight
     {

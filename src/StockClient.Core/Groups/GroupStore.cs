@@ -318,6 +318,10 @@ public sealed class GroupConfig
     [JsonPropertyName("aggEqual")]
     public bool AggEqualWeight { get; set; }
 
+    /// <summary>Width of the group sidebar, dragged via its splitter. 0 = default.</summary>
+    [JsonPropertyName("paneWidth")]
+    public double GroupPaneWidth { get; set; }
+
     /// <summary>Live-quote column layout. Empty until the user first customises it.</summary>
     [JsonPropertyName("quoteColumns")]
     public List<QuoteColumnState> QuoteColumns { get; set; } = new();
