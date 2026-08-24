@@ -44,6 +44,9 @@
       <TabItem Header="实时行情">
         <views:QuotesView x:Name="Quotes" Margin="-16,0,-16,0" />
       </TabItem>
+      <TabItem Header="历史分时">
+        <views:TrendHistoryView x:Name="History" Margin="-16,0,-16,0" />
+      </TabItem>
       <TabItem Header="资讯">
         <views:BriefView x:Name="Brief" Margin="-16,0,-16,0" />
       </TabItem>

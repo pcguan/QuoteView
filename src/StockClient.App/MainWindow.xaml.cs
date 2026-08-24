@@ -38,7 +38,10 @@ public partial class MainWindow : FluentWindow
     private readonly HttpClient _klineHttp;
     private readonly KlineRepository _klineRepo;
     private readonly EastMoneyTrendClient _trendClient;
+    private readonly TencentTrendClient _trendFallback;
+    private readonly TrendCache _trendCache;
     private readonly TrendRepository _trendRepo;
+    private TrendSweeper? _trendSweeper;
     private readonly UpdateService _updates = new();
     private DispatcherTimer? _updateTimer;
 
@@ -67,8 +70,10 @@ public partial class MainWindow : FluentWindow
         _trendClient = new EastMoneyTrendClient(_klineHttp);
         // Tencent as the backup source: EastMoney throttles trends2 with connection
         // resets, which used to leave the panel thumbnail simply blank.
+        _trendFallback = new TencentTrendClient(_klineHttp);
+        _trendCache = new TrendCache();
         _trendRepo = new TrendRepository(
-            _trendClient, new MarketClock(), new TencentTrendClient(_klineHttp), new TrendCache());
+            _trendClient, new MarketClock(), _trendFallback, _trendCache);
 
         // Mica needs Windows 11 (build 22000+). Asking for it on Windows 10
         // yields a window with no backdrop at all — it renders invisible.
@@ -90,6 +95,23 @@ public partial class MainWindow : FluentWindow
             // can search by name without a second data source.
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
             Quotes.DataContext = _quotes;
+
+            History.Init(_quotes, _trendCache, _vm.Repository);
+
+            // After-close snapshot sweep, SH/SZ only. The target list is read on
+            // the UI thread each round — group membership is UI-owned state.
+            _trendSweeper = new TrendSweeper(
+                _trendClient, _trendFallback, _trendCache, new MarketClock(),
+                () => Dispatcher.Invoke(() =>
+                    _quotes is null
+                        ? Array.Empty<Contract>()
+                        : _quotes.Groups
+                            .SelectMany(g => g.Model.Codes)
+                            .Select(code => _vm.Repository.Find(code))
+                            .OfType<Contract>()
+                            .ToArray()));
+            _trendSweeper.Progress += Probe.Log;
+            _trendSweeper.Start();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -125,6 +147,7 @@ public partial class MainWindow : FluentWindow
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
 
+            if (_trendSweeper is not null) await _trendSweeper.DisposeAsync();
             if (_quotes is not null) await _quotes.DisposeAsync();
             _vm.Dispose();
             _klineHttp.Dispose();

@@ -86,6 +86,20 @@ public sealed class TrendCache
         Prune(series.Code);
     }
 
+    /// <summary>Snapshot dates on disk for one contract, newest first.</summary>
+    public IReadOnlyList<DateOnly> Dates(string code)
+    {
+        var dir = DirectoryFor(code);
+        if (!Directory.Exists(dir)) return Array.Empty<DateOnly>();
+
+        return Directory.GetFiles(dir, "*.json")
+            .Select(Path.GetFileNameWithoutExtension)
+            .Select(n => DateOnly.TryParseExact(n, "yyyy-MM-dd", out var d) ? d : (DateOnly?)null)
+            .OfType<DateOnly>()
+            .OrderByDescending(d => d)
+            .ToArray();
+    }
+
     /// <summary>Keeps only the newest <see cref="RetainDays"/> dated files for one contract.</summary>
     public void Prune(string code)
     {

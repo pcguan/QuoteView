@@ -90,6 +90,35 @@ public static class Program
             Child = quotesView,
         }, @"C:\work\preview-groups.png");
 
+        // 4) The history page: bar layout untouched (empty state), then the same
+        // page with a series pushed in through its own internals.
+        var history = new StockClient.App.Views.TrendHistoryView { Width = 980, Height = 430 };
+        Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history },
+            @"C:\work\preview-history-empty.png");
+
+        var pts = new List<StockClient.Core.Quotes.TrendPoint>();
+        for (var i = 0; i < 240; i++)
+        {
+            var t = new DateTime(2026, 8, 21, 9, 30, 0).AddMinutes(i <= 120 ? i : i + 90);
+            var price = 100 + 3 * Math.Sin(i / 24.0) + i * 0.004;
+            pts.Add(new StockClient.Core.Quotes.TrendPoint
+            {
+                Time = t.ToString("yyyy-MM-dd HH:mm"),
+                Price = Math.Round(price, 2),
+                AvgPrice = Math.Round(100 + 1.5 * Math.Sin(i / 40.0), 2),
+                Volume = 5000 + 4000 * Math.Abs(Math.Sin(i / 9.0)),
+            });
+        }
+        var fakeSeries = new StockClient.Core.Quotes.TrendSeries
+            { Code = "SH600519", Name = "贵州茅台", PreClose = 100.5, Points = pts };
+
+        var history2 = new StockClient.App.Views.TrendHistoryView { Width = 980, Height = 430 };
+        var chartField = typeof(StockClient.App.Views.TrendHistoryView)
+            .GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        ((StockClient.App.Views.TrendChart)chartField.GetValue(history2)!).SetSeries(fakeSeries);
+        Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history2 },
+            @"C:\work\preview-history.png");
+
         Console.WriteLine("OK");
     }
 
