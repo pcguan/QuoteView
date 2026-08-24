@@ -1215,15 +1215,23 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(groups, list) or len(groups) > 200:
                 return self._bad("bad groups")
             at = int(doc.get("at") or 0)
-            clean = []
-            for g in groups[:200]:
-                codes = [str(c).upper() for c in (g.get("codes") or [])[:2000]]
-                clean.append({"name": str(g.get("name") or "")[:64], "codes": codes,
-                              "panel": bool(g.get("panel", True))})
             with _lock:
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
+                # Old clients (≤1.0.52) send no "panel" field. Defaulting those
+                # to true silently wiped the rotation flags every 5 minutes —
+                # instead, a missing field inherits the stored flag by group
+                # name, so an outdated machine can't destroy what newer ones set.
+                stored_panel = {g.get("name"): bool(g.get("panel", True))
+                                for g in account.get("groups") or []}
+                clean = []
+                for g in groups[:200]:
+                    name = str(g.get("name") or "")[:64]
+                    codes = [str(c).upper() for c in (g.get("codes") or [])[:2000]]
+                    panel = (bool(g["panel"]) if "panel" in g
+                             else stored_panel.get(name, True))
+                    clean.append({"name": name, "codes": codes, "panel": panel})
                 # Arrival order IS the order: every push overwrites. Multiple
                 # clients racing is resolved by "last push wins", per design.
                 account["groups"] = clean
