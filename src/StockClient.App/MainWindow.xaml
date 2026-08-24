@@ -26,6 +26,9 @@
       </ui:TitleBar.Icon>
       <ui:TitleBar.Header>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,140,0">
+          <ui:Button x:Name="AccountButton" Height="26" Padding="8,0" Margin="0,0,8,0"
+                     Icon="{ui:SymbolIcon Person24}" Content="登录" FontSize="11"
+                     Click="Account_Click" ToolTip="账户：多端同步分组、查询服务端历史分时" />
           <ui:Button x:Name="UpdateButton" Height="26" Padding="8,0" Margin="0,0,8,0"
                      Icon="{ui:SymbolIcon ArrowSync24}" Content="检查更新" FontSize="11"
                      Click="CheckUpdate_Click" ToolTip="检查 GitHub 上是否有新版本" />

@@ -3,12 +3,16 @@
 
 Runs on the NAS behind nginx (/quoteview/api/ -> 127.0.0.1:8388). Three jobs:
 
-1. Hand each client a persistent id (POST /register).
-2. Accept each client's groups+contracts every 5 minutes (POST /sync) and keep
-   the latest copy per client on disk.
+1. Account registration and login (POST /register, POST /login): interaction
+   is account-level, not per-installation — several machines logging into the
+   same account share one set of groups. Passwords are PBKDF2-hashed; logins
+   mint bearer tokens that survive server restarts.
+2. Accept the account's groups+contracts every 5 minutes (POST /sync, Bearer
+   auth) and keep the latest copy per account on disk.
 3. After the SH/SZ close, fetch the day's intraday trend for the UNION of every
-   client's SH/SZ contracts — sequential, throttled — and persist one JSON per
-   contract per day. Clients query it back (GET /dates, GET /trend).
+   account's SH/SZ contracts — sequential, throttled, dual-source — and persist
+   one JSON per contract per day. Clients query it back (GET /dates, GET /trend,
+   Bearer auth).
 
 Stored trend files use exactly the C# client's TrendSeries JSON shape
 (Code/Name/PreClose/Points[{Time,Price,AvgPrice,Volume}]), so the client
@@ -17,13 +21,14 @@ deserializes them with the same code it uses for its own local cache.
 Stdlib only — the container just needs python3.
 """
 
+import hashlib
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import urllib.request
-import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -38,13 +43,69 @@ CLIENT_TTL_DAYS = 14
 
 CN = timezone(timedelta(hours=8))  # no DST in China
 CODE_RE = re.compile(r"^(SH|SZ)\d{6}$")
-ID_RE = re.compile(r"^[0-9a-f]{32}$")
+USER_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
+TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 
-CLIENTS = os.path.join(DATA, "clients")
+ACCOUNTS = os.path.join(DATA, "accounts")
 TRENDS = os.path.join(DATA, "trends")
 STATE = os.path.join(DATA, "state.json")
 
+MAX_ACCOUNTS = 10          # personal server; also caps drive-by registrations
+MAX_TOKENS = 10            # devices per account; oldest token drops off
+PBKDF2_ITERS = 100_000
+
 _lock = threading.Lock()
+_token_cache = {}          # token -> username, rebuilt on miss
+
+
+def hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
+                               PBKDF2_ITERS).hex()
+
+
+def account_path(user):
+    return os.path.join(ACCOUNTS, user + ".json")
+
+
+def load_account(user):
+    try:
+        with open(account_path(user)) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_account(user, doc):
+    os.makedirs(ACCOUNTS, exist_ok=True)
+    path = account_path(user)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(doc, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def user_for_token(token):
+    """Bearer token -> username, or None. Cached; a miss rescans the accounts
+    directory once (a handful of files) before giving up."""
+    if not TOKEN_RE.match(token or ""):
+        return None
+    user = _token_cache.get(token)
+    if user:
+        doc = load_account(user)
+        if doc and token in doc.get("tokens", []):
+            return user
+        _token_cache.pop(token, None)
+    if not os.path.isdir(ACCOUNTS):
+        return None
+    for name in os.listdir(ACCOUNTS):
+        if not name.endswith(".json"):
+            continue
+        candidate = name[:-5]
+        doc = load_account(candidate)
+        if doc and token in doc.get("tokens", []):
+            _token_cache[token] = candidate
+            return candidate
+    return None
 
 
 def log(msg):
@@ -107,13 +168,13 @@ def prune(code):
 
 
 def union_codes():
-    """SH/SZ codes across every client synced within the TTL, deduped."""
+    """SH/SZ codes across every account synced within the TTL, deduped."""
     cutoff = time.time() - CLIENT_TTL_DAYS * 86400
     seen = set()
-    if not os.path.isdir(CLIENTS):
+    if not os.path.isdir(ACCOUNTS):
         return []
-    for name in os.listdir(CLIENTS):
-        path = os.path.join(CLIENTS, name)
+    for name in os.listdir(ACCOUNTS):
+        path = os.path.join(ACCOUNTS, name)
         if not name.endswith(".json") or os.path.getmtime(path) < cutoff:
             continue
         try:
@@ -327,17 +388,30 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # default logger spams stderr per request
         pass
 
+    def _auth(self):
+        """The account behind the Bearer token, or None (401 already sent)."""
+        header = self.headers.get("Authorization") or ""
+        token = header[7:] if header.startswith("Bearer ") else ""
+        user = user_for_token(token)
+        if user is None:
+            self._bad("unauthorized", 401)
+        return user
+
     def do_GET(self):
         url = urlparse(self.path)
         q = parse_qs(url.query)
 
         if url.path == "/dates":
+            if self._auth() is None:
+                return
             code = (q.get("code") or [""])[0].upper()
             if not CODE_RE.match(code):
                 return self._bad("bad code")
             return self._json({"dates": trend_dates(code)})
 
         if url.path == "/trend":
+            if self._auth() is None:
+                return
             code = (q.get("code") or [""])[0].upper()
             day = (q.get("date") or [""])[0]
             if not CODE_RE.match(code) or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
@@ -356,9 +430,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/status":
             state = load_state()
-            clients = len([n for n in os.listdir(CLIENTS)]) if os.path.isdir(CLIENTS) else 0
+            accounts = (len([n for n in os.listdir(ACCOUNTS) if n.endswith(".json")])
+                        if os.path.isdir(ACCOUNTS) else 0)
             return self._json({
-                "clients": clients,
+                "accounts": accounts,
                 "union": len(union_codes()),
                 "last_sweep": state.get("last_sweep"),
                 "holiday": state.get("holiday"),
@@ -373,21 +448,72 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b""
 
         if self.path == "/register":
-            cid = uuid.uuid4().hex
-            os.makedirs(CLIENTS, exist_ok=True)
-            with open(os.path.join(CLIENTS, cid + ".json"), "w") as f:
-                json.dump({"groups": [], "registered": f"{datetime.now(CN):%F %T}"}, f)
-            log(f"register {cid}")
-            return self._json({"id": cid})
-
-        if self.path == "/sync":
             try:
                 doc = json.loads(raw)
             except Exception:
                 return self._bad("bad json")
-            cid = str(doc.get("id") or "")
-            if not ID_RE.match(cid):
-                return self._bad("bad id")
+            user = str(doc.get("username") or "")
+            password = str(doc.get("password") or "")
+            if not USER_RE.match(user):
+                return self._bad("用户名需为 3~32 位字母/数字/下划线")
+            if len(password) < 6:
+                return self._bad("密码至少 6 位")
+            with _lock:
+                if os.path.exists(account_path(user)):
+                    return self._bad("用户名已存在", 409)
+                existing = (len([n for n in os.listdir(ACCOUNTS) if n.endswith(".json")])
+                            if os.path.isdir(ACCOUNTS) else 0)
+                if existing >= MAX_ACCOUNTS:
+                    return self._bad("注册已关闭", 403)
+                salt = secrets.token_hex(16)
+                token = secrets.token_hex(32)
+                save_account(user, {
+                    "auth": {"salt": salt, "hash": hash_pw(password, salt),
+                             "iters": PBKDF2_ITERS},
+                    "tokens": [token],
+                    "groups": [],
+                    "created": f"{datetime.now(CN):%F %T}",
+                })
+            _token_cache[token] = user
+            log(f"register account {user}")
+            return self._json({"token": token, "username": user})
+
+        if self.path == "/login":
+            try:
+                doc = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
+            user = str(doc.get("username") or "")
+            password = str(doc.get("password") or "")
+            account = load_account(user) if USER_RE.match(user) else None
+            if account is None:
+                return self._bad("用户名或密码错误", 401)
+            auth = account.get("auth") or {}
+            expect = auth.get("hash") or ""
+            got = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                                      bytes.fromhex(auth.get("salt") or "00"),
+                                      int(auth.get("iters") or PBKDF2_ITERS)).hex()
+            if not secrets.compare_digest(expect, got):
+                return self._bad("用户名或密码错误", 401)
+            token = secrets.token_hex(32)
+            with _lock:
+                account = load_account(user) or account
+                tokens = (account.get("tokens") or [])[-(MAX_TOKENS - 1):]
+                tokens.append(token)
+                account["tokens"] = tokens
+                save_account(user, account)
+            _token_cache[token] = user
+            log(f"login {user}")
+            return self._json({"token": token, "username": user})
+
+        if self.path == "/sync":
+            user = self._auth()
+            if user is None:
+                return
+            try:
+                doc = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
             groups = doc.get("groups")
             if not isinstance(groups, list) or len(groups) > 200:
                 return self._bad("bad groups")
@@ -395,14 +521,13 @@ class Handler(BaseHTTPRequestHandler):
             for g in groups[:200]:
                 codes = [str(c).upper() for c in (g.get("codes") or [])[:2000]]
                 clean.append({"name": str(g.get("name") or "")[:64], "codes": codes})
-            os.makedirs(CLIENTS, exist_ok=True)
-            path = os.path.join(CLIENTS, cid + ".json")
             with _lock:
-                doc_out = {"groups": clean, "synced": f"{datetime.now(CN):%F %T}"}
-                tmp = path + ".tmp"
-                with open(tmp, "w") as f:
-                    json.dump(doc_out, f, ensure_ascii=False)
-                os.replace(tmp, path)
+                account = load_account(user)
+                if account is None:
+                    return self._bad("unauthorized", 401)
+                account["groups"] = clean
+                account["synced"] = f"{datetime.now(CN):%F %T}"
+                save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
 
@@ -411,7 +536,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     os.makedirs(DATA, exist_ok=True)
-    os.makedirs(CLIENTS, exist_ok=True)
+    os.makedirs(ACCOUNTS, exist_ok=True)
     os.makedirs(TRENDS, exist_ok=True)
 
     threading.Thread(target=scheduler, daemon=True).start()

@@ -119,6 +119,20 @@ public static class Program
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history2 },
             @"C:\work\preview-history.png");
 
+        // 5) The login dialog, form state.
+        var session = new StockClient.App.Services.AccountSession(
+            new StockClient.Core.Quotes.AccountClient(new System.Net.Http.HttpClient()),
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "qv-preview-account.json"));
+        var login = new StockClient.App.Views.LoginWindow(session);
+        var loginContent = (FrameworkElement)login.Content;
+        login.Content = null;
+        Render(new Border
+        {
+            Width = 340,
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)),
+            Child = loginContent,
+        }, @"C:\work\preview-login.png");
+
         Console.WriteLine("OK");
     }
 

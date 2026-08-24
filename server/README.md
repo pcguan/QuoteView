@@ -40,13 +40,14 @@ location /quoteview/api/ {
 
 ## 接口
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | /register | 返回 `{"id": …}`，客户端持久化 |
-| POST | /sync | `{"id", "groups":[{"name","codes":[]}]}`，5 分钟一次 |
-| GET | /dates?code=SH600519 | 该合约已归档的日期 |
-| GET | /trend?code=…&date=YYYY-MM-DD | 单日分时（客户端 TrendSeries 同构 JSON） |
-| GET | /status | 客户端数/合约并集/上次扫描 |
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| POST | /register | - | `{"username","password"}` → `{"token"}`（注册即登录；账户数上限 10） |
+| POST | /login | - | 同上；密码 PBKDF2-SHA256(10万次) 存储，令牌每账户保留最近 10 个 |
+| POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，5 分钟一次，按账户存 |
+| GET | /dates?code=SH600519 | Bearer | 该合约已归档的日期 |
+| GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
+| GET | /status | - | 账户数/合约并集/上次扫描 |
 
 ## 行为
 

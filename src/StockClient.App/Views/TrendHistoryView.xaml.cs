@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using StockClient.App.ViewModels;
 using StockClient.Core.Contracts;
+using StockClient.App.Services;
 using StockClient.Core.Quotes;
 
 namespace StockClient.App.Views;
@@ -16,7 +17,7 @@ public partial class TrendHistoryView : UserControl
     private QuotesViewModel? _vm;
     private TrendCache? _cache;
     private ContractRepository? _contracts;
-    private SnapshotServerClient? _server;
+    private AccountSession? _session;
 
     public TrendHistoryView() => InitializeComponent();
 
@@ -27,12 +28,12 @@ public partial class TrendHistoryView : UserControl
     }
 
     public void Init(QuotesViewModel vm, TrendCache cache, ContractRepository contracts,
-        SnapshotServerClient server)
+        AccountSession session)
     {
         _vm = vm;
         _cache = cache;
         _contracts = contracts;
-        _server = server;
+        _session = session;
 
         // ObservableCollection: groups added/renamed later show up on their own.
         GroupBox.ItemsSource = vm.Groups;
@@ -87,7 +88,7 @@ public partial class TrendHistoryView : UserControl
 
     private async Task FillDatesAsync(bool keepSelection = false)
     {
-        if (CodeBox.SelectedItem is not CodeItem item || _cache is null || _server is null)
+        if (CodeBox.SelectedItem is not CodeItem item || _cache is null || _session is null)
         {
             DateBox.ItemsSource = null;
             return;
@@ -99,7 +100,7 @@ public partial class TrendHistoryView : UserControl
         // Local first so the list is usable immediately; the server's answer is
         // merged in when (and if) it arrives — offline just means local-only.
         var local = _cache.Dates(item.Code);
-        var remote = await _server.DatesAsync(item.Code, CancellationToken.None);
+        var remote = await _session.DatesAsync(item.Code);
         if (request != _datesRequest) return;
 
         var dates = local.Concat(remote).Distinct().OrderByDescending(d => d).ToArray();
@@ -107,9 +108,9 @@ public partial class TrendHistoryView : UserControl
 
         if (dates.Length == 0)
         {
-            ShowEmpty(remote.Count == 0 && local.Count == 0
+            ShowEmpty(_session.IsSignedIn
                 ? "该合约还没有分时快照（收盘后由服务端统一拉取）"
-                : "该合约还没有分时快照");
+                : "本地无快照；登录后可查询服务端归档（右上角「登录」）");
             return;
         }
 
@@ -125,7 +126,7 @@ public partial class TrendHistoryView : UserControl
     private async Task LoadSelectedAsync()
     {
         if (CodeBox.SelectedItem is not CodeItem item || DateBox.SelectedItem is not DateOnly date
-            || _cache is null || _server is null)
+            || _cache is null || _session is null)
             return;
 
         var request = ++_loadRequest;
@@ -136,7 +137,7 @@ public partial class TrendHistoryView : UserControl
         if (series is null)
         {
             ShowEmpty("加载中…");
-            series = await _server.TrendAsync(item.Code, date, CancellationToken.None);
+            series = await _session.TrendAsync(item.Code, date);
             if (request != _loadRequest) return;
 
             if (series is not null) _cache.Save(series, date);
@@ -144,7 +145,7 @@ public partial class TrendHistoryView : UserControl
 
         if (series is null)
         {
-            ShowEmpty("该日快照获取失败(服务端不可达或缺失)");
+            ShowEmpty(_session.IsSignedIn ? "该日快照获取失败(服务端不可达或缺失)" : "本地无此日快照；登录后可从服务端获取");
             return;
         }
 
