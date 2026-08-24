@@ -913,7 +913,7 @@ function passwd(u){
 function del(u){ if (confirm(`确认删除账户 ${u}？其分组与设置数据将一并删除。`)) act('delete', {username:u}); }
 
 boot();
-setInterval(() => { if ($('console-view').style.display !== 'none') refresh(); }, 30000);
+setInterval(() => { if ($('console-view').style.display !== 'none') refresh(); }, 10000);
 </script></html>"""
 
 

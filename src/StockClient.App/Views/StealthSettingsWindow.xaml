@@ -9,14 +9,17 @@
     <TextBlock Text="模板" Foreground="#EDF1F7" Margin="0,0,0,6" />
     <Grid Margin="0,0,0,14">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+        <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
       </Grid.ColumnDefinitions>
       <ComboBox x:Name="TemplateBox" Grid.Column="0"
                 SelectionChanged="TemplateBox_SelectionChanged" />
-      <Button Grid.Column="1" Content="另存为…" Margin="6,0,0,0" Click="TemplateSave_Click"
-              ToolTip="把当前面板设置保存为一个新模板" />
-      <Button Grid.Column="2" Content="删除" Margin="6,0,0,0" Click="TemplateDelete_Click"
-              ToolTip="删除当前选中的模板" />
+      <Button Grid.Column="1" Content="新建" Margin="6,0,0,0" Click="TemplateNew_Click"
+              ToolTip="以默认配置新建一个模板（白字、红涨绿跌），编辑后点「保存」生效" />
+      <Button x:Name="TemplateSaveButton" Grid.Column="2" Content="保存" Margin="6,0,0,0"
+              Click="TemplateSave_Click" IsEnabled="False"
+              ToolTip="保存对该模板的修改并应用到面板" />
+      <Button x:Name="TemplateDeleteButton" Grid.Column="3" Content="删除" Margin="6,0,0,0"
+              Click="TemplateDelete_Click" IsEnabled="False" ToolTip="删除当前选中的模板" />
     </Grid>
 
     <Grid Margin="0,0,0,6">
