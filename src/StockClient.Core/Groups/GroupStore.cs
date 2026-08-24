@@ -310,6 +310,14 @@ public sealed class GroupConfig
     [JsonPropertyName("activeGroupId")]
     public string? ActiveGroupId { get; set; }
 
+    /// <summary>
+    /// How each group's aggregate move (整体涨跌幅) is weighted. False = free-float
+    /// cap weighted at yesterday's close, the CSI-index method; true = equal
+    /// weight, "the average performance of these contracts".
+    /// </summary>
+    [JsonPropertyName("aggEqual")]
+    public bool AggEqualWeight { get; set; }
+
     /// <summary>Live-quote column layout. Empty until the user first customises it.</summary>
     [JsonPropertyName("quoteColumns")]
     public List<QuoteColumnState> QuoteColumns { get; set; } = new();

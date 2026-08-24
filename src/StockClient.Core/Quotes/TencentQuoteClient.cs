@@ -23,11 +23,37 @@ public sealed class TencentQuoteClient
         GbkText.EnsureRegistered();
     }
 
+    /// <summary>
+    /// Codes per request. The endpoint itself has no contract-count cap — the
+    /// binding limit is the URL: measured 2026-08-24, 850 codes (7671-byte URL)
+    /// returned complete in 429ms while 1000 codes (9021 bytes) got HTTP 414,
+    /// i.e. an 8KB request-line cap ≈ 900 A-share codes. 800 leaves margin for
+    /// the slightly longer HK/US/KR code forms.
+    /// </summary>
+    private const int ChunkSize = 800;
+
     public async Task<IReadOnlyList<Quote>> GetQuotesAsync(
         IReadOnlyList<string> codes, CancellationToken cancellationToken)
     {
         if (codes.Count == 0) return Array.Empty<Quote>();
+        if (codes.Count <= ChunkSize) return await FetchAsync(codes, cancellationToken);
 
+        // Above the URL limit: sequential chunks, merged in order. Sequential on
+        // purpose — the 1s cadence already tolerates one slow request, and firing
+        // chunks in parallel is the kind of burst that draws rate limiting.
+        var all = new List<Quote>(codes.Count);
+        for (var offset = 0; offset < codes.Count; offset += ChunkSize)
+        {
+            var chunk = codes.Skip(offset).Take(ChunkSize).ToArray();
+            all.AddRange(await FetchAsync(chunk, cancellationToken));
+        }
+
+        return all;
+    }
+
+    private async Task<IReadOnlyList<Quote>> FetchAsync(
+        IReadOnlyList<string> codes, CancellationToken cancellationToken)
+    {
         var apiCodes = codes.Select(ToApiCode).ToArray();
         var url = "https://qt.gtimg.cn/q=" + string.Join(",", apiCodes);
 

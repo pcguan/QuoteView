@@ -187,6 +187,24 @@ public partial class QuotesView : UserControl
     /// the model; persist it, and mark the click handled so it doesn't also select
     /// (and thereby activate) the group.
     /// </summary>
+    // The weighting toggle behaves like radio buttons: the menu reflects the
+    // current mode on open, and clicking either side sets it outright.
+    private void AggMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        AggCapItem.IsChecked = Vm is { AggEqualWeight: false };
+        AggEqualItem.IsChecked = Vm is { AggEqualWeight: true };
+    }
+
+    private void AggCap_Click(object sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm) vm.AggEqualWeight = false;
+    }
+
+    private void AggEqual_Click(object sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm) vm.AggEqualWeight = true;
+    }
+
     private void GroupInPanel_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;

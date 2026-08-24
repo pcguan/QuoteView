@@ -39,19 +39,27 @@
           </Grid>
           <TextBlock Margin="14,4,14,12" FontSize="10"
                      Foreground="{StaticResource Faint}" TextWrapping="Wrap"
-                     Text="只有激活的分组会轮询行情。双击重命名，拖拽排序。" />
+                     Text="每组显示整体涨跌幅（右键切换加权口径）；表格只展示激活分组。双击重命名，拖拽排序。" />
         </StackPanel>
         <ListBox x:Name="GroupList" ItemsSource="{Binding Groups}"
                  Background="Transparent" BorderThickness="0"
                  HorizontalContentAlignment="Stretch"
                  SelectionChanged="GroupList_SelectionChanged"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ContextMenu>
+            <ContextMenu Opened="AggMenu_Opened">
+              <MenuItem x:Name="AggCapItem" Header="整体涨跌幅：市值加权（昨收口径）"
+                        IsCheckable="True" Click="AggCap_Click" />
+              <MenuItem x:Name="AggEqualItem" Header="整体涨跌幅：等权平均"
+                        IsCheckable="True" Click="AggEqual_Click" />
+            </ContextMenu>
+          </ListBox.ContextMenu>
           <ListBox.ItemTemplate>
             <DataTemplate>
               <Grid Height="30">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,6,0"
                           IsChecked="{Binding InPanel, Mode=TwoWay}" Click="GroupInPanel_Click"
@@ -80,10 +88,27 @@
                 <TextBlock Grid.Column="2" Text="{Binding Name}" VerticalAlignment="Center"
                            Background="Transparent" ToolTip="双击重命名"
                            TextTrimming="CharacterEllipsis" MouseDown="GroupName_MouseDown" />
-                <Border Grid.Column="3" Style="{StaticResource TagChip}" VerticalAlignment="Center">
+                <TextBlock Grid.Column="3" Text="{Binding IndexText}" FontSize="11"
+                           FontFamily="Consolas" VerticalAlignment="Center" Margin="6,0,6,0"
+                           ToolTip="该组整体涨跌幅（右键切换 市值加权/等权）">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Foreground" Value="{StaticResource Muted}" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IndexSign}" Value="1">
+                          <Setter Property="Foreground" Value="#EF5350" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IndexSign}" Value="-1">
+                          <Setter Property="Foreground" Value="#26A69A" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+                <Border Grid.Column="4" Style="{StaticResource TagChip}" VerticalAlignment="Center">
                   <TextBlock Text="{Binding Count}" FontSize="10" Foreground="{StaticResource Muted}" />
                 </Border>
-                <ui:Button Grid.Column="4" Height="24" Width="26" Padding="0" Margin="2,0,0,0"
+                <ui:Button Grid.Column="5" Height="24" Width="26" Padding="0" Margin="2,0,0,0"
                            Icon="{ui:SymbolIcon Delete24}" Click="RemoveGroup_Click" ToolTip="删除分组" />
               </Grid>
             </DataTemplate>

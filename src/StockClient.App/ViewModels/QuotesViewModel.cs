@@ -275,6 +275,40 @@ public sealed class GroupRow : ObservableObject
     }
 
     public void RefreshCount() => Count = Model.Codes.Count;
+
+    private double? _indexPercent;
+    private string _indexText = "";
+    private int _indexSign;
+
+    /// <summary>
+    /// The group's aggregate move (整体涨跌幅), recomputed by the view model on
+    /// every poll tick. Null until the first tick covering this group lands.
+    /// </summary>
+    public double? IndexPercent
+    {
+        get => _indexPercent;
+        set
+        {
+            if (!Set(ref _indexPercent, value)) return;
+            IndexText = value is { } v
+                ? v.ToString("+0.00;-0.00;0.00", System.Globalization.CultureInfo.InvariantCulture) + "%"
+                : "";
+            IndexSign = value is { } x ? Math.Sign(Math.Round(x, 2)) : 0;
+        }
+    }
+
+    public string IndexText
+    {
+        get => _indexText;
+        private set => Set(ref _indexText, value);
+    }
+
+    /// <summary>1 up / -1 down / 0 flat-or-unknown, for the list's colour triggers.</summary>
+    public int IndexSign
+    {
+        get => _indexSign;
+        private set => Set(ref _indexSign, value);
+    }
 }
 
 public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
@@ -451,9 +485,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         Groups.Remove(group);
 
         if (ReferenceEquals(_activeGroup, group))
+        {
             SetActive(Groups.Count == 0 ? null : Groups[Math.Min(index, Groups.Count - 1)]);
+        }
         else
+        {
             Save();
+            // Its codes must leave the merged poll too — nothing else rebuilds
+            // the target when a background group goes away.
+            RefreshPollTarget();
+        }
     }
 
     public void CommitRename() => Save();
@@ -692,8 +733,10 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         Save();
 
         // Only a move changes what this group shows; a copy would just make the
-        // list flash for nothing.
+        // list flash for nothing. Both change group membership, so the merged
+        // poll target is refreshed either way (RebuildRows does it for the move).
         if (move) RebuildRows();
+        else RefreshPollTarget();
     }
 
     /// <summary>This contract's note, empty when it has none.</summary>
@@ -763,7 +806,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         Status = Quotes.Count == 0 ? "该分组还没有合约" : "等待行情…";
         _stealthIndex = 0;
         StealthTick?.Invoke(StealthRows());
-        _poller.SetTarget(_activeGroup.Id, _activeGroup.Model.Codes);
+        RefreshPollTarget();
         RefreshExtraPolling();
         ApplyBaselines();
         _ = RefreshBaselinesAsync();
@@ -872,6 +915,103 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         row.SetMeta(contract.Industry, contract.Region, contract.Concepts);
     }
 
+    /// <summary>
+    /// Latest usable quote per code across ALL groups — what the per-group
+    /// aggregate is computed from. Codes only ever accumulate; a contract removed
+    /// from every group just stops being requested and its stale entry stops
+    /// being read, which is cheaper than reference-counting removals.
+    /// </summary>
+    private readonly Dictionary<string, (double Pct, double FloatCap)> _agg =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Points the poller at the active group's codes PLUS every other group's,
+    /// deduplicated — the active group still drives the table, the rest feed the
+    /// per-group aggregates. One batched request per second either way (the
+    /// client chunks above 800 codes, the measured URL limit).
+    /// </summary>
+    private void RefreshPollTarget()
+    {
+        if (_activeGroup is null)
+        {
+            _poller.SetTarget(null, null);
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<string>();
+
+        foreach (var code in _activeGroup.Model.Codes.Where(CodeMapper.IsValid))
+            if (seen.Add(code)) merged.Add(code);
+
+        foreach (var group in Groups)
+        {
+            if (ReferenceEquals(group, _activeGroup)) continue;
+            foreach (var code in group.Model.Codes.Where(CodeMapper.IsValid))
+                if (seen.Add(code)) merged.Add(code);
+        }
+
+        _poller.SetTarget(_activeGroup.Id, merged);
+    }
+
+    /// <summary>整体涨跌幅口径：false=流通市值加权（昨收口径）, true=等权平均。</summary>
+    public bool AggEqualWeight
+    {
+        get => _config.AggEqualWeight;
+        set
+        {
+            if (_config.AggEqualWeight == value) return;
+            _config.AggEqualWeight = value;
+            Save();
+            RecomputeGroupIndices();
+        }
+    }
+
+    /// <summary>
+    /// One group's aggregate move over its members' latest quotes.
+    ///
+    /// Cap mode follows the CSI index method reduced to a single day: weight each
+    /// contract by its float cap AT YESTERDAY'S CLOSE — today's cap divided back
+    /// by (1+pct) — because weighting by the live cap lets a riser inflate its
+    /// own weight. Suspended contracts ride along at 0% like real indices keep
+    /// them at last price; contracts with no quote yet or no cap fall back to the
+    /// members' average weight so one HK/US line doesn't vanish from the basket.
+    /// </summary>
+    private double? GroupIndex(GroupRow group)
+    {
+        var pcts = new List<double>();
+        var caps = new List<double>();   // 0 = unknown, resolved to the average below
+
+        foreach (var code in group.Model.Codes)
+        {
+            if (!_agg.TryGetValue(code, out var q)) continue;
+            pcts.Add(q.Pct);
+            caps.Add(q.FloatCap > 0 ? q.FloatCap / (1 + q.Pct / 100) : 0);
+        }
+
+        if (pcts.Count == 0) return null;
+        if (AggEqualWeight) return pcts.Average();
+
+        var known = caps.Where(c => c > 0).ToArray();
+        if (known.Length == 0) return pcts.Average();   // no caps at all: equal weight
+
+        var fallback = known.Average();
+        double num = 0, den = 0;
+        for (var i = 0; i < pcts.Count; i++)
+        {
+            var w = caps[i] > 0 ? caps[i] : fallback;
+            num += w * pcts[i];
+            den += w;
+        }
+
+        return den > 0 ? num / den : null;
+    }
+
+    private void RecomputeGroupIndices()
+    {
+        foreach (var group in Groups) group.IndexPercent = GroupIndex(group);
+    }
+
     private void OnTick(QuoteTick tick)
     {
         // The poller runs off the UI thread; marshal before touching bound state.
@@ -889,8 +1029,15 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
                 if (!row.MetaResolved) FillMeta(row);
             }
 
+            foreach (var quote in tick.Quotes)
+            {
+                if (quote.IsMissing || quote.Now <= 0) continue;
+                _agg[quote.Code] = (quote.Percent, quote.FloatCap ?? 0);
+            }
+            RecomputeGroupIndices();
+
             Error = "";
-            Status = $"{tick.At:HH:mm:ss} · 腾讯批量 · {tick.LatencyMs}ms · {tick.Quotes.Count} 个合约/请求";
+            Status = $"{tick.At:HH:mm:ss} · 腾讯批量 · {tick.LatencyMs}ms · {tick.Quotes.Count} 个合约（全分组）";
             StealthTick?.Invoke(StealthRows());
             OnPropertyChanged(nameof(HasSelection));
 
