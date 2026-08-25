@@ -42,6 +42,14 @@ LOG_FILE = os.environ.get("QV_LOG", "")
 PORT = int(os.environ.get("QV_PORT", "8388"))
 RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "7"))
 FETCH_GAP_S = float(os.environ.get("QV_FETCH_GAP", "1.5"))
+
+# Human names for the settings-payload slices, used by the 配置修改 audit log.
+# Unknown (future) keys fall back to their raw name rather than being dropped.
+SETTING_LABELS = {
+    "stealth": "面板外观", "quoteColumns": "行情列布局", "notes": "备注",
+    "aggEqual": "涨跌幅口径", "paneWidth": "分组栏宽度",
+    "stealthTemplates": "面板模板", "stealthActive": "使用中模板",
+}
 # Clients silent for this long stop contributing to the union.
 CLIENT_TTL_DAYS = 14
 
@@ -797,6 +805,23 @@ tr.err:hover td{background:#331722}
       </h2>
       <div id=login-list>加载中…</div>
     </div>
+    <div class=card>
+      <h2>配置修改日志（设置 / 分组推送，只记实际变更）　
+        <select id=ck onchange="renderChanges()">
+          <option value="">全部类型</option>
+          <option value=设置>设置</option>
+          <option value=分组>分组</option>
+        </select>
+        <input id=cf placeholder="按用户/IP/日期/内容过滤…" style="width:220px"
+          oninput="renderChanges()">
+        <button id=rc class=icon title="刷新日志" onclick="spinReload('rc', loadLogs)">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
+                  stroke-linejoin="round"/></svg>
+        </button>
+      </h2>
+      <div id=chg-list>加载中…</div>
+    </div>
     <div class=grid2>
       <div class=card><h2>登录统计（按用户汇总）</h2><div id=login-stats></div></div>
       <div class=card><h2>密码修改日志</h2><div id=pw-list></div></div>
@@ -927,6 +952,7 @@ async function spinReload(btnId, loader){
 async function loadLogs(){
   LOGS = await api('logs');
   renderLogs();
+  renderChanges();
   const stats = {};
   for (const l of LOGS.logins){
     if ((l.level || 'info') !== 'info') continue;   // stats = successful logins
@@ -943,6 +969,23 @@ async function loadLogs(){
     ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>` +
       LOGS.passwords.map(l => `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
         <td class=mono>${l.ip||'-'}</td><td>${l.by==='self'?'本人':l.by}</td></tr>`).join('') + '</table>'
+    : '<div class=dim>无记录</div>';
+}
+function renderChanges(){
+  if (!LOGS) return;
+  const f = $('cf').value.trim().toLowerCase();
+  const k = $('ck').value;
+  const rows = (LOGS.changes || []).filter(l =>
+    (!k || l.kind === k) &&
+    (!f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f)
+        || (l.detail||'').toLowerCase().includes(f)))
+    .slice(0, 200).map(l => `<tr>
+      <td class=mono>${l.at}</td><td><b>${l.user}</b></td>
+      <td><span class="tag t-role">${l.kind}</span></td>
+      <td style="max-width:520px;word-break:break-all">${l.detail}</td>
+      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+  $('chg-list').innerHTML = rows
+    ? `<table><tr><th>时间</th><th>用户</th><th>类型</th><th>变更内容</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
     : '<div class=dim>无记录</div>';
 }
 function renderLogs(){
@@ -1118,7 +1161,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/web/api/logs":
             if self._admin() is None:
                 return
-            logins, passwords = [], []
+            logins, passwords, changes = [], [], []
             for name in sorted(os.listdir(ACCOUNTS)) if os.path.isdir(ACCOUNTS) else []:
                 if not name.endswith(".json"):
                     continue
@@ -1136,9 +1179,16 @@ class Handler(BaseHTTPRequestHandler):
                 for entry in doc.get("pwlogs") or []:
                     passwords.append({"user": user, "at": entry.get("at") or "",
                                       "ip": entry.get("ip") or "", "by": entry.get("by") or ""})
+                for entry in doc.get("cfglogs") or []:
+                    changes.append({"user": user, "at": entry.get("at") or "",
+                                    "ip": entry.get("ip") or "", "ver": entry.get("ver") or "",
+                                    "kind": entry.get("kind") or "",
+                                    "detail": entry.get("detail") or ""})
             logins.sort(key=lambda x: x["at"], reverse=True)
             passwords.sort(key=lambda x: x["at"], reverse=True)
-            return self._json({"logins": logins[:500], "passwords": passwords[:200]})
+            changes.sort(key=lambda x: x["at"], reverse=True)
+            return self._json({"logins": logins[:500], "passwords": passwords[:200],
+                               "changes": changes[:300]})
 
         if url.path == "/web/api/accounts":
             actor = self._admin()
@@ -1477,26 +1527,45 @@ class Handler(BaseHTTPRequestHandler):
                     panel = (bool(g["panel"]) if "panel" in g
                              else stored_panel.get(name, True))
                     clean.append({"name": name, "codes": codes, "panel": panel})
+                # Diff vs the copy being replaced (inside the lock, before the
+                # overwrite): multiset of codes plus group add/remove and 轮换
+                # flips. Feeds server.log and the web-console 配置修改 log; a
+                # rename shows as +组/-组 (indistinguishable from add+remove).
+                oc = Counter(c for g in prev_groups for c in g.get("codes") or [])
+                nc = Counter(c for g in clean for c in g["codes"])
+
+                def locs(code, gs):
+                    return ",".join(g.get("name") or "?" for g in gs
+                                    if code in (g.get("codes") or []))
+
+                delta = (["+" + c + "(" + locs(c, clean) + ")"
+                          for c in (nc - oc).elements()][:8]
+                         + ["-" + c + "(" + locs(c, prev_groups) + ")"
+                            for c in (oc - nc).elements()][:8])
+                old_names = [g.get("name") or "" for g in prev_groups]
+                new_names = [g["name"] for g in clean]
+                parts = (delta
+                         + ["+组「%s」" % n for n in new_names if n not in old_names]
+                         + ["-组「%s」" % n for n in old_names if n not in new_names]
+                         + ["「%s」轮换%s" % (g["name"], "开" if g["panel"] else "关")
+                            for g in clean if g["name"] in stored_panel
+                            and g["panel"] != stored_panel[g["name"]]])
+                if not parts and clean != prev_groups:
+                    parts = ["顺序/结构调整"]
                 # Arrival order IS the order: every push overwrites. Multiple
                 # clients racing is resolved by "last push wins", per design.
                 account["groups"] = clean
                 account["groups_at"] = at
                 account["synced"] = f"{datetime.now(CN):%F %T}"
+                if parts:
+                    cfg = account.get("cfglogs") or []
+                    account["cfglogs"] = (cfg + [{
+                        "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                        "ver": self._ver() or "", "kind": "分组",
+                        "detail": " ".join(parts),
+                    }])[-300:]
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
-            # Multiset diff vs the copy just replaced: makes "who overwrote what"
-            # readable straight from the log when two machines disagree.
-            oc = Counter(c for g in prev_groups for c in g.get("codes") or [])
-            nc = Counter(c for g in clean for c in g["codes"])
-
-            def locs(code, gs):
-                return ",".join(g.get("name") or "?" for g in gs
-                                if code in (g.get("codes") or []))
-
-            delta = (["+" + c + "(" + locs(c, clean) + ")"
-                      for c in (nc - oc).elements()][:8]
-                     + ["-" + c + "(" + locs(c, prev_groups) + ")"
-                        for c in (oc - nc).elements()][:8])
             log(f"groups push {user} from {self._ip()} ver={self._ver() or '-'} "
                 f"{len(clean)}g/{total}c" + (" " + " ".join(delta) if delta else ""))
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
@@ -1581,14 +1650,32 @@ class Handler(BaseHTTPRequestHandler):
                 for key in ("stealthTemplates", "stealthActive"):
                     if key not in settings and key in stored:
                         settings[key] = stored[key]
+                # Which slices actually changed (after the inheritance guard, so
+                # injected-equal keys don't count). "at" is the client's stamp,
+                # not content. No change -> no 配置修改 entry: echo pushes are
+                # noise the web log must not drown real edits in.
+                changed = [k for k in SETTING_LABELS
+                           if settings.get(k) != stored.get(k)]
+                changed += sorted(k for k in set(settings) | set(stored)
+                                  if k not in SETTING_LABELS and k != "at"
+                                  and settings.get(k) != stored.get(k))
+                labels = [SETTING_LABELS.get(k, k) for k in changed]
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
+                if labels:
+                    cfg = account.get("cfglogs") or []
+                    account["cfglogs"] = (cfg + [{
+                        "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                        "ver": self._ver() or "", "kind": "设置",
+                        "detail": "、".join(labels),
+                    }])[-300:]
                 save_account(user, account)
             # Ops trail: settings pushes are whole-blob overwrites, so WHO/WHEN/
             # from WHERE matters the moment two machines disagree about "nobody
             # changed anything".
             log(f"settings push {user} from {self._ip()} ver={self._ver() or '-'} "
-                f"{len(raw)}B")
+                f"{len(raw)}B"
+                + (f" [{'、'.join(labels)}]" if labels else " (无变更)"))
             return self._json({"ok": True})
 
         self._bad("not found", 404)
