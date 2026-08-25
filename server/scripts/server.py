@@ -24,6 +24,7 @@ Stdlib only — the container just needs python3.
 import base64
 import hashlib
 import json
+from collections import Counter
 import os
 import re
 import secrets
@@ -1466,8 +1467,9 @@ class Handler(BaseHTTPRequestHandler):
                 # to true silently wiped the rotation flags every 5 minutes —
                 # instead, a missing field inherits the stored flag by group
                 # name, so an outdated machine can't destroy what newer ones set.
+                prev_groups = account.get("groups") or []
                 stored_panel = {g.get("name"): bool(g.get("panel", True))
-                                for g in account.get("groups") or []}
+                                for g in prev_groups}
                 clean = []
                 for g in groups[:200]:
                     name = str(g.get("name") or "")[:64]
@@ -1482,8 +1484,14 @@ class Handler(BaseHTTPRequestHandler):
                 account["synced"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
+            # Multiset diff vs the copy just replaced: makes "who overwrote what"
+            # readable straight from the log when two machines disagree.
+            oc = Counter(c for g in prev_groups for c in g.get("codes") or [])
+            nc = Counter(c for g in clean for c in g["codes"])
+            delta = (["+" + c for c in (nc - oc).elements()][:8]
+                     + ["-" + c for c in (oc - nc).elements()][:8])
             log(f"groups push {user} from {self._ip()} ver={self._ver() or '-'} "
-                f"{len(clean)}g/{total}c")
+                f"{len(clean)}g/{total}c" + (" " + " ".join(delta) if delta else ""))
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
 
         if self.path == "/ping":
