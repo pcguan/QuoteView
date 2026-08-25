@@ -1556,6 +1556,14 @@ class Handler(BaseHTTPRequestHandler):
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
+                # Structural-clobber guard: a client from before templates
+                # existed (≤1.0.65) can't carry these keys — its push must not
+                # silently delete what newer clients saved. Same precedent as
+                # the group panel-flag guard.
+                stored = account.get("settings") or {}
+                for key in ("stealthTemplates", "stealthActive"):
+                    if key not in settings and key in stored:
+                        settings[key] = stored[key]
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)

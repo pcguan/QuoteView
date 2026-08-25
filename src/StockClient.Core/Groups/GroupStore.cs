@@ -590,14 +590,23 @@ public sealed class GroupStore
         // from before templates existed gets its live look captured as 默认;
         // a dangling active name falls back to the first template.
         config.StealthTemplates ??= new List<NamedStealthTemplate>();
-        if (config.StealthTemplates.Count == 0)
+        if (config.ActiveStealthTemplate is null)
         {
-            config.StealthTemplates.Add(new NamedStealthTemplate
+            // First run under the always-on-a-template model: the live look
+            // MUST be captured, even when other templates already exist —
+            // pointing "active" at some pre-existing template while the live
+            // look floats uncaptured means the first template switch destroys
+            // it permanently. (That happened. Once.)
+            var name = "默认";
+            if (config.StealthTemplates.Any(t => t.Name == name)) name = "升级前配置";
+            while (config.StealthTemplates.Any(t => t.Name == name)) name += "*";
+
+            config.StealthTemplates.Insert(0, new NamedStealthTemplate
             {
-                Name = "默认",
+                Name = name,
                 Stealth = StealthConfigOps.Clone(config.Stealth),
             });
-            config.ActiveStealthTemplate = "默认";
+            config.ActiveStealthTemplate = name;
         }
         if (config.StealthTemplates.All(t => t.Name != config.ActiveStealthTemplate))
             config.ActiveStealthTemplate = config.StealthTemplates[0].Name;
