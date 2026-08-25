@@ -463,6 +463,15 @@ public sealed class GroupConfig
     [JsonPropertyName("paneWidth")]
     public double GroupPaneWidth { get; set; }
 
+    /// <summary>
+    /// The day ("yyyy-MM-dd") the user ticked 今日不再提示 on the remove-contract
+    /// confirmation; the dialog stays muted until the date rolls over. Local and
+    /// per-machine on purpose — NOT part of SettingsPayload: muting a safety
+    /// prompt here must not mute it on the account's other machines.
+    /// </summary>
+    [JsonPropertyName("removeConfirmSkipDay")]
+    public string? RemoveConfirmSkipDay { get; set; }
+
     /// <summary>Live-quote column layout. Empty until the user first customises it.</summary>
     [JsonPropertyName("quoteColumns")]
     public List<QuoteColumnState> QuoteColumns { get; set; } = new();

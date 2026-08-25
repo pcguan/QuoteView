@@ -521,9 +521,54 @@ public partial class QuotesView : UserControl
         CodeBox.Focus();
     }
 
-    private void RemoveCode_Click(object sender, RoutedEventArgs e)
+    private async void RemoveCode_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: QuoteRow row }) Vm?.RemoveCode(row);
+        if (sender is FrameworkElement { DataContext: QuoteRow row } && Vm is { } vm)
+            await RemoveWithConfirmAsync(vm, new[] { row });
+    }
+
+    /// <summary>
+    /// Every removal path lands here: confirm, then remove. A slip on the per-row
+    /// ✕ or the bulk menu item is otherwise silent data loss. 今日不再提示 mutes
+    /// the dialog until the date rolls over, on this machine only.
+    /// </summary>
+    private async Task RemoveWithConfirmAsync(QuotesViewModel vm, IReadOnlyList<QuoteRow> targets)
+    {
+        if (targets.Count == 0) return;
+
+        if (!vm.RemoveConfirmSuppressed)
+        {
+            var what = targets.Count == 1
+                ? $"{targets[0].Name} {targets[0].Code}"
+                : $"这 {targets.Count} 个合约";
+
+            var skip = new System.Windows.Controls.CheckBox
+            {
+                Content = "今日不再提示",
+                Margin = new Thickness(0, 12, 0, 0),
+            };
+            var panel = new StackPanel();
+            panel.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = $"确定从分组「{vm.ActiveGroup?.Name}」移除 {what}？",
+                TextWrapping = TextWrapping.Wrap,
+            });
+            panel.Children.Add(skip);
+
+            var dialog = new Wpf.Ui.Controls.MessageBox
+            {
+                Title = "移除合约",
+                Content = panel,
+                PrimaryButtonText = "移除",
+                PrimaryButtonAppearance = ControlAppearance.Danger,
+                CloseButtonText = "取消",
+            };
+            if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+            if (skip.IsChecked == true) vm.SuppressRemoveConfirmToday();
+        }
+
+        vm.RemoveCodes(targets);
     }
 
     /// <summary>
@@ -627,7 +672,7 @@ public partial class QuotesView : UserControl
         {
             Header = many ? $"从本分组移除这 {targets.Count} 个" : "从本分组移除",
         };
-        remove.Click += (_, _) => vm.RemoveCodes(targets);
+        remove.Click += (_, _) => _ = RemoveWithConfirmAsync(vm, targets);
         menu.Items.Add(remove);
     }
 

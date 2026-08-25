@@ -792,6 +792,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         Save();
     }
 
+    /// <summary>True while today matches the day the user picked 今日不再提示.</summary>
+    public bool RemoveConfirmSuppressed =>
+        _config.RemoveConfirmSkipDay == DateTime.Now.ToString("yyyy-MM-dd");
+
+    public void SuppressRemoveConfirmToday()
+    {
+        _config.RemoveConfirmSkipDay = DateTime.Now.ToString("yyyy-MM-dd");
+        Save();
+    }
+
     /// <summary>Removes contracts from the active group.</summary>
     public void RemoveCodes(IReadOnlyList<QuoteRow> rows)
     {
@@ -802,11 +812,6 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _activeGroup.RefreshCount();
         Save();
         RebuildRows();
-    }
-
-    public void RemoveCode(QuoteRow? row)
-    {
-        if (row is not null) RemoveCodes(new[] { row });
     }
 
     private void RebuildRows()
