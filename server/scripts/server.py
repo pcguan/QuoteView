@@ -1488,8 +1488,15 @@ class Handler(BaseHTTPRequestHandler):
             # readable straight from the log when two machines disagree.
             oc = Counter(c for g in prev_groups for c in g.get("codes") or [])
             nc = Counter(c for g in clean for c in g["codes"])
-            delta = (["+" + c for c in (nc - oc).elements()][:8]
-                     + ["-" + c for c in (oc - nc).elements()][:8])
+
+            def locs(code, gs):
+                return ",".join(g.get("name") or "?" for g in gs
+                                if code in (g.get("codes") or []))
+
+            delta = (["+" + c + "(" + locs(c, clean) + ")"
+                      for c in (nc - oc).elements()][:8]
+                     + ["-" + c + "(" + locs(c, prev_groups) + ")"
+                        for c in (oc - nc).elements()][:8])
             log(f"groups push {user} from {self._ip()} ver={self._ver() or '-'} "
                 f"{len(clean)}g/{total}c" + (" " + " ".join(delta) if delta else ""))
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
