@@ -1482,6 +1482,8 @@ class Handler(BaseHTTPRequestHandler):
                 account["synced"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
+            log(f"groups push {user} from {self._ip()} ver={self._ver() or '-'} "
+                f"{len(clean)}g/{total}c")
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
 
         if self.path == "/ping":
@@ -1567,6 +1569,11 @@ class Handler(BaseHTTPRequestHandler):
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
+            # Ops trail: settings pushes are whole-blob overwrites, so WHO/WHEN/
+            # from WHERE matters the moment two machines disagree about "nobody
+            # changed anything".
+            log(f"settings push {user} from {self._ip()} ver={self._ver() or '-'} "
+                f"{len(raw)}B")
             return self._json({"ok": True})
 
         self._bad("not found", 404)
