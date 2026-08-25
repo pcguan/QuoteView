@@ -1016,6 +1016,10 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
         foreach (var code in group.Model.Codes)
         {
+            // A-shares only (SH/SZ/BJ). HK trades a different session and US/KR
+            // quotes carry ANOTHER day's move entirely — mixing them into an
+            // intraday basket produces a number that means nothing.
+            if (!IsAShare(code)) continue;
             if (!_agg.TryGetValue(code, out var q)) continue;
             pcts.Add(q.Pct);
             caps.Add(q.FloatCap > 0 ? q.FloatCap / (1 + q.Pct / 100) : 0);
@@ -1038,6 +1042,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
         return den > 0 ? num / den : null;
     }
+
+    private static bool IsAShare(string code) =>
+        code.StartsWith("SH", StringComparison.OrdinalIgnoreCase)
+        || code.StartsWith("SZ", StringComparison.OrdinalIgnoreCase)
+        || code.StartsWith("BJ", StringComparison.OrdinalIgnoreCase);
 
     private void RecomputeGroupIndices()
     {
