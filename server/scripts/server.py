@@ -708,7 +708,7 @@ tr.err:hover td{background:#331722}
   </section>
 
   <section id=tab-sess hidden>
-    <div class=card><h2>账户状态与在线会话（在线 = 10 分钟内有活动；仅展示有效会话）
+    <div class=card><h2>账户状态与在线会话（在线 = 客户端处于登录状态，登出/被踢/过期即下线）
         <button id=rs class=icon title="刷新" onclick="spinReload('rs', loadSessions)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
                   stroke-linejoin="round"/></svg></button></h2>
@@ -844,7 +844,7 @@ async function loadSessions(){
       <td class=mono>${t.created}</td><td class=mono>${t.seen}</td>
       <td class=mono>${t.duration||'-'}</td></tr>`).join('');
     const table = a.online.length
-      ? `<table><tr><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>在线时长</th></tr>${rows}</table>`
+      ? `<table><tr><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>登录时长</th></tr>${rows}</table>`
       : '<div class=dim style="padding:4px 12px">无在线会话</div>';
     return `<div style="margin-bottom:14px">
       <div style="margin-bottom:4px"><b>${a.username}</b>
@@ -1014,28 +1014,24 @@ class Handler(BaseHTTPRequestHandler):
                 normalize_tokens(doc)
                 sessions = []
                 for t in doc["tokens"]:
-                    seen = t.get("seen") or ""
                     ip = t.get("ip") or ""
-                    # Online means active in the last 10 minutes; loopback/blank
-                    # IPs are pre-proxy-fix leftovers and carry no information.
-                    if not seen or ip in ("", "127.0.0.1"):
+                    # Loopback/blank IPs are pre-proxy-fix leftovers, no signal.
+                    if ip in ("", "127.0.0.1"):
                         continue
-                    try:
-                        seen_dt = datetime.strptime(seen, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
-                    except Exception:
-                        continue
-                    if now - seen_dt > timedelta(minutes=10):
-                        continue
-                    duration = ""
+                    # Online = the session EXISTS (signed in, not logged out /
+                    # kicked / expired) — per spec, not an activity window. The
+                    # last-activity column lets the viewer judge staleness.
                     created = t.get("created") or ""
+                    duration = ""
                     try:
                         created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
-                        minutes = int((seen_dt - created_dt).total_seconds() // 60)
+                        minutes = int((now - created_dt).total_seconds() // 60)
                         duration = f"{minutes // 60}h{minutes % 60:02d}m"
                     except Exception:
                         pass
                     sessions.append({"ip": ip, "ver": t.get("ver") or "-",
-                                     "created": created, "seen": seen, "duration": duration})
+                                     "created": created, "seen": t.get("seen") or "-",
+                                     "duration": duration})
                 out.append({"username": name[:-5], "role": role_of(doc),
                             "disabled": bool(doc.get("disabled")), "online": sessions})
             return self._json({"accounts": out})
@@ -1170,23 +1166,19 @@ class Handler(BaseHTTPRequestHandler):
             tokens = []
             online = 0
             for t in doc["tokens"]:
-                seen = t.get("seen") or ""
-                is_online = False
+                ip = t.get("ip") or ""
+                is_online = ip not in ("", "127.0.0.1")   # valid session = online
                 duration = ""
                 try:
-                    if seen:
-                        seen_dt = datetime.strptime(seen, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
-                        is_online = (now - seen_dt) <= timedelta(minutes=10)
-                    created = t.get("created") or ""
-                    if created and seen:
-                        created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
-                        minutes = int((seen_dt - created_dt).total_seconds() // 60)
-                        duration = f"{minutes // 60}h{minutes % 60:02d}m"
+                    created_dt = datetime.strptime(t.get("created") or "",
+                                                   "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                    minutes = int((now - created_dt).total_seconds() // 60)
+                    duration = f"{minutes // 60}h{minutes % 60:02d}m"
                 except Exception:
                     pass
                 online += 1 if is_online else 0
                 tokens.append({"online": is_online, "ip": t.get("ip"), "ver": t.get("ver"),
-                               "created": t.get("created"), "seen": seen, "duration": duration})
+                               "created": t.get("created"), "seen": t.get("seen"), "duration": duration})
             groups = doc.get("groups") or []
             out.append({
                 "username": user,
