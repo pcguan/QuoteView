@@ -178,6 +178,26 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>Heartbeat: touches the session so the console's 活跃 state and
+    /// "connected right now" counts are near-real-time. Unauthorized bubbles up
+    /// so the session layer can re-login (which is also how a server-side token
+    /// loss heals within one beat instead of waiting for user activity).</summary>
+    public async Task<(bool Ok, bool Unauthorized)> PingAsync(string token, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/ping");
+            Stamp(request, token);
+            using var response = await _http.SendAsync(request, ct);
+            return (response.IsSuccessStatusCode,
+                    response.StatusCode == System.Net.HttpStatusCode.Unauthorized);
+        }
+        catch (Exception)
+        {
+            return (false, false);
+        }
+    }
+
     /// <summary>Tells the server to drop this token, so the sign-out shows up in
     /// the console's logs. Best effort — local sign-out proceeds regardless.</summary>
     public async Task LogoutAsync(string token, CancellationToken ct)

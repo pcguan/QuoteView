@@ -44,6 +44,7 @@ public partial class MainWindow : FluentWindow
     private readonly TrendRepository _trendRepo;
     private readonly AccountSession _session;
     private DispatcherTimer? _syncTimer;
+    private DispatcherTimer? _pingTimer;
     private readonly UpdateService _updates = new();
     private DispatcherTimer? _updateTimer;
 
@@ -144,6 +145,18 @@ public partial class MainWindow : FluentWindow
             };
             _syncTimer.Tick += async (_, _) => await PushGroupsAsync();
             _syncTimer.Start();
+
+            // 60s heartbeat: keeps the console's 活跃 view near-real-time, and
+            // heals a server-side token loss within one beat (401 -> re-login).
+            _pingTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromSeconds(60),
+            };
+            _pingTimer.Tick += async (_, _) =>
+            {
+                if (_session.IsSignedIn) await _session.PingAsync();
+            };
+            _pingTimer.Start();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -180,6 +193,7 @@ public partial class MainWindow : FluentWindow
             foreach (var window in _klineWindows.ToArray()) window.Close();
 
             _syncTimer?.Stop();
+            _pingTimer?.Stop();
             _settingsPushTimer?.Stop();
             await FlushSettingsPushAsync();
             if (_quotes is not null) await _quotes.DisposeAsync();

@@ -708,7 +708,7 @@ tr.err:hover td{background:#331722}
   </section>
 
   <section id=tab-sess hidden>
-    <div class=card><h2>账户状态与在线会话（在线 = 客户端处于登录状态，登出/被踢/过期即下线）
+    <div class=card><h2>账户状态与在线会话（在线 = 登录状态；活跃 = 客户端正在运行，60 秒心跳、3 分钟判定）
         <button id=rs class=icon title="刷新" onclick="spinReload('rs', loadSessions)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
                   stroke-linejoin="round"/></svg></button></h2>
@@ -837,14 +837,18 @@ async function loadAccounts(){
 async function loadSessions(){
   const d = await api('sessions');
   const blocks = d.accounts.map(a => {
+    const act = a.online.filter(t => t.active).length;
     const state = a.disabled ? '<span class="tag t-bad">已禁用</span>'
-      : a.online.length ? '<span class="tag t-on">在线</span>' : '<span class="tag t-off">离线</span>';
+      : a.online.length
+        ? `<span class="tag t-on">在线 ${a.online.length}</span> <span class="tag ${act ? 't-on' : 't-off'}">活跃 ${act}</span>`
+        : '<span class="tag t-off">离线</span>';
     const rows = a.online.map(t => `<tr>
+      <td>${t.active ? '<span class="tag t-on">活跃</span>' : '<span class="tag t-off">挂起</span>'}</td>
       <td class=mono>${t.ip}</td><td class=mono>${t.ver}</td>
       <td class=mono>${t.created}</td><td class=mono>${t.seen}</td>
       <td class=mono>${t.duration||'-'}</td></tr>`).join('');
     const table = a.online.length
-      ? `<table><tr><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>登录时长</th></tr>${rows}</table>`
+      ? `<table><tr><th>状态</th><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>登录时长</th></tr>${rows}</table>`
       : '<div class=dim style="padding:4px 12px">无在线会话</div>';
     return `<div style="margin-bottom:14px">
       <div style="margin-bottom:4px"><b>${a.username}</b>
@@ -1029,9 +1033,16 @@ class Handler(BaseHTTPRequestHandler):
                         duration = f"{minutes // 60}h{minutes % 60:02d}m"
                     except Exception:
                         pass
+                    active = False
+                    try:
+                        seen_dt = datetime.strptime(t.get("seen") or "",
+                                                    "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                        active = (now - seen_dt) <= timedelta(minutes=3)
+                    except Exception:
+                        pass
                     sessions.append({"ip": ip, "ver": t.get("ver") or "-",
                                      "created": created, "seen": t.get("seen") or "-",
-                                     "duration": duration})
+                                     "duration": duration, "active": active})
                 out.append({"username": name[:-5], "role": role_of(doc),
                             "disabled": bool(doc.get("disabled")), "online": sessions})
             return self._json({"accounts": out})
@@ -1331,6 +1342,11 @@ class Handler(BaseHTTPRequestHandler):
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
             return self._json({"ok": True, "groups": len(clean), "contracts": total})
+
+        if self.path == "/ping":
+            if self._auth() is None:
+                return
+            return self._json({"ok": True})
 
         if self.path == "/logout":
             authed = self._auth()
