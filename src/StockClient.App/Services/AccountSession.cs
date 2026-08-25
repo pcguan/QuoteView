@@ -101,6 +101,11 @@ public sealed class AccountSession
             : await _client.LoginAsync(username, password, CancellationToken.None);
         if (!result.Ok) return result.Error ?? "登录失败";
 
+        // One session per machine: the token this login replaces is dead weight
+        // that would sit in the console's session list for 30 days.
+        if (_token is { } replaced && replaced != result.Token)
+            _ = _client.LogoutAsync(replaced, CancellationToken.None);
+
         Username = username;
         Remember = remember;
         AutoLogin = autoLogin;
@@ -179,6 +184,8 @@ public sealed class AccountSession
             return fallback;
         }
 
+        // The stale token is already invalid server-side (that's why we're
+        // here), so no logout needed for it — just adopt the new one.
         _token = renewed.Token;
         Save();
         (result, unauthorized) = await op(_token);
