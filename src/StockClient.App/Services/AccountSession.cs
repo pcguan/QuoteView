@@ -33,6 +33,9 @@ public sealed class AccountSession
     /// <summary>Signed in = a token exists. It may still be stale; CallAsync heals that.</summary>
     public bool IsSignedIn => _token is not null;
 
+    /// <summary>The live bearer token, for the presence channel's auth frame.</summary>
+    internal string? CurrentToken => _token;
+
     /// <summary>Raised whenever sign-in state changes, for UI labels.</summary>
     public event Action? Changed;
 

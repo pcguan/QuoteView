@@ -21,11 +21,14 @@ deserializes them with the same code it uses for its own local cache.
 Stdlib only — the container just needs python3.
 """
 
+import base64
 import hashlib
 import json
 import os
 import re
 import secrets
+import socket as socketlib
+import struct
 import threading
 import time
 import urllib.request
@@ -60,6 +63,13 @@ PBKDF2_ITERS = 100_000
 
 _lock = threading.Lock()
 _token_cache = {}          # token -> username, rebuilt on miss
+
+# Live WebSocket connections: token -> {user, ip, ver, since}. THE source of
+# truth for "connected right now": an entry exists exactly while the socket is
+# open, so a client close — graceful or crash (FIN/RST) — drops it instantly.
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+WS_CONNS = {}
+_ws_lock = threading.Lock()
 
 
 def log(msg):
@@ -614,6 +624,58 @@ def verify_password(account, password):
 def role_of(account):
     return account.get("role") or "user"
 
+def ws_read_exact(sock, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def ws_read_frame(sock):
+    """One frame: (opcode, unmasked payload), or (None, None) on EOF."""
+    hdr = ws_read_exact(sock, 2)
+    if hdr is None:
+        return None, None
+    b1, b2 = hdr
+    opcode = b1 & 0x0F
+    masked = b2 & 0x80
+    length = b2 & 0x7F
+    if length == 126:
+        ext = ws_read_exact(sock, 2)
+        if ext is None:
+            return None, None
+        length = struct.unpack(">H", ext)[0]
+    elif length == 127:
+        ext = ws_read_exact(sock, 8)
+        if ext is None:
+            return None, None
+        length = struct.unpack(">Q", ext)[0]
+    if length > 65536:
+        return 8, b""              # oversized on a control channel = go away
+    mask = ws_read_exact(sock, 4) if masked else b""
+    payload = ws_read_exact(sock, length) if length else b""
+    if payload is None:
+        return None, None
+    if masked:
+        payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
+    return opcode, payload
+
+
+def ws_send(sock, opcode, payload=b""):
+    hdr = bytes([0x80 | opcode])
+    n = len(payload)
+    if n < 126:
+        hdr += bytes([n])
+    elif n < 65536:
+        hdr += bytes([126]) + struct.pack(">H", n)
+    else:
+        hdr += bytes([127]) + struct.pack(">Q", n)
+    sock.sendall(hdr + payload)
+
+
 ADMIN_PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>QuoteView 管理台</title>
@@ -708,7 +770,7 @@ tr.err:hover td{background:#331722}
   </section>
 
   <section id=tab-sess hidden>
-    <div class=card><h2>账户状态与在线会话（在线 = 登录状态；活跃 = 客户端正在运行，60 秒心跳、3 分钟判定）
+    <div class=card><h2>账户状态与在线会话（在线 = 登录状态；活跃 = 长连接在线，断开即时感知；旧版客户端按心跳 3 分钟判定）
         <button id=rs class=icon title="刷新" onclick="spinReload('rs', loadSessions)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
                   stroke-linejoin="round"/></svg></button></h2>
@@ -923,6 +985,7 @@ setInterval(() => { if ($('console-view').style.display !== 'none') refresh(); }
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "QuoteViewServer/1.0"
+    protocol_version = "HTTP/1.1"   # Upgrade (WebSocket) requires 1.1 responses
 
     def _json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode()
@@ -1033,13 +1096,17 @@ class Handler(BaseHTTPRequestHandler):
                         duration = f"{minutes // 60}h{minutes % 60:02d}m"
                     except Exception:
                         pass
-                    active = False
-                    try:
-                        seen_dt = datetime.strptime(t.get("seen") or "",
-                                                    "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
-                        active = (now - seen_dt) <= timedelta(minutes=3)
-                    except Exception:
-                        pass
+                    # A live long connection is the definitive answer; the
+                    # 3-minute heartbeat window only covers older clients that
+                    # don't hold one yet.
+                    active = t["t"] in WS_CONNS
+                    if not active:
+                        try:
+                            seen_dt = datetime.strptime(t.get("seen") or "",
+                                                        "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
+                            active = (now - seen_dt) <= timedelta(minutes=3)
+                        except Exception:
+                            pass
                     sessions.append({"ip": ip, "ver": t.get("ver") or "-",
                                      "created": created, "seen": t.get("seen") or "-",
                                      "duration": duration, "active": active})
@@ -1078,6 +1145,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._json({"me": {"username": actor[0], "role": actor[1]},
                                "accounts": self._account_summaries()})
+
+        if url.path == "/ws":
+            return self._ws()
 
         if url.path == "/dates":
             if self._auth() is None:
@@ -1158,6 +1228,75 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         self._bad("not found", 404)
+
+    # ------------------------------------------------------------ websocket
+
+    def _ws(self):
+        """The persistent presence channel. Handshake, then an auth frame, then
+        the connection IS the online signal: registered while open, dropped the
+        instant the peer closes (FIN/RST included). Client keepalive pings are
+        answered here; 95s of silence counts as a dead peer."""
+        key = self.headers.get("Sec-WebSocket-Key")
+        if (self.headers.get("Upgrade") or "").lower() != "websocket" or not key:
+            return self._bad("not a websocket request")
+
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+        self.wfile.flush()
+
+        sock = self.connection
+        sock.settimeout(95)
+        self.close_connection = True
+
+        token = None
+        user = None
+        try:
+            # First frame must be the auth message.
+            opcode, payload = ws_read_frame(sock)
+            if opcode != 1:
+                return
+            try:
+                doc = json.loads(payload.decode())
+            except Exception:
+                return
+            token = str(doc.get("token") or "")
+            ver = re.sub(r"[^A-Za-z0-9._-]", "", str(doc.get("ver") or ""))[:32]
+            user, account = user_for_token(token)
+            if user is None or (account or {}).get("disabled"):
+                ws_send(sock, 8)
+                return
+
+            ip = self._ip()
+            with _ws_lock:
+                WS_CONNS[token] = {"user": user, "ip": ip, "ver": ver,
+                                   "since": f"{datetime.now(CN):%F %T}"}
+            touch_token(user, token, ip, ver)
+            ws_send(sock, 1, b'{"ok":true}')
+            log(f"ws connect {user} from {ip} ver={ver or '-'}")
+
+            last_touch = time.time()
+            while True:
+                opcode, payload = ws_read_frame(sock)
+                if opcode is None or opcode == 8:
+                    break
+                if opcode == 9:                    # ping -> pong (echo payload)
+                    ws_send(sock, 10, payload)
+                # any traffic proves liveness; persist it once a minute
+                if time.time() - last_touch > 60:
+                    touch_token(user, token, self._ip(), None)
+                    last_touch = time.time()
+        except Exception:
+            pass   # timeouts and resets all mean the same thing: gone
+        finally:
+            if token is not None:
+                with _ws_lock:
+                    WS_CONNS.pop(token, None)
+            if user is not None:
+                log(f"ws disconnect {user}")
 
     def _account_summaries(self):
         now = datetime.now(CN)

@@ -45,6 +45,7 @@ public partial class MainWindow : FluentWindow
     private readonly AccountSession _session;
     private DispatcherTimer? _syncTimer;
     private DispatcherTimer? _pingTimer;
+    private readonly PresenceChannel _presence;
     private readonly UpdateService _updates = new();
     private DispatcherTimer? _updateTimer;
 
@@ -69,6 +70,8 @@ public partial class MainWindow : FluentWindow
         var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version?.ToString(3) ?? "";
         _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
+        _presence = new PresenceChannel(_session, appVersion);
+        _presence.Start();
         _session.Changed += () => Dispatcher.InvokeAsync(() =>
         {
             UpdateAccountButton();
@@ -194,6 +197,7 @@ public partial class MainWindow : FluentWindow
 
             _syncTimer?.Stop();
             _pingTimer?.Stop();
+            await _presence.DisposeAsync();
             _settingsPushTimer?.Stop();
             await FlushSettingsPushAsync();
             if (_quotes is not null) await _quotes.DisposeAsync();
