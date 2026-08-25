@@ -128,6 +128,14 @@
       </DockPanel>
     </Border>
 
+    <!-- Transient bottom-right notice; never intercepts the mouse. -->
+    <Border x:Name="Toast" Grid.ColumnSpan="3" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+            Margin="0,0,26,20" Background="#F21A2030" BorderBrush="#4A5670" BorderThickness="1"
+            CornerRadius="6" Padding="14,9" Visibility="Collapsed" IsHitTestVisible="False"
+            Panel.ZIndex="99">
+      <TextBlock x:Name="ToastText" Foreground="#EDF1F7" FontSize="12" LineHeight="18" />
+    </Border>
+
     <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch"
                   Background="Transparent" ShowsPreview="False" Cursor="SizeWE"
                   DragCompleted="GroupSplitter_DragCompleted" />

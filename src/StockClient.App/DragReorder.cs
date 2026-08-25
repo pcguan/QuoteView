@@ -23,11 +23,16 @@ public static class DragReorder
 {
     private const string Format = "StockClient.ReorderIndex";
 
-    /// <param name="canDrag">
-    /// Optional gate: when it returns false, dragging is disabled (e.g. while the
-    /// grid shows a sorted view, where the displayed order wouldn't match the list).
+    /// <param name="beforeDrag">
+    /// Optional hook, called once when a drag actually starts: receives the
+    /// dragged item and its container index, returns the index to drag FROM, or
+    /// -1 to abort. Lets the owner normalize state first — the quotes grid uses
+    /// it to drop an active column sort and re-resolve the index, so dragging
+    /// works instead of dying silently in a sorted view.
     /// </param>
-    public static void Enable(ItemsControl control, Action<int, int> onMove, Func<bool>? canDrag = null)
+    public static void Enable(
+        ItemsControl control, Action<int, int> onMove,
+        Func<object?, int, int>? beforeDrag = null)
     {
         var start = default(Point);
         var armed = false;
@@ -69,7 +74,7 @@ public static class DragReorder
             var plain = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) == 0;
 
             claimed = onRow && plain;
-            armed = claimed && (canDrag?.Invoke() ?? true);
+            armed = claimed;
         };
 
         control.PreviewMouseMove += (_, e) =>
@@ -83,9 +88,7 @@ public static class DragReorder
 
             // While a plain row-drag is claimed, the cells must not see the move:
             // handling it here is what keeps the Extended grid's drag-extend from
-            // running. Claimed-but-not-armed is the sorted view, where the drag
-            // deliberately does nothing at all (a reorder wouldn't match what's
-            // on screen, and rubber-banding in its place just looks broken).
+            // running.
             if (claimed) e.Handled = true;
             if (!armed) return;
 
@@ -94,10 +97,20 @@ public static class DragReorder
                 Math.Abs(p.Y - start.Y) < SystemParameters.MinimumVerticalDragDistance)
                 return;
 
-            var from = ContainerIndex(control, e.OriginalSource as DependencyObject);
+            var sourceElement = e.OriginalSource as DependencyObject;
+            var from = ContainerIndex(control, sourceElement);
             armed = false;
             claimed = false;
             if (from < 0) return;
+
+            // Let the owner normalize first (e.g. clear a column sort) and hand
+            // back the index in the now-canonical order.
+            var item = Container(control, sourceElement)?.DataContext;
+            if (beforeDrag is not null)
+            {
+                from = beforeDrag(item, from);
+                if (from < 0) return;
+            }
 
             DragDrop.DoDragDrop(control, new DataObject(Format, from), DragDropEffects.Move);
             RemoveAdorner(); // drag ended (dropped or cancelled)

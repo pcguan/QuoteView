@@ -31,7 +31,17 @@ public partial class QuotesView : UserControl
         // only accepts drags in "原序" (unsorted) state, since a sorted view's order
         // doesn't match the underlying list.
         DragReorder.Enable(GroupList, (from, to) => Vm?.MoveGroup(from, to));
-        DragReorder.Enable(QuoteGrid, (from, to) => Vm?.MoveCode(from, to), () => IsManualOrder);
+        DragReorder.Enable(QuoteGrid, (from, to) => Vm?.MoveCode(from, to), beforeDrag: (_, from) =>
+        {
+            // Dragging while a column sort is on used to die SILENTLY — the
+            // "reordering randomly stops working" report. Still blocked (a move
+            // inside a sorted view has no stable meaning), but now it says so:
+            // a self-dismissing toast, not a click-through-killing dialog.
+            if (IsManualOrder) return from;
+
+            ShowToast("当前为列排序视图，无法拖拽调整顺序\n再点击排序列的标题（至第三次）恢复原序后即可拖拽");
+            return -1;
+        });
     }
 
     // Three-state column sort: click cycles 正序 → 反序 → 原序 (the user's manual
@@ -79,6 +89,36 @@ public partial class QuotesView : UserControl
         // Reflect state in the header glyph (null clears it → 原序 shows no arrow).
         foreach (var c in QuoteGrid.Columns) c.SortDirection = null;
         e.Column.SortDirection = _sortDir;
+    }
+
+    private DispatcherTimer? _toastTimer;
+
+    /// <summary>
+    /// Bottom-right transient notice: non-interactive (hit-testing off), fades
+    /// out on its own — feedback for gestures that must be refused, without a
+    /// dialog stealing the mouse.
+    /// </summary>
+    private void ShowToast(string message)
+    {
+        ToastText.Text = message;
+        Toast.BeginAnimation(OpacityProperty, null);
+        Toast.Opacity = 1;
+        Toast.Visibility = Visibility.Visible;
+
+        if (_toastTimer is null)
+        {
+            _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _toastTimer.Tick += (_, _) =>
+            {
+                _toastTimer!.Stop();
+                var fade = new System.Windows.Media.Animation.DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(350));
+                fade.Completed += (_, _) => Toast.Visibility = Visibility.Collapsed;
+                Toast.BeginAnimation(OpacityProperty, fade);
+            };
+        }
+
+        _toastTimer.Stop();
+        _toastTimer.Start();
     }
 
     /// <summary>The property to sort by: the column's SortMemberPath, else its binding path.</summary>
