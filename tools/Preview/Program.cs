@@ -30,8 +30,11 @@ public static class Program
         var config = StealthConfig.CreateDefault();
 
         // 1) The settings window's own content, at the width the window gives it.
-        var window = new StealthSettingsWindow(
-            config, new List<StockClient.Core.Groups.NamedStealthTemplate>(), () => { }, () => { });
+        var rootCfg = new StockClient.Core.Groups.GroupConfig { Stealth = config };
+        rootCfg.StealthTemplates.Add(new StockClient.Core.Groups.NamedStealthTemplate
+            { Name = "默认", Stealth = StealthConfigOps.Clone(config) });
+        rootCfg.ActiveStealthTemplate = "默认";
+        var window = new StealthSettingsWindow(rootCfg, () => { }, () => { });
         var content = (FrameworkElement)window.Content;
         window.Content = null;   // detach before re-parenting
         // Host it at the real client width WITH its margins inside the bitmap —
@@ -170,7 +173,10 @@ public static class Program
             new() { Name = "白天高亮", Stealth = StealthConfigOps.Clone(config2) },
             new() { Name = "夜间低调", Stealth = StealthConfigOps.Clone(config2) },
         };
-        var win2 = new StealthSettingsWindow(config2, tmpls, () => { }, () => { });
+        var rootCfg2 = new StockClient.Core.Groups.GroupConfig { Stealth = config2 };
+        foreach (var t in tmpls) rootCfg2.StealthTemplates.Add(t);
+        rootCfg2.ActiveStealthTemplate = tmpls[0].Name;
+        var win2 = new StealthSettingsWindow(rootCfg2, () => { }, () => { });
         var content2 = (FrameworkElement)win2.Content;
         win2.Content = null;
         Render(new Border { Width = 430, Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)), Child = content2 },

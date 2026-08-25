@@ -377,6 +377,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
     public IList<NamedStealthTemplate> StealthTemplates => _config.StealthTemplates;
 
+    /// <summary>The whole config, for the settings window (templates + active name).</summary>
+    internal GroupConfig Config => _config;
+
+    /// <summary>Marks a template as the one the panel uses, and persists.</summary>
+    public void SetActiveStealthTemplate(string name)
+    {
+        _config.ActiveStealthTemplate = name;
+        Save();
+    }
+
     /// <summary>Live-quote column layout, persisted alongside the groups.</summary>
     public List<QuoteColumnState> QuoteColumns => _config.QuoteColumns;
 

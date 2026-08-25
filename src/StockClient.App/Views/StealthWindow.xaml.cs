@@ -854,11 +854,16 @@ public partial class StealthWindow : Window
             foreach (var template in _vm.StealthTemplates)
             {
                 var captured = template;
-                var item = new MenuItem { Header = template.Name };
+                var item = new MenuItem
+                {
+                    Header = template.Name,
+                    IsCheckable = true,
+                    IsChecked = template.Name == _vm.Config.ActiveStealthTemplate,
+                };
                 item.Click += (_, _) =>
                 {
                     StealthConfigOps.CopyInto(_config, captured.Stealth);
-                    _save();
+                    _vm.SetActiveStealthTemplate(captured.Name);   // persists too
                     ApplySettings();
                 };
                 templates.Items.Add(item);

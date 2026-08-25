@@ -365,6 +365,9 @@ public sealed class SettingsPayload
     [JsonPropertyName("stealthTemplates")]
     public List<NamedStealthTemplate>? StealthTemplates { get; set; }
 
+    [JsonPropertyName("stealthActive")]
+    public string? ActiveStealthTemplate { get; set; }
+
     [JsonPropertyName("aggEqual")]
     public bool AggEqualWeight { get; set; }
 
@@ -381,6 +384,7 @@ public sealed class SettingsPayload
         QuoteColumns = config.QuoteColumns,
         Notes = config.Notes,
         StealthTemplates = config.StealthTemplates,
+        ActiveStealthTemplate = config.ActiveStealthTemplate,
         AggEqualWeight = config.AggEqualWeight,
         GroupPaneWidth = config.GroupPaneWidth,
         At = config.PrefsUpdatedAt,
@@ -403,6 +407,7 @@ public sealed class SettingsPayload
         if (Notes is not null)
             config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
         if (StealthTemplates is not null) config.StealthTemplates = StealthTemplates;
+        if (ActiveStealthTemplate is not null) config.ActiveStealthTemplate = ActiveStealthTemplate;
         config.AggEqualWeight = AggEqualWeight;
         config.GroupPaneWidth = GroupPaneWidth;
         config.PrefsUpdatedAt = At;
@@ -477,6 +482,14 @@ public sealed class GroupConfig
     /// window and the panel's right-click menu.</summary>
     [JsonPropertyName("stealthTemplates")]
     public List<NamedStealthTemplate> StealthTemplates { get; set; } = new();
+
+    /// <summary>
+    /// The template the panel is currently USING. The panel is always on some
+    /// template — there is no free-floating "current settings": upgrading a
+    /// pre-template config folds its live look into a template named 默认.
+    /// </summary>
+    [JsonPropertyName("stealthActive")]
+    public string? ActiveStealthTemplate { get; set; }
 
     public static GroupConfig CreateDefault() => new()
     {
@@ -572,6 +585,22 @@ public sealed class GroupStore
             config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
 
         config.Stealth = (config.Stealth ?? StealthConfig.CreateDefault()).Normalize();
+
+        // Template bootstrap: the panel must always be ON a template. A config
+        // from before templates existed gets its live look captured as 默认;
+        // a dangling active name falls back to the first template.
+        config.StealthTemplates ??= new List<NamedStealthTemplate>();
+        if (config.StealthTemplates.Count == 0)
+        {
+            config.StealthTemplates.Add(new NamedStealthTemplate
+            {
+                Name = "默认",
+                Stealth = StealthConfigOps.Clone(config.Stealth),
+            });
+            config.ActiveStealthTemplate = "默认";
+        }
+        if (config.StealthTemplates.All(t => t.Name != config.ActiveStealthTemplate))
+            config.ActiveStealthTemplate = config.StealthTemplates[0].Name;
         config.QuoteColumns ??= new List<QuoteColumnState>();
 
         return config;

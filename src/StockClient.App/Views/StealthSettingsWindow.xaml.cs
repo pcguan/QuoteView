@@ -62,43 +62,46 @@ public partial class StealthSettingsWindow : Window
         (StealthField.Note, "备注"),
     };
 
+    private readonly GroupConfig _root;
     private readonly StealthConfig _live;
     private readonly IList<NamedStealthTemplate> _templates;
     private readonly Action _save;
     private readonly Action _onChanged;
 
     /// <summary>
-    /// What the controls write to. In 「当前设置」 mode this IS the live panel
-    /// config and every tweak applies instantly (the original behaviour). With
-    /// a template selected it is a WORKING COPY — nothing touches the template
-    /// or the panel until 「保存」.
+    /// The WORKING COPY the controls write to — a buffered clone of the
+    /// selected template. Nothing reaches the template or the panel until
+    /// 「保存」; switching templates discards it.
     /// </summary>
     private StealthConfig _editing;
 
-    /// <summary>The selected template, or null in 「当前设置」 mode.</summary>
-    private NamedStealthTemplate? _template;
+    /// <summary>The template being used/edited — always set: the panel is
+    /// always ON a template.</summary>
+    private NamedStealthTemplate _template = null!;
 
     private bool _seeding;
 
-    public StealthSettingsWindow(
-        StealthConfig config, IList<NamedStealthTemplate> templates, Action save, Action onChanged)
+    public StealthSettingsWindow(GroupConfig root, Action save, Action onChanged)
     {
         InitializeComponent();
 
-        _live = config;
-        _editing = config;
-        _templates = templates;
+        _root = root;
+        _live = root.Stealth;
+        _templates = root.StealthTemplates;
+        _template = _templates.FirstOrDefault(t => t.Name == root.ActiveStealthTemplate)
+                    ?? _templates[0];
+        _editing = StealthConfigOps.Clone(_template.Stealth);
         _save = save;
         _onChanged = onChanged;
-        FillTemplates(select: null);
+        FillTemplates(select: _template.Name);
 
         // Set initial values BEFORE wiring events so seeding doesn't fire Apply.
-        RowsSlider.Value = config.Rows;
-        RowsValue.Text = config.Rows.ToString();
-        RowGapSlider.Value = config.RowGap;
-        RowGapValue.Text = config.RowGap.ToString();
-        ShadeSlider.Value = config.Shade;
-        ShadeValue.Text = config.Shade.ToString();
+        RowsSlider.Value = _editing.Rows;
+        RowsValue.Text = _editing.Rows.ToString();
+        RowGapSlider.Value = _editing.RowGap;
+        RowGapValue.Text = _editing.RowGap.ToString();
+        ShadeSlider.Value = _editing.Shade;
+        ShadeValue.Text = _editing.Shade.ToString();
 
         RowsSlider.ValueChanged += (_, e) =>
         {
@@ -141,7 +144,7 @@ public partial class StealthSettingsWindow : Window
                  })
         {
             var captured = kind;
-            button.IsChecked = config.Chart == kind;
+            button.IsChecked = _editing.Chart == kind;
             button.Checked += (_, _) =>
             {
                 if (_seeding) return;
@@ -157,38 +160,37 @@ public partial class StealthSettingsWindow : Window
     private void FillTemplates(string? select)
     {
         _seeding = true;
-        var items = new List<object> { "（当前设置）" };
-        items.AddRange(_templates.Select(t => (object)t.Name));
-        TemplateBox.ItemsSource = items;
-        TemplateBox.SelectedIndex = select is null ? 0 : Math.Max(0, items.IndexOf(select));
+        TemplateBox.ItemsSource = _templates.Select(t => t.Name).ToList();
+        TemplateBox.SelectedItem = select ?? _template.Name;
         _seeding = false;
-        SelectTarget();
+        TemplateDeleteButton.IsEnabled = _templates.Count > 1;
     }
 
     private void TemplateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_seeding) return;
-        SelectTarget();
+        if (_seeding || TemplateBox.SelectedItem is not string name) return;
+        var template = _templates.FirstOrDefault(t => t.Name == name);
+        if (template is null || ReferenceEquals(template, _template)) return;
+
+        UseTemplate(template);
     }
 
-    /// <summary>Points the whole window at the selection: live config, or a
-    /// buffered working copy of the chosen template.</summary>
-    private void SelectTarget()
+    /// <summary>
+    /// Switches the panel to a template: its SAVED state applies immediately
+    /// (selection means USE — the panel is always on some template), and the
+    /// editor reloads with a fresh buffered copy. Unsaved edits to the previous
+    /// template are discarded, same as closing without 保存.
+    /// </summary>
+    private void UseTemplate(NamedStealthTemplate template)
     {
-        if (TemplateBox.SelectedIndex <= 0)
-        {
-            _template = null;
-            _editing = _live;
-        }
-        else
-        {
-            _template = _templates.FirstOrDefault(t => Equals(t.Name, TemplateBox.SelectedItem));
-            _editing = _template is null ? _live : StealthConfigOps.Clone(_template.Stealth);
-        }
+        _template = template;
+        _root.ActiveStealthTemplate = template.Name;
+        StealthConfigOps.CopyInto(_live, template.Stealth);
+        _save();
+        _onChanged();
 
-        TemplateSaveButton.IsEnabled = _template is not null;
-        TemplateRenameButton.IsEnabled = _template is not null;
-        TemplateDeleteButton.IsEnabled = _template is not null;
+        _editing = StealthConfigOps.Clone(template.Stealth);
+        TemplateDeleteButton.IsEnabled = _templates.Count > 1;
         Reseed();
     }
 
@@ -219,20 +221,20 @@ public partial class StealthSettingsWindow : Window
         if (_templates.Any(t => t.Name == name)) name += "(2)";
 
         // Fresh templates start from the DEFAULTS (white fields, red-up
-        // green-down), not from the current panel — edit, then 保存 to apply.
-        _templates.Add(new NamedStealthTemplate
+        // green-down). Creating one switches to it, per "选中即使用" — the
+        // panel shows the default look until edits are 保存'd into it.
+        var template = new NamedStealthTemplate
         {
             Name = name,
             Stealth = StealthConfig.CreateDefault(),
-        });
-        _save();
+        };
+        _templates.Add(template);
         FillTemplates(select: name);
+        UseTemplate(template);
     }
 
     private void TemplateRename_Click(object sender, RoutedEventArgs e)
     {
-        if (_template is null) return;
-
         var name = PromptName(_template.Name);
         if (name is not { Length: > 0 } || name == _template.Name) return;
         if (_templates.Any(t => !ReferenceEquals(t, _template) && t.Name == name)) name += "(2)";
@@ -245,19 +247,18 @@ public partial class StealthSettingsWindow : Window
         _save();
 
         _seeding = true;
-        var items = new List<object> { "（当前设置）" };
-        items.AddRange(_templates.Select(t => (object)t.Name));
-        TemplateBox.ItemsSource = items;
-        TemplateBox.SelectedIndex = Math.Max(0, items.IndexOf(name));
+        TemplateBox.ItemsSource = _templates.Select(t => t.Name).ToList();
+        TemplateBox.SelectedItem = name;
         _seeding = false;
+
+        _root.ActiveStealthTemplate = _template.Name;
+        _save();
     }
 
     private void TemplateSave_Click(object sender, RoutedEventArgs e)
     {
-        if (_template is null) return;
-
-        // Persist the buffered edits into the template, then make it the live
-        // panel setup — 保存 is the single moment anything takes effect.
+        // Persist the buffered edits into the template, then refresh the panel
+        // (this template IS the active one) — 保存 is when edits take effect.
         _template.Stealth = StealthConfigOps.Clone(_editing);
         StealthConfigOps.CopyInto(_live, _editing);
         _save();
@@ -266,10 +267,11 @@ public partial class StealthSettingsWindow : Window
 
     private void TemplateDelete_Click(object sender, RoutedEventArgs e)
     {
-        if (_template is null) return;
+        if (_templates.Count <= 1) return;   // the panel must stay on something
+
         _templates.Remove(_template);
-        _save();
-        FillTemplates(select: null);
+        FillTemplates(select: _templates[0].Name);
+        UseTemplate(_templates[0]);
     }
 
     /// <summary>Tiny name prompt, same dark styling as this window.</summary>
@@ -388,11 +390,8 @@ public partial class StealthSettingsWindow : Window
 
     private void Apply()
     {
-        // Template mode buffers everything until 「保存」; live mode keeps the
-        // original tweak-and-see behaviour.
-        if (_template is not null) return;
-        _save();
-        _onChanged();
+        // Every edit is buffered against the selected template; nothing reaches
+        // the panel until 「保存」. (Kept as a hook for the field controls.)
     }
 
     /// <summary>Sample rows that mirror the panel's layout, for the gap preview.</summary>

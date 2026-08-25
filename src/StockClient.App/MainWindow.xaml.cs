@@ -223,7 +223,7 @@ public partial class MainWindow : FluentWindow
         }
 
         _stealthSettings = new Views.StealthSettingsWindow(
-            _quotes.Stealth, _quotes.StealthTemplates, _quotes.SaveConfig, () =>
+            _quotes.Config, _quotes.SaveConfig, () =>
             {
                 _stealth?.ApplySettings();
                 _quotes?.StealthSettingsChanged();   // fund-flow fields drive the secondary poll
