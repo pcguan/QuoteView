@@ -10,8 +10,8 @@ namespace StockClient.App.Services;
 /// closes, gracefully or not (app exit, crash, kill — all send FIN/RST).
 ///
 /// Silent death (cable pulled, power loss) sends nothing, which no TCP stack
-/// can see through — the built-in 30s keep-alive pings cover that: the server
-/// times the connection out after ~95s without one.
+/// can see through — the built-in 5s keep-alive pings cover that: the server
+/// times the connection out after ~20s without one.
 ///
 /// Reconnects forever with backoff; a token change (re-login, sign-out) kicks
 /// the current connection immediately so the session shown server-side is
@@ -59,7 +59,7 @@ public sealed class PresenceChannel : IAsyncDisposable
             try
             {
                 using var ws = new ClientWebSocket();
-                ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+                ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(5);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                     _cts.Token, _kick.Token);
 

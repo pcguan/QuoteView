@@ -1235,7 +1235,7 @@ class Handler(BaseHTTPRequestHandler):
         """The persistent presence channel. Handshake, then an auth frame, then
         the connection IS the online signal: registered while open, dropped the
         instant the peer closes (FIN/RST included). Client keepalive pings are
-        answered here; 95s of silence counts as a dead peer."""
+        answered here; 20s of silence counts as a dead peer."""
         key = self.headers.get("Sec-WebSocket-Key")
         if (self.headers.get("Upgrade") or "").lower() != "websocket" or not key:
             return self._bad("not a websocket request")
@@ -1249,7 +1249,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
         sock = self.connection
-        sock.settimeout(95)
+        # Clients ping every 5s; four misses = dead peer. This is also the
+        # silent-death (cable pull / power loss) detection bound.
+        sock.settimeout(20)
         self.close_connection = True
 
         token = None
