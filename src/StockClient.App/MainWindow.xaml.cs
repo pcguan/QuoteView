@@ -43,7 +43,6 @@ public partial class MainWindow : FluentWindow
     private readonly TrendCache _trendCache;
     private readonly TrendRepository _trendRepo;
     private readonly AccountSession _session;
-    private DispatcherTimer? _syncTimer;
     private DispatcherTimer? _pingTimer;
     private readonly PresenceChannel _presence;
     private readonly UpdateService _updates = new();
@@ -139,15 +138,12 @@ public partial class MainWindow : FluentWindow
             UpdateAccountButton();
             UpdateGates();
 
-            // Groups go up every 5 minutes; the server owns the after-close
-            // sweep for the union of every account's contracts.
+            // One seed push right after the login pull (local == server here, or
+            // local IS the seed for a brand-new account). After this, groups go
+            // up only when they change, through the debounced ConfigSaved path —
+            // a periodic re-push would let an idle machine keep overwriting
+            // another machine's newer state (last push wins, by design).
             _ = PushGroupsAsync();
-            _syncTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
-            {
-                Interval = TimeSpan.FromMinutes(5),
-            };
-            _syncTimer.Tick += async (_, _) => await PushGroupsAsync();
-            _syncTimer.Start();
 
             // 60s heartbeat: keeps the console's 活跃 view near-real-time, and
             // heals a server-side token loss within one beat (401 -> re-login).
@@ -195,7 +191,6 @@ public partial class MainWindow : FluentWindow
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
 
-            _syncTimer?.Stop();
             _pingTimer?.Stop();
             await _presence.DisposeAsync();
             _settingsPushTimer?.Stop();
@@ -233,9 +228,11 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// The 5-minute groups upload — keeps the server's per-account copy (and
-    /// with it the sweep union) fresh. Upload only: the server NEVER pushes
-    /// back mid-session; settings/groups come down exactly once, at login.
+    /// One-shot groups upload, used right after a login pull — seeds the
+    /// server's per-account copy (and with it the sweep union). Upload only:
+    /// the server NEVER pushes back mid-session; settings/groups come down
+    /// exactly once, at login. Later changes ride the debounced ConfigSaved
+    /// push — there is deliberately no periodic re-push.
     /// </summary>
     private async Task PushGroupsAsync()
     {

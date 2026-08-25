@@ -7,7 +7,7 @@ Runs on the NAS behind nginx (/quoteview/api/ -> 127.0.0.1:8388). Three jobs:
    is account-level, not per-installation — several machines logging into the
    same account share one set of groups. Passwords are PBKDF2-hashed; logins
    mint bearer tokens that survive server restarts.
-2. Accept the account's groups+contracts every 5 minutes (POST /sync, Bearer
+2. Accept the account's groups+contracts on change (POST /sync, Bearer
    auth) and keep the latest copy per account on disk.
 3. After the SH/SZ close, fetch the day's intraday trend for the UNION of every
    account's SH/SZ contracts — sequential, throttled, dual-source — and persist

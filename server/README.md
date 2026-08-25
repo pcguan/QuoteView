@@ -47,7 +47,7 @@ nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quo
 |---|---|---|---|
 | POST | /register | - | `{"username","password"}` → `{"token"}`（注册即登录；账户数上限 10） |
 | POST | /login | - | 同上；密码 PBKDF2-SHA256(10万次) 存储，令牌每账户保留最近 10 个 |
-| POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，5 分钟一次，按账户存 |
+| POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，登录后种子一次+改动即推，按账户存 |
 | GET | /dates?code=SH600519 | Bearer | 该合约已归档的日期 |
 | GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
 | GET/POST | /settings | Bearer | 账户个性化设置（客户端启动拉取、修改后上传） |
