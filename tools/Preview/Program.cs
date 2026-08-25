@@ -176,6 +176,42 @@ public static class Program
         Render(new Border { Width = 430, Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)), Child = content2 },
             @"C:\work\preview-templates.png");
 
+        // 8) The reworked account dialog, three states via reflection.
+        var s2 = new StockClient.App.Services.AccountSession(
+            new StockClient.Core.Quotes.AccountClient(new System.Net.Http.HttpClient()),
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "qv-prev-acct2.json"));
+        var lw = new StockClient.App.Views.LoginWindow(s2);
+        var lt = typeof(StockClient.App.Views.LoginWindow);
+        FrameworkElement F(string n) => (FrameworkElement)lt.GetField(n, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(lw)!;
+
+        // a) signed-in with both sub-panels expanded (worst-case height)
+        F("SignedInPanel").Visibility = Visibility.Visible;
+        ((System.Windows.Controls.TextBlock)F("SignedInText")).Text = "已登录：admin";
+        F("ChangePassPanel").Visibility = Visibility.Visible;
+        F("FormPanel").Visibility = Visibility.Collapsed;
+        F("SwitchPanel").Visibility = Visibility.Collapsed;
+        var c1 = (FrameworkElement)lw.Content; lw.Content = null;
+        Render(new Border { Width = 340, Background = new SolidColorBrush(Color.FromRgb(0x12,0x16,0x1F)), Child = c1 },
+            @"C:\work\preview-login-signedin.png");
+
+        // b) quick-switch list
+        var lw2 = new StockClient.App.Views.LoginWindow(s2);
+        FrameworkElement F2(string n) => (FrameworkElement)lt.GetField(n, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(lw2)!;
+        F2("SignedInPanel").Visibility = Visibility.Collapsed;
+        F2("FormPanel").Visibility = Visibility.Collapsed;
+        var list = (System.Windows.Controls.StackPanel)F2("SavedList");
+        foreach (var name in new[] { "admin", "trader02" })
+            list.Children.Add(new System.Windows.Controls.Button
+            {
+                Content = name, HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 0, 0, 6), Padding = new Thickness(10, 4, 10, 4),
+            });
+        F2("SwitchPanel").Visibility = Visibility.Visible;
+        var c2 = (FrameworkElement)lw2.Content; lw2.Content = null;
+        Render(new Border { Width = 340, Background = new SolidColorBrush(Color.FromRgb(0x12,0x16,0x1F)), Child = c2 },
+            @"C:\work\preview-login-switch.png");
+
         Console.WriteLine("OK");
     }
 

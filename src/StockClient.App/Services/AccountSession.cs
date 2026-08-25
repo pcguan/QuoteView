@@ -49,7 +49,13 @@ public sealed class AccountSession
     }
 
     private sealed record Persisted(
-        string? Username, bool Remember, bool AutoLogin, string? Token, string? Password);
+        string? Username, bool Remember, bool AutoLogin, string? Token, string? Password,
+        List<SavedEntry>? Accounts = null);
+
+    private sealed record SavedEntry(string Username, string Password);
+
+    /// <summary>Every account whose password was remembered, for quick switching.</summary>
+    private readonly List<(string User, string Pass)> _saved = new();
 
     private void Load()
     {
@@ -64,6 +70,16 @@ public sealed class AccountSession
             AutoLogin = doc.AutoLogin;
             _token = Unprotect(doc.Token);
             _password = Unprotect(doc.Password);
+
+            foreach (var entry in doc.Accounts ?? new List<SavedEntry>())
+            {
+                if (Unprotect(entry.Password) is { } pass && entry.Username.Length > 0)
+                    _saved.Add((entry.Username, pass));
+            }
+
+            // Pre-multi-account files: the single remembered login seeds the list.
+            if (_saved.Count == 0 && Username is { } u && _password is { } p && Remember)
+                _saved.Add((u, p));
         }
         catch (Exception)
         {
@@ -79,7 +95,8 @@ public sealed class AccountSession
             var doc = new Persisted(
                 Username, Remember, AutoLogin,
                 Protect(_token),
-                Remember ? Protect(_password) : null);
+                Remember ? Protect(_password) : null,
+                _saved.Select(a => new SavedEntry(a.User, Protect(a.Pass) ?? "")).ToList());
             File.WriteAllText(_path, JsonSerializer.Serialize(doc));
         }
         catch (Exception)
@@ -114,9 +131,40 @@ public sealed class AccountSession
         AutoLogin = autoLogin;
         _token = result.Token;
         _password = remember ? password : null;
+
+        if (remember)
+        {
+            _saved.RemoveAll(a => string.Equals(a.User, username, StringComparison.OrdinalIgnoreCase));
+            _saved.Insert(0, (username, password));   // most recent first
+        }
+
         Save();
         Changed?.Invoke();
         return null;
+    }
+
+    /// <summary>Accounts available for one-click switching, most recent first.</summary>
+    public IReadOnlyList<string> RememberedUsers => _saved.Select(a => a.User).ToArray();
+
+    /// <summary>
+    /// One-click switch to a remembered account. A stale saved password is
+    /// dropped from the quick list so it doesn't keep failing silently — the
+    /// caller falls back to the manual form.
+    /// </summary>
+    public async Task<string?> SwitchToAsync(string username)
+    {
+        var entry = _saved.FirstOrDefault(
+            a => string.Equals(a.User, username, StringComparison.OrdinalIgnoreCase));
+        if (entry.User is null) return "该账户没有记住密码";
+
+        var error = await SignInAsync(entry.User, entry.Pass, remember: true, autoLogin: true);
+        if (error is not null && error.Contains("密码"))
+        {
+            _saved.RemoveAll(a => string.Equals(a.User, username, StringComparison.OrdinalIgnoreCase));
+            Save();
+        }
+
+        return error;
     }
 
     public void SignOut()
