@@ -7,8 +7,9 @@ services:
     restart: unless-stopped
 
     # Host networking on purpose: nginx (itself host-network) proxies
-    # /quoteview/api/ to this loopback port. The server binds 127.0.0.1 only,
-    # so nothing is reachable from outside except through nginx.
+    # /quoteview/api/ to this port. Bind address comes from QV_BIND in
+    # cfg/server.env — 127.0.0.1 keeps it nginx-only; this NAS uses 0.0.0.0 so
+    # the console stays reachable LAN-direct when the internet link is down.
     network_mode: host
 
     # All tunables live in cfg/, per this host's cfg/data/log/scripts layout.

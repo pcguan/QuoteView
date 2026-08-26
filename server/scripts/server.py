@@ -40,6 +40,10 @@ from urllib.parse import urlparse, parse_qs
 DATA = os.environ.get("QV_DATA", "/data")
 LOG_FILE = os.environ.get("QV_LOG", "")
 PORT = int(os.environ.get("QV_PORT", "8388"))
+# 127.0.0.1 = nginx-only (the hardened default). The NAS sets 0.0.0.0 so the
+# console is also reachable LAN-direct (http://<nas-ip>:8388/web/) when the
+# internet link — and with it the public domain — is down.
+BIND = os.environ.get("QV_BIND", "127.0.0.1")
 RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "7"))
 FETCH_GAP_S = float(os.environ.get("QV_FETCH_GAP", "1.5"))
 
@@ -1243,7 +1247,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         q = parse_qs(url.query)
 
-        if url.path == "/web" or url.path == "/web/":
+        if url.path == "/web":
+            # Redirect to the slashed form: the SPA fetches 'api/…' RELATIVE to
+            # the page URL, and only /web/ makes that resolve to /web/api/….
+            self.send_response(301)
+            self.send_header("Location", "/web/")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
+        if url.path == "/web/":
             # The page itself is public; it decides login-vs-console by asking
             # /web/api/me with its stored token.
             body = ADMIN_PAGE.encode()
@@ -1983,8 +1996,8 @@ def main():
 
     threading.Thread(target=scheduler, daemon=True).start()
 
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    log(f"listening on 127.0.0.1:{PORT}, data={DATA}, retain={RETAIN_DAYS}d")
+    server = ThreadingHTTPServer((BIND, PORT), Handler)
+    log(f"listening on {BIND}:{PORT}, data={DATA}, retain={RETAIN_DAYS}d")
     server.serve_forever()
 
 
