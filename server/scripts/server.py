@@ -43,13 +43,164 @@ PORT = int(os.environ.get("QV_PORT", "8388"))
 RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "7"))
 FETCH_GAP_S = float(os.environ.get("QV_FETCH_GAP", "1.5"))
 
-# Human names for the settings-payload slices, used by the 配置修改 audit log.
-# Unknown (future) keys fall back to their raw name rather than being dropped.
-SETTING_LABELS = {
-    "stealth": "面板外观", "quoteColumns": "行情列布局", "notes": "备注",
-    "aggEqual": "涨跌幅口径", "paneWidth": "分组栏宽度",
-    "stealthTemplates": "面板模板", "stealthActive": "使用中模板",
-}
+# ---- 配置修改 audit-log differ -------------------------------------------
+# Mirrors the client's StealthField enum by ordinal (append-only over there, so
+# this list only ever grows) — the payload stores field ids, the log wants names.
+STEALTH_FIELDS = [
+    "合约编码", "合约名称", "最新价", "涨跌额", "涨跌幅", "今开", "最高", "最低",
+    "昨收", "时间", "成交量", "成交额", "总市值", "流通市值", "换手率", "量比",
+    "振幅", "均价", "市盈TTM", "市净率", "分组名", "昨日涨幅", "3日涨幅",
+    "5日涨幅", "10日涨幅", "20日涨幅", "60日涨幅", "年初至今", "涨速",
+    "主力净流入", "主力占比", "超大单", "大单", "中单", "小单", "外盘", "内盘",
+    "涨停价", "跌停价", "52周最高", "52周最低", "股息率", "行业", "地区",
+    "概念", "备注",
+]
+CHART_NAMES = {0: "关闭", 1: "分时缩略图", 2: "五档盘口"}
+SETTING_KEYS = ("stealth", "quoteColumns", "notes", "aggEqual", "paneWidth",
+                "stealthTemplates", "stealthActive")
+
+
+def field_name(i):
+    try:
+        return STEALTH_FIELDS[int(i)]
+    except Exception:
+        return "字段%s" % i
+
+
+def brief(items, cap=6):
+    items = list(items)
+    if len(items) <= cap:
+        return "、".join(items)
+    return "、".join(items[:cap]) + " 等%d项" % len(items)
+
+
+def fmt_num(v):
+    try:
+        f = float(v)
+        return str(int(f)) if f == int(f) else ("%g" % f)
+    except Exception:
+        return str(v)
+
+
+def diff_stealth(old, new, prefix=""):
+    """One human sentence per concrete change inside a StealthConfig blob."""
+    old, new = old or {}, new or {}
+    parts = []
+    for key, label in (("shade", "亮度"), ("rows", "显示行数"), ("rowGap", "行距")):
+        if old.get(key) != new.get(key):
+            parts.append("%s%s %s→%s" % (prefix, label,
+                                         fmt_num(old.get(key)), fmt_num(new.get(key))))
+    if old.get("chart") != new.get("chart"):
+        parts.append("%s面板图表→%s" % (prefix,
+                     CHART_NAMES.get(new.get("chart"), new.get("chart"))))
+    if (old.get("left"), old.get("top")) != (new.get("left"), new.get("top")):
+        parts.append("%s面板位置" % prefix)
+    of = {f.get("field"): f for f in old.get("fields") or [] if isinstance(f, dict)}
+    nf = {f.get("field"): f for f in new.get("fields") or [] if isinstance(f, dict)}
+    shown, hidden, recolored = [], [], []
+    for i in sorted(set(of) | set(nf), key=lambda x: (x is None, x)):
+        o, n = of.get(i) or {}, nf.get(i) or {}
+        if bool(o.get("visible")) != bool(n.get("visible")):
+            (shown if n.get("visible") else hidden).append(field_name(i))
+        elif any(o.get(k) != n.get(k) for k in ("color", "pos", "neg")):
+            recolored.append(field_name(i))
+    if shown:
+        parts.append(prefix + "显示字段+" + brief(shown))
+    if hidden:
+        parts.append(prefix + "显示字段-" + brief(hidden))
+    if recolored:
+        parts.append(prefix + "字段颜色(" + brief(recolored) + ")")
+    if not parts and old != new:
+        parts.append(prefix + "面板外观调整")
+    return parts
+
+
+def diff_columns(old, new):
+    om = {c.get("key"): c for c in old or [] if isinstance(c, dict)}
+    nm = {c.get("key"): c for c in new or [] if isinstance(c, dict)}
+    shown, hidden, width, order = [], [], [], False
+    for k in om.keys() | nm.keys():
+        o, n = om.get(k) or {}, nm.get(k) or {}
+        name = k or "?"
+        if bool(o.get("visible", True)) != bool(n.get("visible", True)):
+            (shown if n.get("visible", True) else hidden).append(name)
+            continue
+        if o.get("width") != n.get("width"):
+            width.append(name)
+        if o.get("order") != n.get("order"):
+            order = True
+    parts = []
+    if shown:
+        parts.append("显示列+" + brief(shown))
+    if hidden:
+        parts.append("显示列-" + brief(hidden))
+    if width:
+        parts.append("列宽(" + brief(sorted(width)) + ")")
+    if order:
+        parts.append("列顺序调整")
+    if not parts and om != nm:
+        parts.append("行情列调整")
+    return parts
+
+
+def diff_notes(old, new):
+    old, new = old or {}, new or {}
+    parts = []
+    added = sorted(c for c in new if c not in old)
+    removed = sorted(c for c in old if c not in new)
+    edited = sorted(c for c in new if c in old and old[c] != new[c])
+    if added:
+        parts.append("备注+" + brief(added))
+    if removed:
+        parts.append("备注-" + brief(removed))
+    if edited:
+        parts.append("改备注(" + brief(edited) + ")")
+    return parts
+
+
+def diff_templates(old, new, act_old, act_new):
+    om = {t.get("name"): t for t in old or [] if isinstance(t, dict)}
+    nm = {t.get("name"): t for t in new or [] if isinstance(t, dict)}
+    parts = []
+    parts += ["+模板「%s」" % n for n in nm if n not in om]
+    parts += ["-模板「%s」" % n for n in om if n not in nm]
+    for n in nm:
+        if n in om and om[n] != nm[n]:
+            parts += (diff_stealth((om[n] or {}).get("stealth"),
+                                   (nm[n] or {}).get("stealth"),
+                                   prefix="模板「%s」" % n)
+                      or ["改模板「%s」" % n])
+    if act_old != act_new and act_new:
+        parts.append("切换模板→「%s」" % act_new)
+    return parts
+
+
+def settings_detail(stored, settings):
+    """What actually changed between two settings blobs, as short sentences.
+    Empty list = an echo push (only the client's "at" stamp moved)."""
+    parts = []
+    if stored.get("stealth") != settings.get("stealth"):
+        parts += diff_stealth(stored.get("stealth"), settings.get("stealth"))
+    if stored.get("quoteColumns") != settings.get("quoteColumns"):
+        parts += diff_columns(stored.get("quoteColumns"), settings.get("quoteColumns"))
+    if stored.get("notes") != settings.get("notes"):
+        parts += diff_notes(stored.get("notes"), settings.get("notes"))
+    if stored.get("aggEqual") != settings.get("aggEqual"):
+        parts.append("涨跌幅口径→" + ("等权" if settings.get("aggEqual") else "加权"))
+    if stored.get("paneWidth") != settings.get("paneWidth"):
+        parts.append("分组栏宽度 %s→%s" % (fmt_num(stored.get("paneWidth")),
+                                           fmt_num(settings.get("paneWidth"))))
+    if (stored.get("stealthTemplates") != settings.get("stealthTemplates")
+            or stored.get("stealthActive") != settings.get("stealthActive")):
+        parts += diff_templates(stored.get("stealthTemplates"),
+                                settings.get("stealthTemplates"),
+                                stored.get("stealthActive"),
+                                settings.get("stealthActive"))
+    parts += ["调整 %s" % k
+              for k in sorted(set(settings) | set(stored))
+              if k not in SETTING_KEYS and k != "at"
+              and settings.get(k) != stored.get(k)]
+    return parts
 # Clients silent for this long stop contributing to the union.
 CLIENT_TTL_DAYS = 14
 
@@ -1538,15 +1689,33 @@ class Handler(BaseHTTPRequestHandler):
                     return ",".join(g.get("name") or "?" for g in gs
                                     if code in (g.get("codes") or []))
 
-                delta = (["+" + c + "(" + locs(c, clean) + ")"
-                          for c in (nc - oc).elements()][:8]
+                added_c = list((nc - oc).elements())
+                removed_c = list((oc - nc).elements())
+                delta = (["+" + c + "(" + locs(c, clean) + ")" for c in added_c[:8]]
+                         + (["…共+%d个合约" % len(added_c)] if len(added_c) > 8 else [])
                          + ["-" + c + "(" + locs(c, prev_groups) + ")"
-                            for c in (oc - nc).elements()][:8])
+                            for c in removed_c[:8]]
+                         + (["…共-%d个合约" % len(removed_c)] if len(removed_c) > 8 else []))
                 old_names = [g.get("name") or "" for g in prev_groups]
                 new_names = [g["name"] for g in clean]
-                parts = (delta
-                         + ["+组「%s」" % n for n in new_names if n not in old_names]
-                         + ["-组「%s」" % n for n in old_names if n not in new_names]
+                added_g = [n for n in new_names if n not in old_names]
+                removed_g = [n for n in old_names if n not in new_names]
+                # A rename otherwise reads as delete+create: pair an added group
+                # with a removed one holding exactly the same contract list.
+                renames = []
+                for a in list(added_g):
+                    a_codes = next(g["codes"] for g in clean if g["name"] == a)
+                    src = next((r for r in removed_g
+                                if next((g.get("codes") for g in prev_groups
+                                         if (g.get("name") or "") == r), None) == a_codes),
+                               None)
+                    if src is not None:
+                        renames.append("组改名「%s」→「%s」" % (src, a))
+                        added_g.remove(a)
+                        removed_g.remove(src)
+                parts = (delta + renames
+                         + ["+组「%s」" % n for n in added_g]
+                         + ["-组「%s」" % n for n in removed_g]
                          + ["「%s」轮换%s" % (g["name"], "开" if g["panel"] else "关")
                             for g in clean if g["name"] in stored_panel
                             and g["panel"] != stored_panel[g["name"]]])
@@ -1650,32 +1819,26 @@ class Handler(BaseHTTPRequestHandler):
                 for key in ("stealthTemplates", "stealthActive"):
                     if key not in settings and key in stored:
                         settings[key] = stored[key]
-                # Which slices actually changed (after the inheritance guard, so
-                # injected-equal keys don't count). "at" is the client's stamp,
-                # not content. No change -> no 配置修改 entry: echo pushes are
-                # noise the web log must not drown real edits in.
-                changed = [k for k in SETTING_LABELS
-                           if settings.get(k) != stored.get(k)]
-                changed += sorted(k for k in set(settings) | set(stored)
-                                  if k not in SETTING_LABELS and k != "at"
-                                  and settings.get(k) != stored.get(k))
-                labels = [SETTING_LABELS.get(k, k) for k in changed]
+                # Concrete diff (after the inheritance guard, so injected-equal
+                # keys don't count): 亮度/显示字段/列宽/模板… rather than slice
+                # names. Empty -> echo push (only the "at" stamp moved), which
+                # gets no 配置修改 entry — noise must not drown real edits.
+                detail = "；".join(settings_detail(stored, settings))[:300]
                 account["settings"] = settings
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
-                if labels:
+                if detail:
                     cfg = account.get("cfglogs") or []
                     account["cfglogs"] = (cfg + [{
                         "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                         "ver": self._ver() or "", "kind": "设置",
-                        "detail": "、".join(labels),
+                        "detail": detail,
                     }])[-300:]
                 save_account(user, account)
             # Ops trail: settings pushes are whole-blob overwrites, so WHO/WHEN/
             # from WHERE matters the moment two machines disagree about "nobody
             # changed anything".
             log(f"settings push {user} from {self._ip()} ver={self._ver() or '-'} "
-                f"{len(raw)}B"
-                + (f" [{'、'.join(labels)}]" if labels else " (无变更)"))
+                f"{len(raw)}B" + (f" [{detail}]" if detail else " (无变更)"))
             return self._json({"ok": True})
 
         self._bad("not found", 404)
