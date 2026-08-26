@@ -566,12 +566,20 @@ public sealed class KlineChart : FrameworkElement
     private void DrawDateAxis(DrawingContext dc, double slot, double bottom)
     {
         const int ticks = 5;
+        var prevYear = "";
         for (var t = 0; t <= ticks; t++)
         {
             var i = (int)Math.Round((double)(_bars.Count - 1) * t / ticks);
             i = Math.Clamp(i, 0, _bars.Count - 1);
 
-            var text = Label(ShortDate(_bars[i].Date), AxisText);
+            // Year context without stamping it on every tick: the first tick and
+            // any tick where the year rolls over get the full date, the rest stay
+            // MM-dd — charts spanning years were unreadable as bare MM-dd.
+            var date = _bars[i].Date;
+            var year = date.Length >= 4 ? date[..4] : "";
+            var text = Label(year != prevYear ? date : ShortDate(date), AxisText);
+            prevYear = year;
+
             var tx = Math.Clamp(BarX(i, slot) - text.Width / 2, 0, ActualWidth - text.Width);
             dc.DrawText(text, new Point(tx, bottom + 4));
         }
@@ -609,7 +617,7 @@ public sealed class KlineChart : FrameworkElement
         // Aggregated bars span a date range; show it so the reading isn't misread
         // as a single day.
         var dateText = bar.Aggregated
-            ? $"{ShortDate(bar.FirstDate)}~{ShortDate(bar.Date)}"
+            ? RangeText(bar.FirstDate, bar.Date)
             : bar.Date;
 
         var lines = new[]
@@ -661,6 +669,12 @@ public sealed class KlineChart : FrameworkElement
 
     private static string ShortDate(string date) =>
         date.Length >= 10 ? date[5..] : date;
+
+    /// <summary>Aggregated-bar range; repeats the year only when it differs.</summary>
+    private static string RangeText(string first, string last) =>
+        first.Length >= 4 && last.Length >= 4 && first[..4] == last[..4]
+            ? $"{first}~{ShortDate(last)}"
+            : $"{first}~{last}";
 
     private FormattedText Label(string text, Brush brush) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 11, brush,
