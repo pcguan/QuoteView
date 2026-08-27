@@ -40,6 +40,7 @@ public sealed class DomesticReleaseClient
             Notes = dto.Notes ?? "",
             Source = "国内源", // internal only; the UI deliberately doesn't show it
             Size = dto.Size ?? 0,
+            Sha256 = dto.Sha256 ?? "",
         };
     }
 
@@ -49,5 +50,6 @@ public sealed class DomesticReleaseClient
         [JsonPropertyName("url")] public string? Url { get; init; }
         [JsonPropertyName("notes")] public string? Notes { get; init; }
         [JsonPropertyName("size")] public long? Size { get; init; }
+        [JsonPropertyName("sha256")] public string? Sha256 { get; init; }
     }
 }

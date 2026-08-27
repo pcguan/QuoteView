@@ -117,14 +117,21 @@ public partial class MainWindow : FluentWindow
 
             await _vm.LoadAsync();
 
-            // 离线模式 routes every store to offline.json before anything
-            // reads it; the session skips the server entirely in that mode.
-            GroupStore.OfflineProfile = _session.OfflineMode && !_session.IsSignedIn;
+            // Profile selection: 离线模式 gets its own file; a signed-in
+            // account gets ITS own per-account file (first sign-in adopts the
+            // legacy groups.json it owned). Set BEFORE anything reads a store.
+            GroupStore.ActiveProfile =
+                _session.OfflineMode && !_session.IsSignedIn ? "offline" : "";
 
             // Sign in and pull the account's data BEFORE the view model loads:
-            // the merge lands in groups.json, and every view then simply reads
-            // the merged result — no live re-apply plumbing.
+            // the merge lands in the profile file, and every view then simply
+            // reads the merged result — no live re-apply plumbing.
             await _session.TryAutoLoginAsync();
+            if (_session.IsSignedIn && _session.Username is { } startUser)
+            {
+                GroupStore.AdoptLegacyFor(startUser);
+                GroupStore.ActiveProfile = startUser;
+            }
             await PullAccountDataAsync();
 
             // The quotes view reuses the loaded contract lists so "add contract"
@@ -540,13 +547,17 @@ public partial class MainWindow : FluentWindow
         UpdateAccountButton();
         UpdateGates();
 
-        // Entering/leaving 离线模式 swaps the profile file; reload everything
-        // from the other store. Runs BEFORE any pull so a sign-in from offline
-        // mode merges server data into groups.json, never into offline.json.
-        var offlineProfile = _session.OfflineMode && !_session.IsSignedIn;
-        if (offlineProfile != GroupStore.OfflineProfile && _quotes is not null)
+        // The identity decides the profile file: offline / per-account /
+        // legacy. A change swaps the store and reloads everything — BEFORE any
+        // pull, so server data merges into the right account's file and never
+        // into offline.json or another user's profile.
+        var profile = _session.OfflineMode && !_session.IsSignedIn ? "offline"
+            : _session.IsSignedIn && _session.Username is { } user ? user : "";
+        if (_session.IsSignedIn && _session.Username is { } u) GroupStore.AdoptLegacyFor(u);
+        if (!string.Equals(profile, GroupStore.ActiveProfile, StringComparison.OrdinalIgnoreCase)
+            && _quotes is not null)
         {
-            GroupStore.OfflineProfile = offlineProfile;
+            GroupStore.ActiveProfile = profile;
             _quotes.ReloadFromStore();
             _lastPushedSettings = _quotes.ExportSettingsJson();
             _lastPushedGroups = _quotes.ExportGroupsJson();

@@ -144,11 +144,25 @@ public sealed class UpdateService
                 $"下载不完整：应为 {release.Size} 字节，实际 {length} 字节"
                 + "（网络中断或被中间缓存截断），稍后会自动重试");
 
-        using var fs = File.OpenRead(path);
-        var head = new byte[2];
-        if (fs.Read(head, 0, 2) != 2 || head[0] != (byte)'M' || head[1] != (byte)'Z')
-            throw new InvalidOperationException(
-                "下载内容不是有效的程序文件（可能被网络设备重定向或拦截），稍后会自动重试");
+        using (var fs = File.OpenRead(path))
+        {
+            var head = new byte[2];
+            if (fs.Read(head, 0, 2) != 2 || head[0] != (byte)'M' || head[1] != (byte)'Z')
+                throw new InvalidOperationException(
+                    "下载内容不是有效的程序文件（可能被网络设备重定向或拦截），稍后会自动重试");
+        }
+
+        // The strong check: byte length can be forged by a manifest generated
+        // from the same truncated file — the hash cannot.
+        if (!string.IsNullOrEmpty(release.Sha256))
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            using var stream = File.OpenRead(path);
+            var hash = Convert.ToHexString(sha.ComputeHash(stream));
+            if (!hash.Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "下载文件 SHA-256 校验失败（内容与发布清单不符），已丢弃；稍后会自动重试");
+        }
     }
 
     private async Task DownloadAsync(

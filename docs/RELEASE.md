@@ -13,21 +13,25 @@ QuoteView 每次改动的**标准流程**。日常代码改动走 **1–4**;要�
 ## 1. 本地改源码
 在开发机编辑 `src/`。
 
-## 2. corp-win 编译构建（失败则回步骤 1 修复重来）
+## 2. corp-win 编译构建 + 生成构建清单（失败则回步骤 1 修复重来）
 ```bash
 scp -q -r src corp-win:C:/work/stock/
 ssh corp-win "cd C:\work\stock\src\StockClient.App && dotnet publish -c Release -r win-x64 --self-contained false -o C:\work\stock\dist"
+# 构建清单在【编译机上】生成——版本/字节数/SHA-256 与产物同源，是同步完整性的锚点
+ssh corp-win "powershell -c \"\$f=Get-Item C:\work\stock\dist\QuoteView.exe; @{version=\$f.VersionInfo.FileVersion; size=\$f.Length; sha256=(Get-FileHash \$f.FullName -Algorithm SHA256).Hash.ToLower()} | ConvertTo-Json -Compress | Set-Content C:\work\stock\dist\build.json\""
 ```
 - 只关心有没有 `error`/`错误`；有就回步骤 1 改，再来。
-- `deploy.sh` 会先跑 Smoke（打真实接口），东财偶发限流会中断——直接 `dotnet publish` 跳过即可。
 
-## 3. 同步产物回本地 + 清理中间产物
+## 3. 同步产物+清单回本地 + 清理中间产物
 ```bash
-scp -q corp-win:C:/work/stock/dist/QuoteView.exe release/QuoteView-<ver>.exe   # 取最终 exe
-ssh corp-win "rmdir /s /q C:\work\stock\dist"                                   # 清理发布中间产物
+scp -q corp-win:C:/work/stock/dist/QuoteView.exe release/QuoteView-<ver>.exe
+scp -q corp-win:C:/work/stock/dist/build.json release/build.json
+ssh corp-win "rmdir /s /q C:\work\stock\dist"
 ```
+- `check_release.sh` 会拿本地 exe 对 `build.json` 逐项核验（版本/字节数/SHA-256），
+  **清单缺失或对不上 = 同步失败**，直接 FAIL——scp 半途断连的残件再也过不了关
+  （2026-08-27 一个 977KB 残件曾因"清单从残件生成"而自洽过检并放倒了 home-win）。
 - `release/` 已 gitignore（大二进制不进库），只作本地暂存 + 国内源上传的主拷贝。
-- `bin/obj` 可留着给下次增量编译；要彻底清就 `rmdir /s /q C:\work\stock\src\StockClient.App\bin ...\obj`。
 
 ## 4. 提交并推送
 ```bash
@@ -53,10 +57,11 @@ git push        # 走 .git/config 里的代理，直接 push；卡死就检查 h
 > 版本清单 `latest.json` + `CHANGELOG.md`。若以后加压缩包/安装器，按同样两源分发即可。
 
 ### 5a. 国内源（主）——NAS nginx
-写 `release/latest.json`：
+写 `release/latest.json`（size/sha256 直接取自 build.json，客户端下载后按 sha256 校验）：
 ```json
 { "version": "<ver>", "url": "https://nas.pcguan.cn/quoteview/QuoteView-<ver>.exe",
-  "size": <字节数>, "notes": "本版更新说明", "published": "<yyyy-mm-dd>" }
+  "size": <build.json的size>, "sha256": "<build.json的sha256>",
+  "notes": "本版更新说明", "published": "<yyyy-mm-dd>" }
 ```
 上传到 NAS 静态目录（宿主机路径，`ssh nas` 可直接写）：
 ```bash

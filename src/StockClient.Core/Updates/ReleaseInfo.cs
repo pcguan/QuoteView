@@ -25,4 +25,9 @@ public sealed record ReleaseInfo
     /// <summary>Exact exe size in bytes when the source reports it, else 0.
     /// The updater refuses a download whose length disagrees.</summary>
     public long Size { get; init; }
+
+    /// <summary>SHA-256 (lower-hex) of the exe when the source reports it, else
+    /// empty. The updater refuses a download whose hash disagrees — the guard
+    /// that size alone cannot give against truncated-yet-consistent manifests.</summary>
+    public string Sha256 { get; init; } = "";
 }

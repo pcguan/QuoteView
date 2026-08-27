@@ -491,7 +491,7 @@ public sealed class GroupConfig
     };
 }
 
-/// <summary>Reads/writes groups.json under %APPDATA%\StockClient.</summary>
+/// <summary>Reads/writes the ACTIVE profile's config file under %APPDATA%\StockClient.</summary>
 public sealed class GroupStore
 {
     private static readonly JsonSerializerOptions Options = new()
@@ -501,21 +501,69 @@ public sealed class GroupStore
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
-    private readonly string _path;
+    /// <summary>
+    /// Which local profile every parameterless store reads/writes RIGHT NOW.
+    /// Resolved on EVERY access, never cached in the instance — a mid-session
+    /// switch (sign-in, user switch, 离线模式) must redirect stores that
+    /// already exist, or they keep writing the previous identity's file
+    /// (the "offline mode showed my last account's groups" bug).
+    ///   ""        → groups.json        (legacy / signed-out)
+    ///   "offline" → offline.json       (the account-less 离线 user)
+    ///   username  → profile-{name}.json — every account keeps its own LOCAL
+    ///               config on this machine (column layout, panel look, groups
+    ///               cache), so several users on one machine never bleed into
+    ///               each other.
+    /// </summary>
+    public static string ActiveProfile { get; set; } = "";
+
+    public static string ProfilePath(string profile)
+    {
+        var file = profile switch
+        {
+            "" => "groups.json",
+            "offline" => "offline.json",
+            _ => "profile-" + Sanitize(profile) + ".json",
+        };
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "StockClient", file);
+    }
+
+    private static string Sanitize(string name) =>
+        new(name.ToLowerInvariant()
+            .Where(c => char.IsLetterOrDigit(c) || c is '-' or '_').ToArray());
 
     /// <summary>
-    /// True while the app runs as the 离线模式 local user: every parameterless
-    /// store then resolves to offline.json instead of groups.json, so the
-    /// offline profile's groups/settings never mix with any account's data.
+    /// One-time adoption of the pre-profile store: the first sign-in after the
+    /// per-account split MOVES the legacy groups.json into the account's own
+    /// profile file — when it already belonged to that account (or to nobody) —
+    /// so nobody loses the config they had.
     /// </summary>
-    public static bool OfflineProfile { get; set; }
+    public static void AdoptLegacyFor(string username)
+    {
+        try
+        {
+            var target = ProfilePath(username);
+            var legacy = ProfilePath("");
+            if (File.Exists(target) || !File.Exists(legacy)) return;
 
-    public GroupStore(string? path = null) =>
-        _path = path ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "StockClient", OfflineProfile ? "offline.json" : "groups.json");
+            using var doc = JsonDocument.Parse(File.ReadAllText(legacy));
+            var owner = doc.RootElement.TryGetProperty("owner", out var o)
+                        && o.ValueKind == JsonValueKind.String ? o.GetString() : null;
+            if (owner is null || string.Equals(owner, username, StringComparison.OrdinalIgnoreCase))
+                File.Move(legacy, target);
+        }
+        catch
+        {
+            // Unreadable legacy file: the profile simply starts from defaults.
+        }
+    }
 
-    public string FilePath => _path;
+    private readonly string? _explicitPath;
+
+    public GroupStore(string? path = null) => _explicitPath = path;
+
+    public string FilePath => _explicitPath ?? ProfilePath(ActiveProfile);
 
     /// <summary>
     /// Applies an account's server-side settings onto the stored config file.
@@ -547,11 +595,11 @@ public sealed class GroupStore
 
     public GroupConfig Load()
     {
-        if (!File.Exists(_path)) return GroupConfig.CreateDefault();
+        if (!File.Exists(FilePath)) return GroupConfig.CreateDefault();
 
         try
         {
-            var config = JsonSerializer.Deserialize<GroupConfig>(File.ReadAllText(_path), Options);
+            var config = JsonSerializer.Deserialize<GroupConfig>(File.ReadAllText(FilePath), Options);
             return config is null ? GroupConfig.CreateDefault() : Normalize(config);
         }
         catch (Exception)
@@ -618,7 +666,7 @@ public sealed class GroupStore
     {
         try
         {
-            File.Move(_path, $"{_path}.corrupt-{DateTime.Now:yyyyMMddHHmmss}");
+            File.Move(FilePath, $"{FilePath}.corrupt-{DateTime.Now:yyyyMMddHHmmss}");
         }
         catch
         {
@@ -628,13 +676,13 @@ public sealed class GroupStore
 
     public void Save(GroupConfig config)
     {
-        var dir = Path.GetDirectoryName(_path);
+        var dir = Path.GetDirectoryName(FilePath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
         // Write-then-replace so a crash mid-write can't truncate the real file.
-        var tmp = _path + ".tmp";
+        var tmp = FilePath + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(config, Options));
-        File.Move(tmp, _path, overwrite: true);
+        File.Move(tmp, FilePath, overwrite: true);
     }
 
     /// <summary>

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Guards the one release mistake that is invisible until users hit it: shipping a
-# binary whose internal version doesn't match the manifest.
+# Release gate. Two failure classes it exists to stop:
+#   1. Stale binary: version bumped in csproj but the exe came from an old build
+#      (filename + manifest claim the new version, the binary reports the old).
+#   2. Truncated sync: the scp from the build machine broke mid-transfer and the
+#      local "latest.json size/sha" was then GENERATED FROM the truncated file —
+#      self-consistent, and it shipped a 977KB stub that took a client down.
 #
-# It happens when the version is bumped in the csproj but the exe is copied from
-# a previous build. The file name says the new version, the manifest says the new
-# version, and the binary says the old one — so every client updates, still
-# reports the old version, and is offered the same update forever.
+# The fix for (2) is a BUILD MANIFEST written ON THE BUILD MACHINE right after
+# compilation (release/build.json: version/size/sha256). The local artifact must
+# match that manifest byte-for-byte; a missing manifest IS a failed sync.
 #
 # Usage: tools/check_release.sh <version>
 set -uo pipefail
@@ -16,39 +19,61 @@ VER="${1:-}"
 BASE="$(cd "$(dirname "$0")/.." && pwd)"
 EXE="$BASE/release/QuoteView-$VER.exe"
 MANIFEST="$BASE/release/latest.json"
+BUILD="$BASE/release/build.json"
 
 [ -f "$EXE" ] || { echo "FAIL 缺少 $EXE"; exit 1; }
 
 fail=0
 
-# 1. manifest version
-mver=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])" 2>/dev/null)
-if [ "$mver" != "$VER" ]; then
-  echo "FAIL latest.json 写的是 $mver，不是 $VER"; fail=1
+# 0. The build manifest, written on corp-win at compile time. Missing = the
+#    sync failed (or the flow skipped a step) — hard stop, no degradation.
+if [ ! -f "$BUILD" ]; then
+  echo "FAIL 缺少 release/build.json（编译机构建清单）——按 RELEASE.md 步骤 2 生成并同步"; fail=1
+  bver_m=""; bsize=""; bsha=""
 else
-  echo "ok   latest.json = $VER"
+  bver_m=$(python3 -c "import json;print(json.load(open('$BUILD'))['version'])" 2>/dev/null)
+  bsize=$(python3 -c "import json;print(json.load(open('$BUILD'))['size'])" 2>/dev/null)
+  bsha=$(python3 -c "import json;print(json.load(open('$BUILD'))['sha256'].lower())" 2>/dev/null)
 fi
 
-# 2. manifest size vs the actual file
-msize=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['size'])" 2>/dev/null)
 asize=$(stat -c%s "$EXE")
-if [ "$msize" != "$asize" ]; then
-  echo "FAIL latest.json 里 size=$msize，实际 $asize"; fail=1
-fi
-# 2b. 尺寸下限：manifest 的 size 是从本地文件算的，scp 截断时两者会“自洽地”一致
-# ——一次 977KB 半截 exe 就这样骗过了上面的比对。真实产物 ~7.4MB，低于下限必是残件。
-if [ "$asize" -lt 6000000 ]; then
-  echo "FAIL exe 只有 $asize 字节（<6MB 下限），像是传输被截断的残件——重新从 corp-win 拉取"; fail=1
-else
-  echo "ok   size = $asize"
+asha=$(sha256sum "$EXE" | cut -d' ' -f1)
+
+# 1. Local artifact vs build manifest — the sync-integrity gate.
+if [ -n "$bsha" ]; then
+  case "$bver_m" in
+    "$VER"|"$VER.0") echo "ok   build.json 版本 = $bver_m" ;;
+    *) echo "FAIL build.json 版本是 $bver_m，不是 $VER —— 编译机上的产物不是这一版"; fail=1 ;;
+  esac
+  if [ "$bsize" != "$asize" ]; then
+    echo "FAIL 本地 exe $asize 字节 ≠ 编译机产物 $bsize 字节 —— 同步被截断，重新拉取"; fail=1
+  fi
+  if [ "$bsha" != "$asha" ]; then
+    echo "FAIL 本地 exe SHA-256 与编译机产物不符 —— 同步损坏，重新拉取"; fail=1
+  else
+    echo "ok   sha256 与编译机一致 = ${asha:0:16}…"
+  fi
 fi
 
-# 3. the one that actually bit us: version compiled INTO the binary.
-# Read straight out of the PE version resource here, rather than asking corp-win
-# for VersionInfo.FileVersion: the tunnel to that machine drops often enough that
-# the check kept degrading to a WARN, and a check that skips itself when the
-# network hiccups is not a gate. VS_FIXEDFILEINFO starts at signature 0xFEEF04BD;
-# the two DWORDs following it and dwStrucVersion are the file version, high word first.
+# 2. latest.json consistency (version / size / sha256 must all describe THIS exe).
+mver=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['version'])" 2>/dev/null)
+msize=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['size'])" 2>/dev/null)
+msha=$(python3 -c "import json;print(json.load(open('$MANIFEST')).get('sha256','').lower())" 2>/dev/null)
+[ "$mver" != "$VER" ] && { echo "FAIL latest.json 写的是 $mver，不是 $VER"; fail=1; } \
+  || echo "ok   latest.json = $VER"
+[ "$msize" != "$asize" ] && { echo "FAIL latest.json size=$msize，实际 $asize"; fail=1; } \
+  || echo "ok   size = $asize"
+if [ -z "$msha" ]; then
+  echo "FAIL latest.json 缺 sha256 字段（客户端靠它校验下载完整性）"; fail=1
+elif [ "$msha" != "$asha" ]; then
+  echo "FAIL latest.json sha256 与 exe 不符"; fail=1
+else
+  echo "ok   latest.json sha256 一致"
+fi
+
+# 3. Version compiled INTO the binary, read from the local PE version resource
+#    (VS_FIXEDFILEINFO, signature 0xFEEF04BD) — no dependency on the corp-win
+#    tunnel, so this check can never degrade into a skipped WARN.
 bver=$(python3 - "$EXE" <<'PYVER' 2>/dev/null
 import struct, sys
 data = open(sys.argv[1], "rb").read()
@@ -58,12 +83,10 @@ if at >= 0:
     print(f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}")
 PYVER
 )
-
 if [ -z "$bver" ]; then
   echo "FAIL 读不出 exe 内部版本（版本资源缺失？）"; fail=1
 elif [ "$bver" != "$VER.0" ] && [ "$bver" != "$VER" ]; then
-  echo "FAIL exe 内部版本是 $bver，不是 $VER —— 八成是改了 csproj 但没重新编译"
-  fail=1
+  echo "FAIL exe 内部版本是 $bver，不是 $VER —— 八成是改了 csproj 但没重新编译"; fail=1
 else
   echo "ok   exe 内部版本 = $bver"
 fi

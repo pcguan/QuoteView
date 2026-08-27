@@ -32,7 +32,7 @@ public sealed class AccountSession
 
     /// <summary>
     /// 离线模式: an account-less local user. All its data lives in its own local
-    /// profile file (see GroupStore.OfflineProfile), fully isolated from real
+    /// profile file (see GroupStore.ActiveProfile), fully isolated from real
     /// accounts; nothing is pulled from or pushed to the server. Cleared by any
     /// successful sign-in; survives restarts.
     /// </summary>
