@@ -59,20 +59,48 @@
                    Foreground="#EDF1F7" />
     </StackPanel>
 
-    <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,10" />
-    <!--
-      Scrolls: with ~20 fields the list would otherwise run off the screen.
-      HorizontalScrollBarVisibility must be Disabled, not left at its default
-      Hidden: Hidden still measures the rows against infinite width, so they
-      never shrink to the viewport and the colour pickers on the right get cut
-      off. Disabled is the one that constrains.
-    -->
+    <TextBlock Text="显示字段与颜色" Foreground="#EDF1F7" Margin="0,0,0,8" />
     <ScrollViewer x:Name="FieldsScroll" MaxHeight="340" VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled">
-      <StackPanel x:Name="FieldsPanel" Margin="0,0,6,0" />
+      <!-- ItemsControl, not ListBox: no selection visuals to fight the chips.
+           Same interaction as the main grid's 列设置 — click toggles, capture-
+           drag reorders, double-click opens the colour editor. -->
+      <ItemsControl x:Name="FieldChips" Background="Transparent" Margin="0,0,6,0">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Border Background="#1B2233" BorderBrush="#2C3547" BorderThickness="1"
+                    CornerRadius="4" Padding="8,5" Margin="0,0,6,6">
+              <StackPanel Orientation="Horizontal">
+                <CheckBox IsChecked="{Binding Visible, Mode=TwoWay}" MinWidth="0"
+                          VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Name}" Margin="5,0,7,0" VerticalAlignment="Center"
+                           Foreground="#EDF1F7" />
+                <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
+                        Background="{Binding Swatch1}" />
+                <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
+                        Margin="3,0,0,0" Background="{Binding Swatch2}"
+                        Visibility="{Binding Swatch2Visible}" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
     </ScrollViewer>
 
+    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+      <Button Content="全选" Padding="14,3" Click="FieldsAll_Click" />
+      <Button Content="全清" Padding="14,3" Margin="8,0,0,0" Click="FieldsNone_Click"
+              ToolTip="保留「合约名称」——面板每行至少要显示一个字段" />
+      <Button Content="默认" Padding="14,3" Margin="8,0,0,0" Click="FieldsDefault_Click"
+              ToolTip="恢复默认的字段选择、顺序与颜色" />
+      <Button Content="一键排序" Padding="14,3" Margin="8,0,0,0" Click="FieldsCompact_Click"
+              ToolTip="勾选的字段按现有相对顺序排到前面，未勾选的按相对顺序紧随其后" />
+    </StackPanel>
+
     <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
-               Text="编辑写入模板草稿，点「保存」生效并应用到面板；切换模板即切换面板外观。至少保留一个字段。按住左侧 ≡ 上下拖动可调整字段顺序（面板按此顺序显示）；右键字段行可置顶 / 上移 / 下移 / 置底。" />
+               Text="编辑写入模板草稿，点「保存」生效并应用到面板；切换模板即切换面板外观。点击字段块勾选/取消显示，按住拖动调整顺序（面板按此顺序显示），双击字段块修改颜色。" />
   </StackPanel>
 </UserControl>

@@ -50,7 +50,7 @@ public static class Program
         // 1b) The whole field list, unscrolled, at the width the ScrollViewer
         // gives it — the longest label (分组名（面板左侧）) is below the fold.
         var panel = (FrameworkElement)typeof(StealthSettingsView)
-            .GetField("FieldsPanel", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)!
+            .GetField("FieldChips", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(view)!;
         if (LogicalTreeHelper.GetParent(panel) is ContentControl owner) owner.Content = null;
         Render(new Border

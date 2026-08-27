@@ -1,7 +1,12 @@
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using StockClient.Core.Groups;
 
 namespace StockClient.App.Views;
@@ -124,6 +129,7 @@ public partial class StealthSettingsView : UserControl
         };
 
         BuildGapPreview();
+        GapPreview.Opacity = _editing.Shade / 10.0;
 
         ShadeSlider.ValueChanged += (_, e) =>
         {
@@ -131,6 +137,7 @@ public partial class StealthSettingsView : UserControl
             var v = (int)e.NewValue;
             ShadeValue.Text = v.ToString();
             _editing.Shade = v;
+            GapPreview.Opacity = v / 10.0;   // the sample previews 透明度 live, like 行距
             Apply();
         };
 
@@ -155,7 +162,7 @@ public partial class StealthSettingsView : UserControl
             };
         }
 
-        BuildFields();
+        BuildChips();
     }
 
     private void FillTemplates(string? select)
@@ -205,14 +212,14 @@ public partial class StealthSettingsView : UserControl
         RowGapValue.Text = _editing.RowGap.ToString();
         ShadeSlider.Value = _editing.Shade;
         ShadeValue.Text = _editing.Shade.ToString();
+        GapPreview.Opacity = _editing.Shade / 10.0;
         ChartNone.IsChecked = _editing.Chart == PanelChart.None;
         ChartTrend.IsChecked = _editing.Chart == PanelChart.Trend;
         ChartDepth.IsChecked = _editing.Chart == PanelChart.Depth;
         UpdateGapPreview();
         _seeding = false;
 
-        FieldsPanel.Children.Clear();
-        BuildFields();
+        BuildChips();
     }
 
     private void TemplateNew_Click(object sender, RoutedEventArgs e)
@@ -316,180 +323,352 @@ public partial class StealthSettingsView : UserControl
         return dialog.ShowDialog() == true ? box.Text.Trim() : null;
     }
 
-    private void BuildFields()
+    // ---- field chips: 勾选 + 拖拽排序 + 双击调色 --------------------------
+    //
+    // Mirrors the main grid's 列设置: every field is a flat chip — a click (or
+    // its checkbox) toggles visibility, a capture-based drag reorders (full
+    // input rate, ghost glides pixel-for-pixel), and a DOUBLE-click opens the
+    // colour editor. Chip order IS _editing.Fields order — what the panel
+    // renders. All of it stays buffered until 「保存」.
+
+    private readonly ObservableCollection<FieldChip> _chips = new();
+
+    private Point _pressPoint;
+    private Point _grabOffset;
+    private int _pressIndex = -1;
+    private int _dragIndex = -1;
+    private bool _armed;
+    private bool _draggingChip;
+    private GhostAdorner? _ghost;
+    private bool _chipsWired;
+
+    private void BuildChips()
     {
+        _chips.Clear();
         foreach (var field in _editing.Fields)
+            _chips.Add(new FieldChip(field, FieldName(field.Field), CanHide));
+
+        if (_chipsWired) return;
+        _chipsWired = true;
+        FieldChips.ItemsSource = _chips;
+        FieldChips.PreviewMouseLeftButtonDown += Chips_Down;
+        FieldChips.PreviewMouseMove += Chips_Move;
+        FieldChips.PreviewMouseLeftButtonUp += Chips_Up;
+        FieldChips.LostMouseCapture += (_, _) => EndChipDrag();
+    }
+
+    /// <summary>At least one ROW field must stay visible — an all-blank line
+    /// shows nothing. 分组名 doesn't count: it draws beside the rows.</summary>
+    private bool CanHide(StealthFieldConfig field) =>
+        field.Field == StealthField.GroupName
+        || _editing.Fields.Count(f => f.Visible && f.Field != StealthField.GroupName) > 1;
+
+    private void Chips_Down(object sender, MouseButtonEventArgs e)
+    {
+        _pressPoint = e.GetPosition(FieldChips);
+        _pressIndex = ChipIndexAt(_pressPoint);
+
+        // Double-click = colour editor. Click #1 of the pair already toggled
+        // visibility on its way up — undo it, "edit colours" must not also hide.
+        if (e.ClickCount == 2 && _pressIndex >= 0
+            && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject))
         {
-            var grid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });     // drag handle
-            grid.ColumnDefinitions.Add(new ColumnDefinition());                              // name (stretch)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });     // colour(s)
+            var chip = _chips[_pressIndex];
+            chip.Visible = !chip.Visible;
+            _armed = false;
+            e.Handled = true;
+            EditColors(chip);
+            return;
+        }
 
-            var captured = field;
+        // A press on the checkbox glyph is the checkbox's own toggle; arming
+        // here would double-toggle on the way back up.
+        _armed = _pressIndex >= 0 && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject);
+        _draggingChip = false;
+        if (_armed && ChipContainer(_pressIndex) is { } c) _grabOffset = e.GetPosition(c);
+    }
 
-            // Reorder rides a dedicated handle, not the whole row — the row is
-            // full of interactive controls (checkbox, colour pickers) that a
-            // free row-drag would fight with.
-            var handle = new TextBlock
+    private void Chips_Move(object sender, MouseEventArgs e)
+    {
+        if (!_armed || e.LeftButton != MouseButtonState.Pressed) return;
+
+        var p = e.GetPosition(FieldChips);
+
+        if (!_draggingChip)
+        {
+            if (Math.Abs(p.X - _pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(p.Y - _pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
+                return;
+
+            _draggingChip = true;
+            _dragIndex = _pressIndex;
+            ShowGhost(_dragIndex);
+            FieldChips.CaptureMouse();
+        }
+
+        _ghost?.SetPosition(new Point(p.X - _grabOffset.X, p.Y - _grabOffset.Y));
+
+        var over = ChipIndexAt(p);
+        if (over >= 0 && over != _dragIndex)
+        {
+            _chips.Move(_dragIndex, over);
+            _dragIndex = over;
+            DimDragged();
+        }
+
+        // Edge auto-scroll: the chip grid lives in a capped viewport.
+        var vy = e.GetPosition(FieldsScroll).Y;
+        if (vy < 28)
+            FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset - (28 - vy));
+        else if (vy > FieldsScroll.ViewportHeight - 28)
+            FieldsScroll.ScrollToVerticalOffset(
+                FieldsScroll.VerticalOffset + (vy - (FieldsScroll.ViewportHeight - 28)));
+    }
+
+    private void Chips_Up(object sender, MouseButtonEventArgs e)
+    {
+        if (_draggingChip)
+        {
+            FieldChips.ReleaseMouseCapture();   // EndChipDrag runs via LostMouseCapture
+        }
+        else if (_armed && _pressIndex >= 0
+                 && ChipIndexAt(e.GetPosition(FieldChips)) == _pressIndex)
+        {
+            _chips[_pressIndex].Visible = !_chips[_pressIndex].Visible;
+        }
+
+        _armed = false;
+    }
+
+    private void EndChipDrag()
+    {
+        if (!_draggingChip) return;
+
+        _draggingChip = false;
+        _dragIndex = -1;
+        RemoveGhost();
+        foreach (var chip in _chips) chip.Dragging = false;
+        DimDragged();
+
+        _editing.Fields.Clear();
+        foreach (var chip in _chips) _editing.Fields.Add(chip.Field);
+        Apply();
+    }
+
+    private void ShowGhost(int index)
+    {
+        _chips[index].Dragging = true;
+        DimDragged();
+
+        if (ChipContainer(index) is not { } c || c.ActualWidth < 1) return;
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var rtb = new RenderTargetBitmap(
+            (int)Math.Ceiling(c.ActualWidth * dpi.DpiScaleX),
+            (int)Math.Ceiling(c.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+        var dv = new DrawingVisual();
+        using (var ctx = dv.RenderOpen())
+            ctx.DrawRectangle(new VisualBrush(c), null,
+                new Rect(new Size(c.ActualWidth, c.ActualHeight)));
+        rtb.Render(dv);
+
+        _ghost = new GhostAdorner(FieldChips, rtb, new Size(c.ActualWidth, c.ActualHeight));
+        _ghost.SetPosition(new Point(_pressPoint.X - _grabOffset.X, _pressPoint.Y - _grabOffset.Y));
+        AdornerLayer.GetAdornerLayer(FieldChips)?.Add(_ghost);
+    }
+
+    private void RemoveGhost()
+    {
+        if (_ghost is null) return;
+        AdornerLayer.GetAdornerLayer(FieldChips)?.Remove(_ghost);
+        _ghost = null;
+    }
+
+    private void DimDragged()
+    {
+        for (var i = 0; i < _chips.Count; i++)
+            if (ChipContainer(i) is { } c)
+                c.Opacity = _chips[i].Dragging ? 0.3 : 1.0;
+    }
+
+    private FrameworkElement? ChipContainer(int index) =>
+        FieldChips.ItemContainerGenerator.ContainerFromIndex(index) as FrameworkElement;
+
+    private int ChipIndexAt(Point p)
+    {
+        for (var i = 0; i < _chips.Count; i++)
+        {
+            if (ChipContainer(i) is not { } c) continue;
+            var bounds = new Rect(c.TranslatePoint(new Point(0, 0), FieldChips), c.RenderSize);
+            if (bounds.Contains(p)) return i;
+        }
+        return -1;
+    }
+
+    private static bool IsOn<T>(DependencyObject? source) where T : DependencyObject
+    {
+        while (source is not null)
+        {
+            if (source is T) return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+        return false;
+    }
+
+    // ---- 全选 / 全清 / 默认 / 一键排序 ------------------------------------
+
+    private void FieldsAll_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var chip in _chips) chip.Visible = true;
+    }
+
+    private void FieldsNone_Click(object sender, RoutedEventArgs e)
+    {
+        // 名称 stays on first, so the ≥1-row-field guard never trips mid-loop.
+        foreach (var chip in _chips.Where(c => c.Field.Field == StealthField.Name))
+            chip.Visible = true;
+        foreach (var chip in _chips.Where(c => c.Field.Field != StealthField.Name))
+            chip.Visible = false;
+    }
+
+    private void FieldsDefault_Click(object sender, RoutedEventArgs e)
+    {
+        var def = StealthConfig.CreateDefault().Normalize();
+        _editing.Fields.Clear();
+        _editing.Fields.AddRange(def.Fields);
+        BuildChips();
+        Apply();
+    }
+
+    /// <summary>一键排序: checked fields close ranks at the front keeping their
+    /// relative order; unchecked follow, also in relative order.</summary>
+    private void FieldsCompact_Click(object sender, RoutedEventArgs e)
+    {
+        var ordered = _editing.Fields.Where(f => f.Visible)
+            .Concat(_editing.Fields.Where(f => !f.Visible)).ToList();
+        _editing.Fields.Clear();
+        _editing.Fields.AddRange(ordered);
+        BuildChips();
+        Apply();
+    }
+
+    /// <summary>Double-click editor: the field's colour(s) via the full picker.</summary>
+    private void EditColors(FieldChip chip)
+    {
+        var body = new StackPanel { Margin = new Thickness(16, 14, 16, 14) };
+
+        void AddRow(string label, string hex, Action<string> set)
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var text = new TextBlock
             {
-                Text = "≡",
-                Foreground = Frozen("#5F6672"),
-                FontSize = 14,
-                Padding = new Thickness(0, 0, 8, 0),
+                Text = label,
+                Foreground = Frozen("#8B93A3"),
                 VerticalAlignment = VerticalAlignment.Center,
-                Cursor = Cursors.SizeNS,
-                ToolTip = "拖动调整字段顺序（面板按此顺序显示）",
             };
-            HookRowDrag(handle, grid);
-            Grid.SetColumn(handle, 0);
-            grid.Children.Add(handle);
+            var picker = Picker(hex, h => { set(h); chip.RefreshSwatches(); }, label, 100);
+            Grid.SetColumn(text, 0);
+            Grid.SetColumn(picker, 1);
+            row.Children.Add(text);
+            row.Children.Add(picker);
+            body.Children.Add(row);
+        }
 
-            // Long-list convenience: dragging a row across 40+ fields is tedious,
-            // so the row's right-click menu jumps in one action.
-            var rowMenu = new ContextMenu();
-            void AddMove(string header, Func<int, int> target)
+        if (chip.Signed)
+        {
+            AddRow("上涨颜色", chip.Field.PositiveColor, h => chip.Field.PositiveColor = h);
+            AddRow("下跌颜色", chip.Field.NegativeColor, h => chip.Field.NegativeColor = h);
+        }
+        else
+        {
+            AddRow("颜色", chip.Field.Color, h => chip.Field.Color = h);
+        }
+
+        var close = new Button
+        {
+            Content = "完成",
+            Padding = new Thickness(14, 3, 14, 3),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        body.Children.Add(close);
+
+        var dialog = new Window
+        {
+            Title = chip.Name + " 颜色",
+            Owner = Window.GetWindow(this),
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Background = Frozen("#12161F"),
+            FontFamily = new FontFamily("Microsoft YaHei"),
+            Content = body,
+        };
+        close.Click += (_, _) => dialog.Close();
+        dialog.ShowDialog();
+    }
+
+    /// <summary>One field as a togglable chip; writes straight into the draft.</summary>
+    private sealed class FieldChip : INotifyPropertyChanged
+    {
+        private readonly Func<StealthFieldConfig, bool> _canHide;
+
+        public FieldChip(StealthFieldConfig field, string name,
+            Func<StealthFieldConfig, bool> canHide)
+        {
+            Field = field;
+            Name = name;
+            Signed = StealthFields.IsSigned(field.Field);
+            _canHide = canHide;
+        }
+
+        public StealthFieldConfig Field { get; }
+        public string Name { get; }
+        public bool Signed { get; }
+
+        /// <summary>True while this chip is the one being dragged.</summary>
+        public bool Dragging { get; set; }
+
+        public bool Visible
+        {
+            get => Field.Visible;
+            set
             {
-                var item = new MenuItem { Header = header };
-                item.Click += (_, _) =>
+                if (Field.Visible == value) return;
+                if (!value && !_canHide(Field))
                 {
-                    var i = FieldsPanel.Children.IndexOf(grid);
-                    if (i < 0) return;
-                    MoveRow(i, Math.Clamp(target(i), 0, FieldsPanel.Children.Count - 1));
-                    grid.BringIntoView();
-                };
-                rowMenu.Items.Add(item);
-            }
-            AddMove("置顶", _ => 0);
-            AddMove("上移", i => i - 1);
-            AddMove("下移", i => i + 1);
-            AddMove("置底", _ => FieldsPanel.Children.Count - 1);
-            grid.ContextMenu = rowMenu;
-
-            var check = new CheckBox
-            {
-                Content = FieldName(field.Field),
-                IsChecked = field.Visible,
-                Foreground = Frozen("#EDF1F7"),
-                VerticalAlignment = VerticalAlignment.Center,
-                // WPF UI's implicit CheckBox style carries a MinWidth wide enough
-                // that the star column refuses to give ground, which pushed the
-                // colour pickers past the right edge and clipped them.
-                MinWidth = 0,
-            };
-            check.Checked += (_, _) => { captured.Visible = true; Apply(); };
-            check.Unchecked += (_, _) =>
-            {
-                // Keep at least one ROW field visible: an empty line would show
-                // nothing. The group name doesn't count — it is drawn beside the
-                // rows, not in them, so leaving only it selected would still give
-                // blank rows, and turning it off on its own is perfectly fine.
-                var isRowField = captured.Field != StealthField.GroupName;
-                var rowFieldsLeft = _editing.Fields.Count(
-                    f => f.Visible && f.Field != StealthField.GroupName);
-
-                if (isRowField && rowFieldsLeft <= 1)
-                {
-                    check.IsChecked = true;
+                    Notify(nameof(Visible));   // snap a refused checkbox back
                     return;
                 }
-
-                captured.Visible = false;
-                Apply();
-            };
-            Grid.SetColumn(check, 1);
-            grid.Children.Add(check);
-
-            // Signed fields (price/change/percent/open/high/low) get a rise colour
-            // and a fall colour; the rest get one colour. Setting both the same is
-            // how you'd make a signed field single-colour.
-            var colours = new StackPanel { Orientation = Orientation.Horizontal };
-            if (StealthFields.IsSigned(field.Field))
-            {
-                colours.Children.Add(Picker(field.PositiveColor, h => captured.PositiveColor = h, "上涨颜色", 78));
-                colours.Children.Add(Picker(field.NegativeColor, h => captured.NegativeColor = h, "下跌颜色", 78, leftMargin: 6));
+                Field.Visible = value;
+                Notify(nameof(Visible));
             }
-            else
-            {
-                colours.Children.Add(Picker(field.Color, h => captured.Color = h, "颜色", 100));
-            }
-
-            Grid.SetColumn(colours, 2);
-            grid.Children.Add(colours);
-
-            FieldsPanel.Children.Add(grid);
         }
-    }
 
-    // ---- field reorder (drag the ≡ handle) --------------------------------
-    //
-    // Live reorder: while the handle is held, the row under the cursor swaps
-    // with the dragged one immediately — the list IS the preview, no adorner
-    // needed. Rows map 1:1 by index onto _editing.Fields, so moving a child
-    // moves the draft entry with it; 「保存」 persists the new order.
+        public Brush Swatch1 => BrushOf(Signed ? Field.PositiveColor : Field.Color);
+        public Brush Swatch2 => BrushOf(Field.NegativeColor);
+        public Visibility Swatch2Visible => Signed ? Visibility.Visible : Visibility.Collapsed;
 
-    private Grid? _dragRow;
-
-    private void HookRowDrag(FrameworkElement handle, Grid row)
-    {
-        handle.MouseLeftButtonDown += (_, e) =>
+        public void RefreshSwatches()
         {
-            e.Handled = true;
-            _dragRow = row;
-            handle.CaptureMouse();
-        };
-
-        handle.MouseMove += (_, e) =>
-        {
-            if (_dragRow is null || e.LeftButton != MouseButtonState.Pressed) return;
-
-            var y = e.GetPosition(FieldsPanel).Y;
-            var from = FieldsPanel.Children.IndexOf(_dragRow);
-            var to = RowIndexAt(y);
-            if (to >= 0 && to != from) MoveRow(from, to);
-
-            // Edge auto-scroll: ~46 rows live in a 340px viewport, so a drag
-            // must be able to travel beyond it. Speed scales with how deep the
-            // cursor is into the edge zone, so a long haul doesn't crawl.
-            var vy = e.GetPosition(FieldsScroll).Y;
-            if (vy < 32)
-                FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset - (32 - vy));
-            else if (vy > FieldsScroll.ViewportHeight - 32)
-                FieldsScroll.ScrollToVerticalOffset(
-                    FieldsScroll.VerticalOffset + (vy - (FieldsScroll.ViewportHeight - 32)));
-        };
-
-        handle.MouseLeftButtonUp += (_, _) =>
-        {
-            _dragRow = null;
-            handle.ReleaseMouseCapture();
-        };
-    }
-
-    /// <summary>The row index whose vertical span contains y, or -1 outside.</summary>
-    private int RowIndexAt(double y)
-    {
-        var top = 0.0;
-        for (var i = 0; i < FieldsPanel.Children.Count; i++)
-        {
-            var child = (FrameworkElement)FieldsPanel.Children[i];
-            var h = child.ActualHeight + child.Margin.Top + child.Margin.Bottom;
-            if (y < top + h) return i;
-            top += h;
+            Notify(nameof(Swatch1));
+            Notify(nameof(Swatch2));
         }
-        return y < 0 ? 0 : FieldsPanel.Children.Count - 1;
-    }
 
-    private void MoveRow(int from, int to)
-    {
-        if (from < 0 || to < 0 || from == to) return;
+        private static Brush BrushOf(string hex)
+        {
+            try { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); }
+            catch { return Brushes.Transparent; }
+        }
 
-        var row = FieldsPanel.Children[from];
-        FieldsPanel.Children.RemoveAt(from);
-        FieldsPanel.Children.Insert(to, row);
+        public event PropertyChangedEventHandler? PropertyChanged;
 
-        var field = _editing.Fields[from];
-        _editing.Fields.RemoveAt(from);
-        _editing.Fields.Insert(to, field);
+        private void Notify(string name) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     /// <summary>
