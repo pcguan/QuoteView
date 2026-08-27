@@ -521,16 +521,16 @@
                 </Style>
               </DataGridTextColumn.ElementStyle>
             </DataGridTextColumn>
-            <DataGridTemplateColumn Header="" Width="52" MinWidth="52">
-              <DataGridTemplateColumn.CellTemplate>
-                <DataTemplate>
-                  <ui:Button Height="24" Width="26" Padding="0" Icon="{ui:SymbolIcon Delete24}"
-                             Click="RemoveCode_Click" ToolTip="从分组移除" />
-                </DataTemplate>
-              </DataGridTemplateColumn.CellTemplate>
-            </DataGridTemplateColumn>
           </DataGrid.Columns>
         </DataGrid>
+        <!-- Per-row ✕, floated at the viewport's right edge like the gear
+             below: as a real trailing column it sat at the END of the
+             scrollable width, so with many columns visible deleting a row
+             meant scrolling all the way right first. Repositioned per visible
+             row from code (SyncRemoveRail); right margin clears the vertical
+             scrollbar. Background stays null so empty areas pass clicks through. -->
+        <Canvas x:Name="RemoveRail" HorizontalAlignment="Right" Width="34"
+                Margin="0,0,18,0" ClipToBounds="True" />
         <!-- Floats over the right end of the header row: unlike a real header
              cell it stays glued to the viewport edge however the window and
              column widths change. -->

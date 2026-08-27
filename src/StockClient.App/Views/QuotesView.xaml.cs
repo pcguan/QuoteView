@@ -393,6 +393,15 @@ public partial class QuotesView : UserControl
                     ?.AddValueChanged(col, (_, _) => UpdateFundFlowActive());
 
             UpdateFundFlowActive();
+
+            // The remove rail follows the rows: vertical scroll moves them,
+            // items changing replaces them, resize changes how many fit.
+            grid.AddHandler(ScrollViewer.ScrollChangedEvent,
+                new ScrollChangedEventHandler((_, _) => SyncRemoveRail()));
+            grid.ItemContainerGenerator.ItemsChanged += (_, _) =>
+                Dispatcher.BeginInvoke(new Action(SyncRemoveRail), DispatcherPriority.Loaded);
+            grid.SizeChanged += (_, _) => SyncRemoveRail();
+            Dispatcher.BeginInvoke(new Action(SyncRemoveRail), DispatcherPriority.Loaded);
         }
 
         TryAttachColumnPersistence();
@@ -553,6 +562,62 @@ public partial class QuotesView : UserControl
     {
         if (sender is FrameworkElement { DataContext: QuoteRow row } && Vm is { } vm)
             await RemoveWithConfirmAsync(vm, new[] { row });
+    }
+
+    // ---- floating per-row remove rail -------------------------------------
+    //
+    // The ✕ used to be a real trailing column — parked at the END of the
+    // scrollable width, so with many columns visible deleting a row meant
+    // scrolling all the way right first. These buttons live OUTSIDE the scroll
+    // content, pinned to the viewport's right edge (same idea as the header
+    // gear), repositioned per visible row whenever scroll/rows/size change.
+
+    private void SyncRemoveRail()
+    {
+        if (Vm is null || !QuoteGrid.IsLoaded) return;
+
+        RemoveRail.Children.Clear();
+        var headerBottom = FindDescendant<
+            System.Windows.Controls.Primitives.DataGridColumnHeadersPresenter>(QuoteGrid)
+            ?.ActualHeight ?? 0;
+
+        foreach (var item in QuoteGrid.Items)
+        {
+            if (QuoteGrid.ItemContainerGenerator.ContainerFromItem(item)
+                is not DataGridRow row || !row.IsVisible) continue;   // virtualized away
+
+            double y;
+            try { y = row.TranslatePoint(default, QuoteGrid).Y; }
+            catch (InvalidOperationException) { continue; }   // detached mid-layout
+
+            if (y < headerBottom - 1 || y + row.ActualHeight > QuoteGrid.ActualHeight + 1)
+                continue;   // scrolled (partially) out of the viewport
+
+            var button = new Wpf.Ui.Controls.Button
+            {
+                Height = 24,
+                Width = 28,
+                Padding = new Thickness(0),
+                Icon = new SymbolIcon { Symbol = SymbolRegular.Delete24 },
+                ToolTip = "从分组移除",
+                DataContext = row.DataContext,   // RemoveCode_Click reads the row here
+            };
+            button.Click += RemoveCode_Click;
+            Canvas.SetLeft(button, 3);
+            Canvas.SetTop(button, y + (row.ActualHeight - 24) / 2);
+            RemoveRail.Children.Add(button);
+        }
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T hit) return hit;
+            if (FindDescendant<T>(child) is { } deep) return deep;
+        }
+        return null;
     }
 
     /// <summary>
