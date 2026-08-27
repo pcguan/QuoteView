@@ -130,9 +130,14 @@ public partial class MainWindow : FluentWindow
 
             // Every later config save pushes the preference slice back up,
             // debounced — colour-picker drags save on every tick of the drag.
-            _lastPushedSettings = _quotes.ExportSettingsJson();
+            _lastPushedSettings = _pullSettingsFailed ? "" : _quotes.ExportSettingsJson();
             _lastPushedGroups = _quotes.ExportGroupsJson();
             _quotes.ConfigSaved += ScheduleSettingsPush;
+
+            // Pull failed → the local copy is authoritative-but-unpushed: send
+            // it up right away so the divergence lands in the audit log instead
+            // of lurking until a random touch pushes a misleading full diff.
+            if (_pullSettingsFailed) ScheduleSettingsPush();
 
             History.Init(_quotes, _trendCache, _vm.Repository, _session);
             UpdateAccountButton();
@@ -173,6 +178,25 @@ public partial class MainWindow : FluentWindow
 
             if (WindowState == WindowState.Minimized || !_session.IsSignedIn) _quotes?.Pause();
             else _quotes?.Resume();
+        };
+
+        // Cancel-close → flush → re-close. WPF tears the dispatcher down before
+        // an async Closed continuation gets to run, so a change made seconds
+        // before quitting silently missed the wire (one lost brightness tweak is
+        // how corp-win spent a night out of sync). Cancellation is ignored
+        // during Application.Shutdown — the update path flushes on its own
+        // before restarting for exactly that reason.
+        Closing += async (_, e) =>
+        {
+            if (_closeFlushed || _quotes is null || !_session.IsSignedIn) return;
+            if (_quotes.ExportSettingsJson() == _lastPushedSettings
+                && _quotes.ExportGroupsJson() == _lastPushedGroups) return;
+
+            e.Cancel = true;
+            _settingsPushTimer?.Stop();
+            await FlushSettingsPushAsync();
+            _closeFlushed = true;
+            Close();
         };
 
         Closed += async (_, _) =>
@@ -252,6 +276,11 @@ public partial class MainWindow : FluentWindow
     private string _lastPushedSettings = "";
     private string _lastPushedGroups = "";
     private DispatcherTimer? _settingsPushTimer;
+
+    /// <summary>Last sign-in pull couldn't fetch the settings slice (network
+    /// blip / fresh account) — local is then treated as pending-push.</summary>
+    private bool _pullSettingsFailed;
+    private bool _closeFlushed;
 
     /// <summary>
     /// Debounced settings push: many UI paths save the config several times a
@@ -334,20 +363,41 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// Last-chance flush on exit: a change made moments before closing hasn't
-    /// cleared the debounce yet. Capped at 3s so a dead network can't hold the
-    /// window open — the timestamp arbitration covers whatever this misses.
+    /// Last-chance flush: a change made moments before closing hasn't cleared
+    /// the debounce yet. Pushes both slices sequentially, updates the baselines
+    /// on success (so a second call is a no-op), capped at 3s overall so a dead
+    /// network can't hold the window open.
     /// </summary>
     private async Task FlushSettingsPushAsync()
     {
         if (_quotes is null || !_session.IsSignedIn) return;
 
-        var json = _quotes.ExportSettingsJson();
-        if (json == _lastPushedSettings) return;
+        var quotes = _quotes;
+        var json = quotes.ExportSettingsJson();
+        var settingsDirty = json != _lastPushedSettings;
+        var groupsJson = quotes.ExportGroupsJson();
+        var groupsDirty = groupsJson != _lastPushedGroups
+            && string.Equals(quotes.ConfigOwner, _session.Username,
+                StringComparison.OrdinalIgnoreCase);
+        if (!settingsDirty && !groupsDirty) return;
 
-        _quotes.StampPrefsChanged();
-        json = _quotes.ExportSettingsJson();
-        await Task.WhenAny(_session.PutSettingsAsync(json), Task.Delay(3000));
+        if (settingsDirty)
+        {
+            quotes.StampPrefsChanged();
+            json = quotes.ExportSettingsJson();
+        }
+        if (groupsDirty) quotes.StampGroupsChanged();
+
+        async Task DoFlush()
+        {
+            if (settingsDirty && await _session.PutSettingsAsync(json))
+                _lastPushedSettings = json;
+            if (groupsDirty && await _session.SyncGroupsAsync(
+                    quotes.ExportGroups(), quotes.GroupsUpdatedAt))
+                _lastPushedGroups = groupsJson;
+        }
+
+        await Task.WhenAny(DoFlush(), Task.Delay(3000));
     }
 
     private void UpdateAccountButton() =>
@@ -384,7 +434,19 @@ public partial class MainWindow : FluentWindow
         var store = new GroupStore();
         var changed = false;
 
-        if (await _session.GetSettingsAsync() is { } settingsJson)
+        // The login pull is the ONE moment the server copy comes down, so a
+        // transient fetch failure must not be silently accepted: the machine
+        // then runs on a local state the sync layer believes is already pushed,
+        // and the divergence surfaces days later as a full-blob overwrite
+        // nobody remembers making. Retry, then flag (see Loaded).
+        string? settingsJson = null;
+        for (var attempt = 0; attempt < 3 && settingsJson is null; attempt++)
+        {
+            if (attempt > 0) await Task.Delay(1500);
+            settingsJson = await _session.GetSettingsAsync();
+        }
+        _pullSettingsFailed = settingsJson is null;
+        if (settingsJson is not null)
         {
             store.MergeSettings(settingsJson);
             changed = true;
@@ -399,7 +461,14 @@ public partial class MainWindow : FluentWindow
         var otherOwner = config.Owner is not null
                          && !string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase);
 
-        if (await _session.GroupsWithAtAsync() is { } remote)
+        var remoteGroups = await _session.GroupsWithAtAsync();
+        for (var attempt = 0; attempt < 2 && remoteGroups is null; attempt++)
+        {
+            await Task.Delay(1500);
+            remoteGroups = await _session.GroupsWithAtAsync();
+        }
+
+        if (remoteGroups is { } remote)
         {
             if (remote.Groups.Count > 0)
             {
@@ -458,6 +527,13 @@ public partial class MainWindow : FluentWindow
             _stealth?.ApplySettings();
             Quotes.ReapplyColumnLayout();
             GroupColWidthFromConfig();
+        }
+
+        // Same rule as startup: a failed pull means local is pending-push.
+        if (_pullSettingsFailed && _quotes is not null)
+        {
+            _lastPushedSettings = "";
+            ScheduleSettingsPush();
         }
 
         _ = PushGroupsAsync();
@@ -566,6 +642,13 @@ public partial class MainWindow : FluentWindow
 
         UpdateBarUpdate.IsEnabled = false;
         var progress = new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
+
+        // Land any pending config push while the app is still fully alive: the
+        // restart path can't rely on Closing (cancellation is ignored during
+        // Shutdown), and an abandoned async flush is precisely how an edit made
+        // just before clicking 更新 used to vanish.
+        _settingsPushTimer?.Stop();
+        await FlushSettingsPushAsync();
 
         try
         {
