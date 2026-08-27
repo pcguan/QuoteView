@@ -574,7 +574,7 @@ public partial class MainWindow : FluentWindow
     /// <summary>Reentrancy guard: a slow check (both sources timing out) outlives the 30s tick.</summary>
     private async Task AutoCheckAsync()
     {
-        if (_updateCheckBusy) return;
+        if (_updateCheckBusy || _updateApplying) return;
         _updateCheckBusy = true;
         try
         {
@@ -623,8 +623,18 @@ public partial class MainWindow : FluentWindow
                 : $"已是最新版本 v{check.Current}。");
     }
 
+    /// <summary>True from the moment 更新 is clicked until the app restarts (or
+    /// the download fails). Blocks every path that could redraw the bar.</summary>
+    private bool _updateApplying;
+
     private void ShowUpdateBar(UpdateCheck check)
     {
+        // Never clobber an in-flight download: the 30s auto-check used to land
+        // here mid-download and reset the button to an enabled 「更新」— the
+        // progress "vanished", and a second click collided with the running
+        // download (file-in-use error).
+        if (_updateApplying) return;
+
         var release = check.Release!;
         _pendingRelease = release;
 
@@ -645,7 +655,8 @@ public partial class MainWindow : FluentWindow
 
     private async void UpdateBar_Update(object sender, RoutedEventArgs e)
     {
-        if (_pendingRelease is null) return;
+        if (_pendingRelease is null || _updateApplying) return;
+        _updateApplying = true;
 
         UpdateBarUpdate.IsEnabled = false;
         var progress = new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
@@ -664,6 +675,7 @@ public partial class MainWindow : FluentWindow
         }
         catch (Exception ex)
         {
+            _updateApplying = false;
             UpdateBarUpdate.IsEnabled = true;
             UpdateBarUpdate.Content = "更新";
             await InfoDialog("更新失败", ex.Message);

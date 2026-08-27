@@ -344,6 +344,27 @@ public partial class StealthSettingsWindow : Window
             Grid.SetColumn(handle, 0);
             grid.Children.Add(handle);
 
+            // Long-list convenience: dragging a row across 40+ fields is tedious,
+            // so the row's right-click menu jumps in one action.
+            var rowMenu = new ContextMenu();
+            void AddMove(string header, Func<int, int> target)
+            {
+                var item = new MenuItem { Header = header };
+                item.Click += (_, _) =>
+                {
+                    var i = FieldsPanel.Children.IndexOf(grid);
+                    if (i < 0) return;
+                    MoveRow(i, Math.Clamp(target(i), 0, FieldsPanel.Children.Count - 1));
+                    grid.BringIntoView();
+                };
+                rowMenu.Items.Add(item);
+            }
+            AddMove("置顶", _ => 0);
+            AddMove("上移", i => i - 1);
+            AddMove("下移", i => i + 1);
+            AddMove("置底", _ => FieldsPanel.Children.Count - 1);
+            grid.ContextMenu = rowMenu;
+
             var check = new CheckBox
             {
                 Content = FieldName(field.Field),
@@ -427,11 +448,14 @@ public partial class StealthSettingsWindow : Window
             if (to >= 0 && to != from) MoveRow(from, to);
 
             // Edge auto-scroll: ~46 rows live in a 340px viewport, so a drag
-            // must be able to travel beyond it.
+            // must be able to travel beyond it. Speed scales with how deep the
+            // cursor is into the edge zone, so a long haul doesn't crawl.
             var vy = e.GetPosition(FieldsScroll).Y;
-            if (vy < 24) FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset - 12);
-            else if (vy > FieldsScroll.ViewportHeight - 24)
-                FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset + 12);
+            if (vy < 32)
+                FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset - (32 - vy));
+            else if (vy > FieldsScroll.ViewportHeight - 32)
+                FieldsScroll.ScrollToVerticalOffset(
+                    FieldsScroll.VerticalOffset + (vy - (FieldsScroll.ViewportHeight - 32)));
         };
 
         handle.MouseLeftButtonUp += (_, _) =>
