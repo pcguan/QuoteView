@@ -21,4 +21,8 @@ public sealed record ReleaseInfo
 
     /// <summary>Where it came from, e.g. "国内(NAS)" / "GitHub".</summary>
     public string Source { get; init; } = "";
+
+    /// <summary>Exact exe size in bytes when the source reports it, else 0.
+    /// The updater refuses a download whose length disagrees.</summary>
+    public long Size { get; init; }
 }

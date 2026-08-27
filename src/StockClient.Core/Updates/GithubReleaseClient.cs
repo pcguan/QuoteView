@@ -33,17 +33,18 @@ public sealed class GithubReleaseClient
 
         if (!Version.TryParse(dto.TagName.TrimStart('v', 'V'), out var version)) return null;
 
-        var url = dto.Assets?.FirstOrDefault(a =>
-            string.Equals(a.Name, AssetName, StringComparison.OrdinalIgnoreCase))?.DownloadUrl;
-        if (url is null) return null;
+        var asset = dto.Assets?.FirstOrDefault(a =>
+            string.Equals(a.Name, AssetName, StringComparison.OrdinalIgnoreCase));
+        if (asset?.DownloadUrl is null) return null;
 
         return new ReleaseInfo
         {
             Version = version,
-            DownloadUrl = url,
+            DownloadUrl = asset.DownloadUrl,
             DisplayName = dto.TagName,
             Notes = dto.Body ?? "",
             Source = "GitHub",
+            Size = asset.Size ?? 0,
         };
     }
 
@@ -58,5 +59,6 @@ public sealed class GithubReleaseClient
     {
         [JsonPropertyName("name")] public string? Name { get; init; }
         [JsonPropertyName("browser_download_url")] public string? DownloadUrl { get; init; }
+        [JsonPropertyName("size")] public long? Size { get; init; }
     }
 }

@@ -93,19 +93,34 @@ public sealed class UpdateService
     {
         var exe = Environment.ProcessPath
                   ?? throw new InvalidOperationException("无法定位当前程序路径");
-        var newPath = exe + ".new";
 
-        await DownloadAsync(release.DownloadUrl, newPath, progress, cancellationToken);
+        // Unique per attempt: a fixed ".new" path meant one failed download's
+        // leftover (often held briefly by the antivirus scanning it) made every
+        // following attempt die within seconds on "file in use".
+        var newPath = $"{exe}.{DateTime.Now:yyyyMMddHHmmssfff}.new";
 
-        var old = $"{exe}.{DateTime.Now:yyyyMMddHHmmss}.old";
-        File.Move(exe, old);
         try
         {
-            File.Move(newPath, exe);
+            await DownloadAsync(release.DownloadUrl, newPath, progress, cancellationToken);
+            Verify(newPath, release);
+
+            var old = $"{exe}.{DateTime.Now:yyyyMMddHHmmss}.old";
+            File.Move(exe, old);
+            try
+            {
+                File.Move(newPath, exe);
+            }
+            catch
+            {
+                File.Move(old, exe); // roll back so the app still starts
+                throw;
+            }
         }
         catch
         {
-            File.Move(old, exe); // roll back so the app still starts
+            // Leave no partial download behind — CleanupOld sweeps stragglers
+            // at the next launch as a second line of defence.
+            try { if (File.Exists(newPath)) File.Delete(newPath); } catch { /* locked */ }
             throw;
         }
 
@@ -114,6 +129,26 @@ public sealed class UpdateService
         // The flag tells it to wait for the mutex instead.
         Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
         Application.Current.Shutdown();
+    }
+
+    /// <summary>
+    /// The downloaded bytes must actually be our program: a truncated transfer
+    /// or a CDN challenge/error page must fail HERE with a message naming the
+    /// cause — never get installed as the exe.
+    /// </summary>
+    private static void Verify(string path, ReleaseInfo release)
+    {
+        var length = new FileInfo(path).Length;
+        if (release.Size > 0 && length != release.Size)
+            throw new InvalidOperationException(
+                $"下载不完整：应为 {release.Size} 字节，实际 {length} 字节"
+                + "（网络中断或被中间缓存截断），稍后会自动重试");
+
+        using var fs = File.OpenRead(path);
+        var head = new byte[2];
+        if (fs.Read(head, 0, 2) != 2 || head[0] != (byte)'M' || head[1] != (byte)'Z')
+            throw new InvalidOperationException(
+                "下载内容不是有效的程序文件（可能被网络设备重定向或拦截），稍后会自动重试");
     }
 
     private async Task DownloadAsync(
@@ -148,7 +183,8 @@ public sealed class UpdateService
             var dir = Path.GetDirectoryName(exe);
             if (dir is null) return;
 
-            foreach (var f in Directory.EnumerateFiles(dir, "*.old"))
+            foreach (var f in Directory.EnumerateFiles(dir, "*.old")
+                         .Concat(Directory.EnumerateFiles(dir, "*.new")))
             {
                 try { File.Delete(f); } catch { /* still locked; next launch */ }
             }

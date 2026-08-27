@@ -39,6 +39,7 @@ public sealed class DomesticReleaseClient
             DisplayName = "v" + version,
             Notes = dto.Notes ?? "",
             Source = "国内源", // internal only; the UI deliberately doesn't show it
+            Size = dto.Size ?? 0,
         };
     }
 
@@ -47,5 +48,6 @@ public sealed class DomesticReleaseClient
         [JsonPropertyName("version")] public string? Version { get; init; }
         [JsonPropertyName("url")] public string? Url { get; init; }
         [JsonPropertyName("notes")] public string? Notes { get; init; }
+        [JsonPropertyName("size")] public long? Size { get; init; }
     }
 }
