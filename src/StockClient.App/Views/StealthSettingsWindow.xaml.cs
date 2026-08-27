@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using StockClient.Core.Groups;
 
@@ -320,10 +321,28 @@ public partial class StealthSettingsWindow : Window
         foreach (var field in _editing.Fields)
         {
             var grid = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });     // drag handle
             grid.ColumnDefinitions.Add(new ColumnDefinition());                              // name (stretch)
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });     // colour(s)
 
             var captured = field;
+
+            // Reorder rides a dedicated handle, not the whole row — the row is
+            // full of interactive controls (checkbox, colour pickers) that a
+            // free row-drag would fight with.
+            var handle = new TextBlock
+            {
+                Text = "≡",
+                Foreground = Frozen("#5F6672"),
+                FontSize = 14,
+                Padding = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.SizeNS,
+                ToolTip = "拖动调整字段顺序（面板按此顺序显示）",
+            };
+            HookRowDrag(handle, grid);
+            Grid.SetColumn(handle, 0);
+            grid.Children.Add(handle);
 
             var check = new CheckBox
             {
@@ -356,7 +375,7 @@ public partial class StealthSettingsWindow : Window
                 captured.Visible = false;
                 Apply();
             };
-            Grid.SetColumn(check, 0);
+            Grid.SetColumn(check, 1);
             grid.Children.Add(check);
 
             // Signed fields (price/change/percent/open/high/low) get a rise colour
@@ -373,11 +392,80 @@ public partial class StealthSettingsWindow : Window
                 colours.Children.Add(Picker(field.Color, h => captured.Color = h, "颜色", 100));
             }
 
-            Grid.SetColumn(colours, 1);
+            Grid.SetColumn(colours, 2);
             grid.Children.Add(colours);
 
             FieldsPanel.Children.Add(grid);
         }
+    }
+
+    // ---- field reorder (drag the ≡ handle) --------------------------------
+    //
+    // Live reorder: while the handle is held, the row under the cursor swaps
+    // with the dragged one immediately — the list IS the preview, no adorner
+    // needed. Rows map 1:1 by index onto _editing.Fields, so moving a child
+    // moves the draft entry with it; 「保存」 persists the new order.
+
+    private Grid? _dragRow;
+
+    private void HookRowDrag(FrameworkElement handle, Grid row)
+    {
+        handle.MouseLeftButtonDown += (_, e) =>
+        {
+            e.Handled = true;
+            _dragRow = row;
+            handle.CaptureMouse();
+        };
+
+        handle.MouseMove += (_, e) =>
+        {
+            if (_dragRow is null || e.LeftButton != MouseButtonState.Pressed) return;
+
+            var y = e.GetPosition(FieldsPanel).Y;
+            var from = FieldsPanel.Children.IndexOf(_dragRow);
+            var to = RowIndexAt(y);
+            if (to >= 0 && to != from) MoveRow(from, to);
+
+            // Edge auto-scroll: ~46 rows live in a 340px viewport, so a drag
+            // must be able to travel beyond it.
+            var vy = e.GetPosition(FieldsScroll).Y;
+            if (vy < 24) FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset - 12);
+            else if (vy > FieldsScroll.ViewportHeight - 24)
+                FieldsScroll.ScrollToVerticalOffset(FieldsScroll.VerticalOffset + 12);
+        };
+
+        handle.MouseLeftButtonUp += (_, _) =>
+        {
+            _dragRow = null;
+            handle.ReleaseMouseCapture();
+        };
+    }
+
+    /// <summary>The row index whose vertical span contains y, or -1 outside.</summary>
+    private int RowIndexAt(double y)
+    {
+        var top = 0.0;
+        for (var i = 0; i < FieldsPanel.Children.Count; i++)
+        {
+            var child = (FrameworkElement)FieldsPanel.Children[i];
+            var h = child.ActualHeight + child.Margin.Top + child.Margin.Bottom;
+            if (y < top + h) return i;
+            top += h;
+        }
+        return y < 0 ? 0 : FieldsPanel.Children.Count - 1;
+    }
+
+    private void MoveRow(int from, int to)
+    {
+        if (from < 0 || to < 0 || from == to) return;
+
+        var row = FieldsPanel.Children[from];
+        FieldsPanel.Children.RemoveAt(from);
+        FieldsPanel.Children.Insert(to, row);
+
+        var field = _editing.Fields[from];
+        _editing.Fields.RemoveAt(from);
+        _editing.Fields.Insert(to, field);
     }
 
     /// <summary>
