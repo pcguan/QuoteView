@@ -34,9 +34,8 @@ public static class Program
         rootCfg.StealthTemplates.Add(new StockClient.Core.Groups.NamedStealthTemplate
             { Name = "默认", Stealth = StealthConfigOps.Clone(config) });
         rootCfg.ActiveStealthTemplate = "默认";
-        var window = new StealthSettingsWindow(rootCfg, () => { }, () => { });
-        var content = (FrameworkElement)window.Content;
-        window.Content = null;   // detach before re-parenting
+        var view = new StealthSettingsView(rootCfg, () => { }, () => { });
+        var content = (FrameworkElement)view;
         // Host it at the real client width WITH its margins inside the bitmap —
         // rendering the content element alone crops its own 18px margin and
         // looks like a clipping bug that isn't there.
@@ -50,9 +49,9 @@ public static class Program
 
         // 1b) The whole field list, unscrolled, at the width the ScrollViewer
         // gives it — the longest label (分组名（面板左侧）) is below the fold.
-        var panel = (FrameworkElement)typeof(StealthSettingsWindow)
+        var panel = (FrameworkElement)typeof(StealthSettingsView)
             .GetField("FieldsPanel", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(window)!;
+            .GetValue(view)!;
         if (LogicalTreeHelper.GetParent(panel) is ContentControl owner) owner.Content = null;
         Render(new Border
         {
@@ -176,11 +175,20 @@ public static class Program
         var rootCfg2 = new StockClient.Core.Groups.GroupConfig { Stealth = config2 };
         foreach (var t in tmpls) rootCfg2.StealthTemplates.Add(t);
         rootCfg2.ActiveStealthTemplate = tmpls[0].Name;
-        var win2 = new StealthSettingsWindow(rootCfg2, () => { }, () => { });
-        var content2 = (FrameworkElement)win2.Content;
-        win2.Content = null;
+        var content2 = new StealthSettingsView(rootCfg2, () => { }, () => { });
         Render(new Border { Width = 430, Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)), Child = content2 },
             @"C:\work\preview-templates.png");
+
+        // 7b) The new settings window, 系统 tab (auto-update switch + about).
+        var sysCfg = new StockClient.Core.Groups.GroupConfig { Stealth = StealthConfig.CreateDefault() };
+        sysCfg.StealthTemplates.Add(new StockClient.Core.Groups.NamedStealthTemplate
+            { Name = "默认", Stealth = StealthConfigOps.Clone(sysCfg.Stealth) });
+        sysCfg.ActiveStealthTemplate = "默认";
+        var sysWin = new StockClient.App.Views.SystemSettingsWindow(sysCfg, () => { }, () => { }, 0);
+        var sysContent = (FrameworkElement)sysWin.Content;
+        sysWin.Content = null;
+        Render(new Border { Width = 470, Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)), Child = sysContent },
+            @"C:\work\preview-syssettings.png");
 
         // 8) The reworked account dialog, three states via reflection.
         var s2 = new StockClient.App.Services.AccountSession(

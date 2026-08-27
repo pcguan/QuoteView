@@ -32,18 +32,10 @@
           <ui:Button x:Name="UpdateButton" Height="26" Padding="8,0" Margin="0,0,8,0"
                      Icon="{ui:SymbolIcon ArrowSync24}" Content="检查更新" FontSize="11"
                      Click="CheckUpdate_Click"
-                     ToolTip="点击立即检查新版本；右键设置自动更新">
-            <ui:Button.ContextMenu>
-              <ContextMenu>
-                <MenuItem x:Name="AutoUpdateToggle" IsCheckable="True" IsChecked="True"
-                          Header="自动更新（系统空闲 10 分钟后静默安装并重启）"
-                          Click="AutoUpdateToggle_Click" />
-              </ContextMenu>
-            </ui:Button.ContextMenu>
-          </ui:Button>
+                     ToolTip="检查是否有新版本；自动更新开关在「设置」中" />
           <ui:Button Height="26" Padding="8,0" Icon="{ui:SymbolIcon Settings24}"
-                     Content="面板设置" FontSize="11" Click="StealthSettings_Click"
-                     ToolTip="配置简洁面板：显示行数、字段、颜色、透明度" />
+                     Content="设置" FontSize="11" Click="Settings_Click"
+                     ToolTip="系统设置（自动更新等）与简洁面板设置" />
           <ui:Button Height="26" Padding="8,0" Margin="8,0,0,0"
                      Icon="{ui:SymbolIcon EyeOff24}" Content="简洁面板" FontSize="11"
                      Click="Stealth_Click"

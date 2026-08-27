@@ -1,10 +1,6 @@
-<Window x:Class="StockClient.App.Views.StealthSettingsWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="简洁面板设置" Width="430" SizeToContent="Height"
-        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#12161F" FontFamily="Microsoft YaHei" FontSize="13"
-        TextOptions.TextFormattingMode="Display">
+<UserControl x:Class="StockClient.App.Views.StealthSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <StackPanel Margin="18,16">
     <TextBlock Text="模板" Foreground="#EDF1F7" Margin="0,0,0,6" />
     <Grid Margin="0,0,0,14">
@@ -79,4 +75,4 @@
     <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                Text="编辑写入模板草稿，点「保存」生效并应用到面板；切换模板即切换面板外观。至少保留一个字段。按住左侧 ≡ 上下拖动可调整字段顺序（面板按此顺序显示）；右键字段行可置顶 / 上移 / 下移 / 置底。" />
   </StackPanel>
-</Window>
+</UserControl>

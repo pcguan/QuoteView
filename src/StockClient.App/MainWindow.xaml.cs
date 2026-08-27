@@ -20,7 +20,7 @@ public partial class MainWindow : FluentWindow
     private readonly MainViewModel _vm;
     private QuotesViewModel? _quotes;
     private Views.StealthWindow? _stealth;
-    private Views.StealthSettingsWindow? _stealthSettings;
+    private Views.SystemSettingsWindow? _systemSettings;
     private System.Windows.Forms.NotifyIcon? _tray;
 
     // Global Win+Alt+End toggles between the main window and the stealth panel.
@@ -166,8 +166,6 @@ public partial class MainWindow : FluentWindow
             };
             _pingTimer.Start();
 
-            AutoUpdateToggle.IsChecked = AppPrefs.AutoUpdate;
-
             // Restore the stealth panel if it was up when the app last ran —
             // without this an idle-time auto-update restart would swallow the
             // ticker someone left on the desk.
@@ -221,7 +219,7 @@ public partial class MainWindow : FluentWindow
             }
 
             _stealth?.Close();
-            _stealthSettings?.Close();
+            _systemSettings?.Close();
 
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
@@ -237,29 +235,30 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// Opens (or re-focuses) the single stealth-settings window. Reachable from
-    /// both the main window's button and the panel's right-click, so it's managed
-    /// here rather than in the panel — one window, whichever entry point is used.
-    /// Changes apply live to the panel if it's up, and persist regardless.
+    /// Opens (or re-focuses) the single settings window, landing on the given
+    /// tab. Reachable from the toolbar's 「设置」 (系统 tab) and the panel's
+    /// right-click (简洁面板 tab) — one window, whichever entry point is used.
+    /// Panel changes apply live if the panel is up, and persist regardless.
     /// </summary>
-    private void OpenStealthSettings()
+    private void OpenSettings(int tab)
     {
         if (_quotes is null) return;
 
-        if (_stealthSettings is { } open)
+        if (_systemSettings is { } open)
         {
+            open.SelectTab(tab);
             open.Activate();
             return;
         }
 
-        _stealthSettings = new Views.StealthSettingsWindow(
+        _systemSettings = new Views.SystemSettingsWindow(
             _quotes.Config, _quotes.SaveConfig, () =>
             {
                 _stealth?.ApplySettings();
                 _quotes?.StealthSettingsChanged();   // fund-flow fields drive the secondary poll
-            });
-        _stealthSettings.Closed += (_, _) => _stealthSettings = null;
-        _stealthSettings.Show();
+            }, tab);
+        _systemSettings.Closed += (_, _) => _systemSettings = null;
+        _systemSettings.Show();
     }
 
     /// <summary>
@@ -581,7 +580,7 @@ public partial class MainWindow : FluentWindow
         _ = PushGroupsAsync();
     }
 
-    private void StealthSettings_Click(object sender, RoutedEventArgs e) => OpenStealthSettings();
+    private void Settings_Click(object sender, RoutedEventArgs e) => OpenSettings(Views.SystemSettingsWindow.TabSystem);
 
     private async void CheckUpdate_Click(object sender, RoutedEventArgs e) =>
         await CheckForUpdatesAsync(manual: true);
@@ -745,8 +744,7 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void AutoUpdateToggle_Click(object sender, RoutedEventArgs e) =>
-        AppPrefs.AutoUpdate = AutoUpdateToggle.IsChecked == true;
+
 
     private static async Task InfoDialog(string title, string content) =>
         await new Wpf.Ui.Controls.MessageBox
@@ -815,7 +813,7 @@ public partial class MainWindow : FluentWindow
 
         _stealth = new Views.StealthWindow(_quotes, _quotes.Stealth, _quotes.SaveConfig, _trendRepo);
         _stealth.RestoreRequested += () => RestoreFromStealth("panel context menu 还原主窗口");
-        _stealth.SettingsRequested += OpenStealthSettings;
+        _stealth.SettingsRequested += () => OpenSettings(Views.SystemSettingsWindow.TabPanel);
         _stealth.Closed += (_, _) => _stealth = null;
 
         PlacePanel(_stealth, _quotes.Stealth);
@@ -874,11 +872,10 @@ public partial class MainWindow : FluentWindow
             Checked = AppPrefs.AutoUpdate,
             CheckOnClick = true,
         };
-        auto.CheckedChanged += (_, _) => Dispatcher.Invoke(() =>
-        {
-            AppPrefs.AutoUpdate = auto.Checked;
-            AutoUpdateToggle.IsChecked = auto.Checked;
-        });
+        auto.CheckedChanged += (_, _) => AppPrefs.AutoUpdate = auto.Checked;
+        // The settings window can flip the flag while the tray sits open-less;
+        // re-read on every open so the check mark never shows a stale state.
+        menu.Opening += (_, _) => auto.Checked = AppPrefs.AutoUpdate;
         menu.Items.Add(auto);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(Close));

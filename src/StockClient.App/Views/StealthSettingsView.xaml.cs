@@ -7,11 +7,11 @@ using StockClient.Core.Groups;
 namespace StockClient.App.Views;
 
 /// <summary>
-/// One place to configure the stealth panel — row count, opacity, and each
-/// field's visibility and colour — replacing the old right-click submenus.
-/// Changes apply live (the panel redraws) and persist immediately.
+/// The 简洁面板 page of the settings window — row count, opacity, and each
+/// field's order, visibility and colour. Edits buffer against the selected
+/// template; 「保存」 applies them to the panel and persists.
 /// </summary>
-public partial class StealthSettingsWindow : Window
+public partial class StealthSettingsView : UserControl
 {
     private static readonly (StealthField Field, string Name)[] FieldNames =
     {
@@ -82,7 +82,7 @@ public partial class StealthSettingsWindow : Window
 
     private bool _seeding;
 
-    public StealthSettingsWindow(GroupConfig root, Action save, Action onChanged)
+    public StealthSettingsView(GroupConfig root, Action save, Action onChanged)
     {
         InitializeComponent();
 
@@ -301,7 +301,7 @@ public partial class StealthSettingsWindow : Window
         var dialog = new Window
         {
             Title = "另存为模板",
-            Owner = this,
+            Owner = Window.GetWindow(this),
             Width = 300,
             SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
