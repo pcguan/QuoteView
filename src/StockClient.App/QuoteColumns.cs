@@ -17,9 +17,12 @@ namespace StockClient.App;
 /// </summary>
 public static class QuoteColumns
 {
-    public static void Attach(DataGrid grid, List<QuoteColumnState> saved, Action save)
+    /// <param name="saved">Accessor, not a list: the config object is swapped
+    /// wholesale on a user switch, and a captured list would leave every later
+    /// snapshot writing into the orphaned copy.</param>
+    public static void Attach(DataGrid grid, Func<List<QuoteColumnState>> saved, Action save)
     {
-        Restore(grid, saved);
+        Restore(grid, saved());
 
         // Debounced: dragging a column edge fires WidthProperty continuously, and
         // one disk write per settled change is enough.
@@ -30,7 +33,7 @@ public static class QuoteColumns
         debounce.Tick += (_, _) =>
         {
             debounce.Stop();
-            Snapshot(grid, saved);
+            Snapshot(grid, saved());
             save();
         };
 

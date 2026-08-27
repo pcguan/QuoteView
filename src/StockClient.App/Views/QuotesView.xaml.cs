@@ -23,6 +23,7 @@ public partial class QuotesView : UserControl
             {
                 vm.SuggestionsChanged += has => SuggestPopup.IsOpen = has && CodeBox.IsKeyboardFocusWithin;
                 GroupCol.Width = new GridLength(vm.GroupPaneWidth);   // restore the dragged width
+                TryAttachColumnPersistence();   // the grid usually loaded first
             }
         };
 
@@ -334,40 +335,67 @@ public partial class QuotesView : UserControl
 
     private void AddCode_Click(object sender, RoutedEventArgs e) => Vm?.AddCode();
 
-    private bool _columnsAttached;
+    private bool _gridWired;
+    private bool _persistenceAttached;
+
+    /// <summary>
+    /// Wires column persistence (restore saved layout + watch changes) once BOTH
+    /// the grid is loaded AND the view model exists. The two arrive in either
+    /// order: since the login pull became async, the grid renders (and Loaded
+    /// fires) while Vm is still null — a Loaded-only attach silently never ran,
+    /// and every column width/visibility/order change died with the session.
+    /// The latch is set only after a successful attach.
+    /// </summary>
+    private void TryAttachColumnPersistence()
+    {
+        if (_persistenceAttached || !QuoteGrid.IsLoaded || Vm is not { } vm) return;
+        _persistenceAttached = true;
+
+        // The list accessor resolves per call: signing in as a different user
+        // swaps the whole config object (ReloadFromStore), and a captured list
+        // would leave the watcher writing into the orphaned copy forever.
+        QuoteColumns.Attach(QuoteGrid, () => vm.QuoteColumns, vm.SaveConfig);
+        UpdateFundFlowActive();
+    }
+
+    // On-demand: the EastMoney fund-flow poll runs only while one of its columns
+    // is actually visible — no one looking, no extra request.
+    private static readonly HashSet<string> FundFlowHeaders =
+        new() { "涨速", "主力净流入", "主力占比", "超大单", "大单", "中单", "小单" };
+
+    private void UpdateFundFlowActive() =>
+        Vm?.SetFundFlowActive(QuoteGrid.Columns.Any(c =>
+            FundFlowHeaders.Contains(c.Header as string ?? "") && c.Visibility == Visibility.Visible));
 
     private void QuoteGrid_Loaded(object sender, RoutedEventArgs e)
     {
-        // Loaded can fire again if the grid re-enters the visual tree; attach once
-        // so the persistence listeners aren't stacked.
-        if (_columnsAttached || sender is not System.Windows.Controls.DataGrid grid) return;
-        _columnsAttached = true;
+        // Loaded can fire again if the grid re-enters the visual tree; wire once
+        // so the menus and watchers aren't stacked.
+        if (!_gridWired && sender is System.Windows.Controls.DataGrid grid)
+        {
+            _gridWired = true;
 
-        // The header right-click opens the tiled column-settings window instead of
-        // the old per-column checkbox menu: with ~20 columns that vertical menu
-        // outgrew the screen and couldn't scroll.
-        var menu = new ContextMenu();
-        var settings = new System.Windows.Controls.MenuItem { Header = "列设置…" };
-        settings.Click += (_, _) => OpenColumnSettings();
-        menu.Items.Add(settings);
+            // The header right-click opens the tiled column-settings window instead
+            // of the old per-column checkbox menu: with ~20 columns that vertical
+            // menu outgrew the screen and couldn't scroll.
+            var menu = new ContextMenu();
+            var settings = new System.Windows.Controls.MenuItem { Header = "列设置…" };
+            settings.Click += (_, _) => OpenColumnSettings();
+            menu.Items.Add(settings);
 
-        ColumnMenu.Attach(grid, menu);
-        AttachRowMenu(grid);
-        if (Vm is { } vm) QuoteColumns.Attach(grid, vm.QuoteColumns, vm.SaveConfig);
+            ColumnMenu.Attach(grid, menu);
+            AttachRowMenu(grid);
 
-        // On-demand: the EastMoney fund-flow poll runs only while one of its columns
-        // is actually visible — no one looking, no extra request.
-        var ffHeaders = new HashSet<string> { "涨速", "主力净流入", "主力占比", "超大单", "大单", "中单", "小单" };
-        void UpdateFundFlow() =>
-            Vm?.SetFundFlowActive(grid.Columns.Any(c =>
-                ffHeaders.Contains(c.Header as string ?? "") && c.Visibility == Visibility.Visible));
+            foreach (var col in grid.Columns.Where(c =>
+                FundFlowHeaders.Contains(c.Header as string ?? "")))
+                System.ComponentModel.DependencyPropertyDescriptor
+                    .FromProperty(DataGridColumn.VisibilityProperty, typeof(DataGridColumn))
+                    ?.AddValueChanged(col, (_, _) => UpdateFundFlowActive());
 
-        foreach (var col in grid.Columns.Where(c => ffHeaders.Contains(c.Header as string ?? "")))
-            System.ComponentModel.DependencyPropertyDescriptor
-                .FromProperty(DataGridColumn.VisibilityProperty, typeof(DataGridColumn))
-                ?.AddValueChanged(col, (_, _) => UpdateFundFlow());
+            UpdateFundFlowActive();
+        }
 
-        UpdateFundFlow(); // reflect the restored saved visibility
+        TryAttachColumnPersistence();
     }
 
     private ColumnSettingsWindow? _columnSettings;
