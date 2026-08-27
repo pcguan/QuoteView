@@ -60,6 +60,8 @@ public partial class LoginWindow : Window
             FormPanel.Visibility = Visibility.Visible;
             BackToListButton.Visibility =
                 remembered.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            OfflineFormButton.Margin = new Thickness(
+                BackToListButton.Visibility == Visibility.Visible ? 8 : 0, 0, 0, 0);
             (UserBox.Text.Length > 0 ? (IInputElement)PassBox : UserBox).Focus();
         }
     }
@@ -149,6 +151,8 @@ public partial class LoginWindow : Window
         FormPanel.Visibility = Visibility.Visible;
         BackToListButton.Visibility = _session.RememberedUsers.Count > 0 || _session.IsSignedIn
             ? Visibility.Visible : Visibility.Collapsed;
+        OfflineFormButton.Margin = new Thickness(
+            BackToListButton.Visibility == Visibility.Visible ? 8 : 0, 0, 0, 0);
         UserBox.Focus();
     }
 
@@ -156,6 +160,19 @@ public partial class LoginWindow : Window
     {
         _manualMode = false;
         Refresh();
+    }
+
+    /// <summary>
+    /// 离线模式: an account-less local profile — no server, data stays on this
+    /// machine, isolated from every real account. Reachable from any signed-out
+    /// view; picking it while signed in signs out first.
+    /// </summary>
+    private void Offline_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session.IsSignedIn) _session.SignOut();
+        _session.EnterOfflineMode();
+        DialogResult = true;
+        Close();
     }
 
     private void SignOut_Click(object sender, RoutedEventArgs e)

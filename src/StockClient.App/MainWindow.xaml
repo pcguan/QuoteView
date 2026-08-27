@@ -31,7 +31,16 @@
                      Click="Account_Click" ToolTip="账户：多端同步分组、查询服务端历史分时" />
           <ui:Button x:Name="UpdateButton" Height="26" Padding="8,0" Margin="0,0,8,0"
                      Icon="{ui:SymbolIcon ArrowSync24}" Content="检查更新" FontSize="11"
-                     Click="CheckUpdate_Click" ToolTip="检查 GitHub 上是否有新版本" />
+                     Click="CheckUpdate_Click"
+                     ToolTip="点击立即检查新版本；右键设置自动更新">
+            <ui:Button.ContextMenu>
+              <ContextMenu>
+                <MenuItem x:Name="AutoUpdateToggle" IsCheckable="True" IsChecked="True"
+                          Header="自动更新（系统空闲 10 分钟后静默安装并重启）"
+                          Click="AutoUpdateToggle_Click" />
+              </ContextMenu>
+            </ui:Button.ContextMenu>
+          </ui:Button>
           <ui:Button Height="26" Padding="8,0" Icon="{ui:SymbolIcon Settings24}"
                      Content="面板设置" FontSize="11" Click="StealthSettings_Click"
                      ToolTip="配置简洁面板：显示行数、字段、颜色、透明度" />
@@ -64,8 +73,8 @@
           <views:TrendHistoryView x:Name="History" Margin="-16,0,-16,0" />
           <Border x:Name="HistoryGate" Background="#E6121620" Visibility="Visible">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-              <TextBlock Text="登录后查询历史分时" Foreground="#8B93A3" FontSize="14"
-                         HorizontalAlignment="Center" Margin="0,0,0,12" />
+              <TextBlock x:Name="HistoryGateText" Text="登录后查询历史分时" Foreground="#8B93A3"
+                         FontSize="14" HorizontalAlignment="Center" Margin="0,0,0,12" />
               <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
                       Click="Account_Click" />
             </StackPanel>

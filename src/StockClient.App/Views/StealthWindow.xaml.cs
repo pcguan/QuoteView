@@ -1437,6 +1437,29 @@ public partial class StealthWindow : Window
 
 internal static class Native
 {
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct LASTINPUTINFO
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+    /// <summary>System-wide time since the last keyboard/mouse input.</summary>
+    public static TimeSpan IdleTime()
+    {
+        var info = new LASTINPUTINFO
+        {
+            cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<LASTINPUTINFO>(),
+        };
+        if (!GetLastInputInfo(ref info)) return TimeSpan.Zero;
+        // Unsigned math survives the 49-day TickCount wrap.
+        return TimeSpan.FromMilliseconds(unchecked((uint)Environment.TickCount - info.dwTime));
+    }
+
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 

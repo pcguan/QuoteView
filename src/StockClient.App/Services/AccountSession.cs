@@ -30,6 +30,21 @@ public sealed class AccountSession
     public bool Remember { get; private set; }
     public bool AutoLogin { get; private set; }
 
+    /// <summary>
+    /// 离线模式: an account-less local user. All its data lives in its own local
+    /// profile file (see GroupStore.OfflineProfile), fully isolated from real
+    /// accounts; nothing is pulled from or pushed to the server. Cleared by any
+    /// successful sign-in; survives restarts.
+    /// </summary>
+    public bool OfflineMode { get; private set; }
+
+    public void EnterOfflineMode()
+    {
+        OfflineMode = true;
+        Save();
+        Changed?.Invoke();
+    }
+
     /// <summary>Signed in = a token exists. It may still be stale; CallAsync heals that.</summary>
     public bool IsSignedIn => _token is not null;
 
@@ -50,7 +65,7 @@ public sealed class AccountSession
 
     private sealed record Persisted(
         string? Username, bool Remember, bool AutoLogin, string? Token, string? Password,
-        List<SavedEntry>? Accounts = null);
+        List<SavedEntry>? Accounts = null, bool Offline = false);
 
     private sealed record SavedEntry(string Username, string Password);
 
@@ -68,6 +83,7 @@ public sealed class AccountSession
             Username = doc.Username;
             Remember = doc.Remember;
             AutoLogin = doc.AutoLogin;
+            OfflineMode = doc.Offline;
             _token = Unprotect(doc.Token);
             _password = Unprotect(doc.Password);
 
@@ -96,7 +112,8 @@ public sealed class AccountSession
                 Username, Remember, AutoLogin,
                 Protect(_token),
                 Remember ? Protect(_password) : null,
-                _saved.Select(a => new SavedEntry(a.User, Protect(a.Pass) ?? "")).ToList());
+                _saved.Select(a => new SavedEntry(a.User, Protect(a.Pass) ?? "")).ToList(),
+                OfflineMode);
             File.WriteAllText(_path, JsonSerializer.Serialize(doc));
         }
         catch (Exception)
@@ -129,6 +146,7 @@ public sealed class AccountSession
         Username = username;
         Remember = remember;
         AutoLogin = autoLogin;
+        OfflineMode = false;   // signing in leaves 离线模式
         _token = result.Token;
         _password = remember ? password : null;
 
@@ -187,6 +205,7 @@ public sealed class AccountSession
     /// </summary>
     public async Task TryAutoLoginAsync()
     {
+        if (OfflineMode) return;   // 离线模式 never touches the server
         if (!AutoLogin || _token is not null) return;
         if (Username is null || _password is null) return;
 

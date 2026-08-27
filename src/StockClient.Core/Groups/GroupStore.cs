@@ -503,10 +503,17 @@ public sealed class GroupStore
 
     private readonly string _path;
 
+    /// <summary>
+    /// True while the app runs as the 离线模式 local user: every parameterless
+    /// store then resolves to offline.json instead of groups.json, so the
+    /// offline profile's groups/settings never mix with any account's data.
+    /// </summary>
+    public static bool OfflineProfile { get; set; }
+
     public GroupStore(string? path = null) =>
         _path = path ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "StockClient", "groups.json");
+            "StockClient", OfflineProfile ? "offline.json" : "groups.json");
 
     public string FilePath => _path;
 

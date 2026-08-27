@@ -117,6 +117,10 @@ public partial class MainWindow : FluentWindow
 
             await _vm.LoadAsync();
 
+            // 离线模式 routes every store to offline.json before anything
+            // reads it; the session skips the server entirely in that mode.
+            GroupStore.OfflineProfile = _session.OfflineMode && !_session.IsSignedIn;
+
             // Sign in and pull the account's data BEFORE the view model loads:
             // the merge lands in groups.json, and every view then simply reads
             // the merged result — no live re-apply plumbing.
@@ -161,6 +165,13 @@ public partial class MainWindow : FluentWindow
                 if (_session.IsSignedIn) await _session.PingAsync();
             };
             _pingTimer.Start();
+
+            AutoUpdateToggle.IsChecked = AppPrefs.AutoUpdate;
+
+            // Restore the stealth panel if it was up when the app last ran —
+            // without this an idle-time auto-update restart would swallow the
+            // ticker someone left on the desk.
+            if (AppPrefs.PanelOpen && Operational) EnterStealth();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -176,7 +187,7 @@ public partial class MainWindow : FluentWindow
         {
             if (_stealth is not null) return;
 
-            if (WindowState == WindowState.Minimized || !_session.IsSignedIn) _quotes?.Pause();
+            if (WindowState == WindowState.Minimized || !Operational) _quotes?.Pause();
             else _quotes?.Resume();
         };
 
@@ -401,21 +412,29 @@ public partial class MainWindow : FluentWindow
     }
 
     private void UpdateAccountButton() =>
-        AccountButton.Content = _session.IsSignedIn ? _session.Username : "登录";
+        AccountButton.Content = _session.IsSignedIn ? _session.Username
+            : _session.OfflineMode ? "离线模式" : "登录";
+
+    /// <summary>Signed in OR the local offline profile — either unlocks the app.</summary>
+    private bool Operational => _session.IsSignedIn || _session.OfflineMode;
 
     /// <summary>
-    /// Sign-in gate: signed out, only 合约查询 works — the other tabs show a
-    /// login prompt and quote polling stops. 简洁面板 rides on the same pause,
-    /// so it goes quiet too rather than showing stale numbers.
+    /// Sign-in gate: signed out (and not offline), only 合约查询 works — the
+    /// other tabs show a login prompt and quote polling stops. 离线模式 opens
+    /// quotes and 资讯 (both need no account); 历史分时 stays server-side data,
+    /// so its gate remains until a real sign-in.
     /// </summary>
     private void UpdateGates()
     {
-        var open = _session.IsSignedIn;
+        var open = Operational;
         var gate = open ? Visibility.Collapsed : Visibility.Visible;
 
         QuotesGate.Visibility = gate;
-        HistoryGate.Visibility = gate;
         BriefGate.Visibility = gate;
+        HistoryGate.Visibility = _session.IsSignedIn ? Visibility.Collapsed : Visibility.Visible;
+        HistoryGateText.Text = _session.OfflineMode
+            ? "历史分时数据存于服务端，离线模式下不可用"
+            : "登录后查询历史分时";
 
         if (!open) _quotes?.Pause();
         else if (WindowState != WindowState.Minimized || _stealth is not null) _quotes?.Resume();
@@ -521,6 +540,22 @@ public partial class MainWindow : FluentWindow
         dialog.ShowDialog();
         UpdateAccountButton();
         UpdateGates();
+
+        // Entering/leaving 离线模式 swaps the profile file; reload everything
+        // from the other store. Runs BEFORE any pull so a sign-in from offline
+        // mode merges server data into groups.json, never into offline.json.
+        var offlineProfile = _session.OfflineMode && !_session.IsSignedIn;
+        if (offlineProfile != GroupStore.OfflineProfile && _quotes is not null)
+        {
+            GroupStore.OfflineProfile = offlineProfile;
+            _quotes.ReloadFromStore();
+            _lastPushedSettings = _quotes.ExportSettingsJson();
+            _lastPushedGroups = _quotes.ExportGroupsJson();
+            _stealth?.ApplySettings();
+            Quotes.ReapplyColumnLayout();
+            GroupColWidthFromConfig();
+        }
+
         if (!_session.IsSignedIn) return;
 
         // Fresh sign-in: pull the account's data and reload the views if the
@@ -610,6 +645,20 @@ public partial class MainWindow : FluentWindow
 
         if (check.HasUpdate)
         {
+            // 自动更新 (default on, toggleable): apply silently once the machine
+            // has been input-idle a while — an active user is never interrupted,
+            // and the panel/state is restored by the relaunch. A failed attempt
+            // backs off so a broken download isn't retried every 30 seconds.
+            if (!manual && AppPrefs.AutoUpdate && !_updateApplying
+                && Views.Native.IdleTime() >= TimeSpan.FromMinutes(10)
+                && DateTime.Now - _autoUpdateFailedAt >= TimeSpan.FromMinutes(30))
+            {
+                var error = await ApplyUpdateAsync(check.Release!, new Progress<double>(_ => { }));
+                if (error is null) return;   // unreachable on success (app restarts)
+                _autoUpdateFailedAt = DateTime.Now;
+                Probe.Log($"auto-update failed: {error.Message}");
+            }
+
             // An auto-check doesn't re-pop a version the user already closed; a
             // manual check always shows it.
             if (!manual && _dismissedVersion == check.Release!.Version) return;
@@ -653,34 +702,51 @@ public partial class MainWindow : FluentWindow
         UpdateBar.Visibility = Visibility.Collapsed;
     }
 
-    private async void UpdateBar_Update(object sender, RoutedEventArgs e)
+    private DateTime _autoUpdateFailedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// The one download-and-restart path, shared by the bar's 更新 button and
+    /// the idle-time silent auto-update. Flushes pending config pushes first
+    /// (the restart can't rely on Closing — cancellation is ignored during
+    /// Shutdown). Returns the failure, or never returns on success.
+    /// </summary>
+    private async Task<Exception?> ApplyUpdateAsync(ReleaseInfo release, IProgress<double> progress)
     {
-        if (_pendingRelease is null || _updateApplying) return;
         _updateApplying = true;
-
-        UpdateBarUpdate.IsEnabled = false;
-        var progress = new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
-
-        // Land any pending config push while the app is still fully alive: the
-        // restart path can't rely on Closing (cancellation is ignored during
-        // Shutdown), and an abandoned async flush is precisely how an edit made
-        // just before clicking 更新 used to vanish.
         _settingsPushTimer?.Stop();
         await FlushSettingsPushAsync();
 
         try
         {
             // On success the app restarts and shuts down — this call won't return.
-            await _updates.DownloadAndApplyAsync(_pendingRelease, progress);
+            await _updates.DownloadAndApplyAsync(release, progress);
+            return null;
         }
         catch (Exception ex)
         {
             _updateApplying = false;
-            UpdateBarUpdate.IsEnabled = true;
-            UpdateBarUpdate.Content = "更新";
-            await InfoDialog("更新失败", ex.Message);
+            return ex;
         }
     }
+
+    private async void UpdateBar_Update(object sender, RoutedEventArgs e)
+    {
+        if (_pendingRelease is null || _updateApplying) return;
+
+        UpdateBarUpdate.IsEnabled = false;
+        var progress = new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
+
+        var error = await ApplyUpdateAsync(_pendingRelease, progress);
+        if (error is not null)
+        {
+            UpdateBarUpdate.IsEnabled = true;
+            UpdateBarUpdate.Content = "更新";
+            await InfoDialog("更新失败", error.Message);
+        }
+    }
+
+    private void AutoUpdateToggle_Click(object sender, RoutedEventArgs e) =>
+        AppPrefs.AutoUpdate = AutoUpdateToggle.IsChecked == true;
 
     private static async Task InfoDialog(string title, string content) =>
         await new Wpf.Ui.Controls.MessageBox
@@ -754,6 +820,7 @@ public partial class MainWindow : FluentWindow
 
         PlacePanel(_stealth, _quotes.Stealth);
         _stealth.Show();
+        AppPrefs.PanelOpen = true;
 
         ShowTrayIcon();
 
@@ -801,6 +868,18 @@ public partial class MainWindow : FluentWindow
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("恢复本体", null, (_, _) => Dispatcher.Invoke(() => RestoreFromStealth("tray menu 恢复本体")));
         menu.Items.Add("显示/隐藏行情条", null, (_, _) => Dispatcher.Invoke(TogglePanel));
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        var auto = new System.Windows.Forms.ToolStripMenuItem("自动更新（空闲时静默安装）")
+        {
+            Checked = AppPrefs.AutoUpdate,
+            CheckOnClick = true,
+        };
+        auto.CheckedChanged += (_, _) => Dispatcher.Invoke(() =>
+        {
+            AppPrefs.AutoUpdate = auto.Checked;
+            AutoUpdateToggle.IsChecked = auto.Checked;
+        });
+        menu.Items.Add(auto);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(Close));
 
@@ -884,6 +963,7 @@ public partial class MainWindow : FluentWindow
     {
         Probe.Log($"RestoreFromStealth: {reason} -> closing panel (panel={(_stealth is null ? "already null" : "open")})");
 
+        AppPrefs.PanelOpen = false;
         HideTrayIcon();
         ShowInTaskbar = true;
         WindowState = WindowState.Normal;
