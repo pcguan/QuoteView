@@ -34,6 +34,11 @@ msize=$(python3 -c "import json;print(json.load(open('$MANIFEST'))['size'])" 2>/
 asize=$(stat -c%s "$EXE")
 if [ "$msize" != "$asize" ]; then
   echo "FAIL latest.json 里 size=$msize，实际 $asize"; fail=1
+fi
+# 2b. 尺寸下限：manifest 的 size 是从本地文件算的，scp 截断时两者会“自洽地”一致
+# ——一次 977KB 半截 exe 就这样骗过了上面的比对。真实产物 ~7.4MB，低于下限必是残件。
+if [ "$asize" -lt 6000000 ]; then
+  echo "FAIL exe 只有 $asize 字节（<6MB 下限），像是传输被截断的残件——重新从 corp-win 拉取"; fail=1
 else
   echo "ok   size = $asize"
 fi
