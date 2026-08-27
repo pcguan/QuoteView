@@ -85,7 +85,9 @@ public sealed class AccountClient
             var payload = JsonSerializer.Serialize(new
             {
                 at,
-                groups = groups.Select(g => new { name = g.Name, codes = g.Codes, panel = g.InPanel }),
+                // 轮换 (panel) is client-local since the 2026-08-27 split — not
+                // sent; the server keeps serving its stored flags to old pullers.
+                groups = groups.Select(g => new { name = g.Name, codes = g.Codes }),
             });
 
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/sync")

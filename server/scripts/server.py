@@ -1829,15 +1829,19 @@ class Handler(BaseHTTPRequestHandler):
                 # silently delete what newer clients saved. Same precedent as
                 # the group panel-flag guard.
                 stored = account.get("settings") or {}
-                for key in ("stealthTemplates", "stealthActive"):
-                    if key not in settings and key in stored:
-                        settings[key] = stored[key]
-                # Concrete diff (after the inheritance guard, so injected-equal
-                # keys don't count): 亮度/显示字段/列宽/模板… rather than slice
-                # names. Empty -> echo push (only the "at" stamp moved), which
-                # gets no 配置修改 entry — noise must not drown real edits.
-                detail = "；".join(settings_detail(stored, settings))[:300]
-                account["settings"] = settings
+                # Account/client split (2026-08-27): only the ACCOUNT slice —
+                # 模板库 + 备注 — lives on the server. Everything else a client
+                # may still send (亮度, column layout, active template, 口径…)
+                # is client-local by design and ignored here; the stored copy
+                # keeps serving those legacy keys to pre-split pullers.
+                merged = dict(stored)
+                for key in ("stealthTemplates", "notes", "at"):
+                    if key in settings:
+                        merged[key] = settings[key]
+                # Concrete diff; empty -> echo push (or a purely client-local
+                # change), which gets no 配置修改 entry.
+                detail = "；".join(settings_detail(stored, merged))[:300]
+                account["settings"] = merged
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 if detail:
                     cfg = account.get("cfglogs") or []

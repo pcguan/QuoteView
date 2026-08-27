@@ -473,13 +473,20 @@ public partial class MainWindow : FluentWindow
             if (remote.Groups.Count > 0)
             {
                 config = store.Load();
+
+                // 轮换 (panel) is client-local: adopting the account's groups
+                // must not import another machine's rotation choices — the local
+                // flag carries over by name; brand-new groups default to on.
+                var localPanel = new Dictionary<string, bool>();
+                foreach (var g in config.Groups) localPanel[g.Name] = g.InPanel;
+
                 config.Groups = remote.Groups
                     .Select(g => new Group
                     {
                         Id = Guid.NewGuid().ToString("N"),
                         Name = g.Name.Length > 0 ? g.Name : "分组",
                         Codes = g.Codes.ToList(),
-                        InPanel = g.InPanel,
+                        InPanel = !localPanel.TryGetValue(g.Name, out var p) || p,
                     })
                     .ToList();
                 config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;

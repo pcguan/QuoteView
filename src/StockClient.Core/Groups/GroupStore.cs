@@ -351,28 +351,20 @@ public sealed class QuoteColumnState
 /// aggregate mode, pane width) and nothing that is structural (groups live in
 /// their own sync channel; the active group is a per-machine cursor).
 /// </summary>
+/// <summary>
+/// The ACCOUNT-scoped settings slice — the only part that travels with the
+/// login (groups ride their own channel). Everything else — column layout,
+/// rotation flags, the active template, brightness, pane width, 口径 — is
+/// client-local BY DESIGN (2026-08-27 split): every machine keeps its own
+/// look, and changing it never touches the server or its siblings.
+/// </summary>
 public sealed class SettingsPayload
 {
-    [JsonPropertyName("stealth")]
-    public StealthConfig? Stealth { get; set; }
-
-    [JsonPropertyName("quoteColumns")]
-    public List<QuoteColumnState>? QuoteColumns { get; set; }
-
     [JsonPropertyName("notes")]
     public Dictionary<string, string>? Notes { get; set; }
 
     [JsonPropertyName("stealthTemplates")]
     public List<NamedStealthTemplate>? StealthTemplates { get; set; }
-
-    [JsonPropertyName("stealthActive")]
-    public string? ActiveStealthTemplate { get; set; }
-
-    [JsonPropertyName("aggEqual")]
-    public bool AggEqualWeight { get; set; }
-
-    [JsonPropertyName("paneWidth")]
-    public double GroupPaneWidth { get; set; }
 
     /// <summary>Change stamp of this payload, unix seconds. Newer wins.</summary>
     [JsonPropertyName("at")]
@@ -380,36 +372,27 @@ public sealed class SettingsPayload
 
     public static SettingsPayload From(GroupConfig config) => new()
     {
-        Stealth = config.Stealth,
-        QuoteColumns = config.QuoteColumns,
         Notes = config.Notes,
         StealthTemplates = config.StealthTemplates,
-        ActiveStealthTemplate = config.ActiveStealthTemplate,
-        AggEqualWeight = config.AggEqualWeight,
-        GroupPaneWidth = config.GroupPaneWidth,
         At = config.PrefsUpdatedAt,
     };
 
-    /// <summary>Overwrites the preference slice of <paramref name="config"/>.</summary>
+    /// <summary>Overwrites the account slice of <paramref name="config"/>.</summary>
     public void ApplyTo(GroupConfig config)
     {
-        if (Stealth is not null)
-        {
-            // Panel position is per-machine (screen sizes differ); everything
-            // else in the stealth config travels with the account.
-            var left = config.Stealth.Left;
-            var top = config.Stealth.Top;
-            config.Stealth = Stealth;
-            config.Stealth.Left = left;
-            config.Stealth.Top = top;
-        }
-        if (QuoteColumns is not null) config.QuoteColumns = QuoteColumns;
         if (Notes is not null)
             config.Notes = new Dictionary<string, string>(Notes, StringComparer.OrdinalIgnoreCase);
-        if (StealthTemplates is not null) config.StealthTemplates = StealthTemplates;
-        if (ActiveStealthTemplate is not null) config.ActiveStealthTemplate = ActiveStealthTemplate;
-        config.AggEqualWeight = AggEqualWeight;
-        config.GroupPaneWidth = GroupPaneWidth;
+        if (StealthTemplates is not null)
+        {
+            config.StealthTemplates = StealthTemplates;
+
+            // The active-template POINTER is local, but the list it points into
+            // just changed hands — a template deleted on another machine must
+            // not leave this one aiming at a ghost.
+            if (config.ActiveStealthTemplate is { } act
+                && !StealthTemplates.Any(t => t.Name == act))
+                config.ActiveStealthTemplate = StealthTemplates.FirstOrDefault()?.Name;
+        }
         config.PrefsUpdatedAt = At;
     }
 }

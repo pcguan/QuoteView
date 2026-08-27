@@ -50,7 +50,7 @@ nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quo
 | POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，登录后种子一次+改动即推，按账户存 |
 | GET | /dates?code=SH600519 | Bearer | 该合约已归档的日期 |
 | GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
-| GET/POST | /settings | Bearer | 账户个性化设置（客户端启动拉取、修改后上传） |
+| GET/POST | /settings | Bearer | 账户级设置=模板库+合约备注（登录拉取、变更上推）；列显隐/排序、轮换、当前模板、亮度等为客户端本地，不同步 |
 | GET | /status | - | 账户数/合约并集/上次扫描 |
 | GET | /groups | Bearer | 账户的分组（切换用户时客户端恢复用） |
 | GET | /kline | Bearer | K 线代理（secid/klt/fqt/lmt 白名单校验，5 分钟缓存，空响应不缓存） |
