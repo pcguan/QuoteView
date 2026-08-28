@@ -49,16 +49,15 @@ public static class Program
 
         // 1b) The whole field list, unscrolled, at the width the ScrollViewer
         // gives it — the longest label (分组名（面板左侧）) is below the fold.
-        var panel = (FrameworkElement)typeof(StealthSettingsView)
-            .GetField("FieldChips", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(view)!;
-        if (LogicalTreeHelper.GetParent(panel) is ContentControl owner) owner.Content = null;
+        var fieldsWin = new StockClient.App.Views.StealthFieldsWindow(
+            StealthConfig.CreateDefault().Normalize(), () => { });
+        var fieldsContent = (FrameworkElement)fieldsWin.Content;
+        fieldsWin.Content = null;
         Render(new Border
         {
-            Width = 372,
-            Padding = new Thickness(0, 6, 0, 6),
+            Width = 1080,
             Background = new SolidColorBrush(Color.FromRgb(0x12, 0x16, 0x1F)),
-            Child = panel,
+            Child = fieldsContent,
         }, @"C:\work\preview-fields.png");
 
         // 2) The picker popup, rendered straight from its child.

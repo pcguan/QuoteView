@@ -59,10 +59,12 @@
           <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
+        <!-- Vertical: one character per line (set in Render), hugging the left
+             edge — a horizontal name cost ~76px, this costs one glyph's width. -->
         <TextBlock x:Name="GroupLabel" Grid.Column="0"
-                   VerticalAlignment="Center" Margin="0,0,10,0"
-                   FontSize="11" Foreground="#8B93A3"
-                   MaxWidth="76" TextTrimming="CharacterEllipsis" />
+                   VerticalAlignment="Center" Margin="0,0,7,0"
+                   FontSize="10" Foreground="#8B93A3" TextAlignment="Center"
+                   LineHeight="12" LineStackingStrategy="BlockLineHeight" />
 
         <!-- One StackPanel row per contract; each row is filled with field TextBlocks in Render. -->
         <StackPanel x:Name="Rows" Grid.Column="1" Orientation="Vertical" VerticalAlignment="Center" />

@@ -14,7 +14,8 @@ public static class AppPrefs
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "StockClient", "app.json");
 
-    private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false);
+    private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
+        int PanelShadeRestore = 0);
 
     private static Doc _doc = Load();
 
@@ -52,6 +53,15 @@ public static class AppPrefs
     {
         get => _doc.AutoUpdate;
         set { if (_doc.AutoUpdate == value) return; _doc = _doc with { AutoUpdate = value }; Save(); }
+    }
+
+    /// <summary>The shade the panel had before a double-click blackout, so a
+    /// second double-click can restore it — remembered across restarts (the
+    /// panel may well be reopened invisible). 0 = nothing pending.</summary>
+    public static int PanelShadeRestore
+    {
+        get => _doc.PanelShadeRestore;
+        set { if (_doc.PanelShadeRestore == value) return; _doc = _doc with { PanelShadeRestore = value }; Save(); }
     }
 
     /// <summary>Whether the stealth panel was up when the app last ran, so a

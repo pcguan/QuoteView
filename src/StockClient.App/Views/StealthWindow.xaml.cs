@@ -400,30 +400,151 @@ public partial class StealthWindow : Window
         var group = _vm.ActiveGroup?.Name ?? "";
         var showGroup = group.Length > 0 && groupField is not { Visible: false };
 
-        GroupLabel.Text = group;
+        // Vertical, one character per line: stacked CJK reads naturally and
+        // costs ~12px of width instead of the ~76px a horizontal name took.
+        var stacked = string.Join("\n", (group.Length > 8 ? group[..7] + "…" : group).ToCharArray());
+        GroupLabel.Text = stacked;
         GroupLabel.Visibility = showGroup ? Visibility.Visible : Visibility.Collapsed;
         if (showGroup) GroupLabel.Foreground = Brush(groupField?.Color ?? "#8B93A3");
 
         if (_rows.Count == 0)
         {
-            Rows.Children.Add(RowFor(null));
+            Rows.Children.Add(new TextBlock
+                { Text = "无行情", FontSize = 12, Foreground = Brushes.Gray });
             Resync();
             return;
         }
 
-        // Row gap: a top margin on every row but the first, so N rows get N-1 gaps.
-        var gap = Math.Clamp(_config.RowGap, 0, StealthConfig.MaxRowGap);
-        var first = true;
-        foreach (var row in _rows)
-        {
-            var line = RowFor(row);
-            if (line is FrameworkElement fe) fe.Margin = new Thickness(0, first ? 0 : gap, 0, 0);
-            Rows.Children.Add(line);
-            first = false;
-        }
-
+        Rows.Children.Add(BuildQuoteGrid());
         UpdateTrend();
         Resync();
+    }
+
+    // Grow-only column floors, per group: auto-sized columns re-fit every tick
+    // and a 9.87→10.02 price would nudge every column to its right — the same
+    // jitter HoldWidth kills at the window level, killed per column here.
+    private readonly Dictionary<StealthField, double> _columnFloor = new();
+    private string _columnFloorGroup = "";
+
+    /// <summary>
+    /// The quote block as ONE grid — a muted header line naming each column,
+    /// then one row per contract — so values align vertically across rows
+    /// (the old per-row StackPanels drifted with every value's width). Columns
+    /// empty on every row (fund-flow fields outside A-shares, blank notes) are
+    /// dropped whole rather than showing a header over nothing.
+    /// </summary>
+    private FrameworkElement BuildQuoteGrid()
+    {
+        var fields = _config.Fields
+            .Where(f => f.Visible && f.Field != StealthField.GroupName)
+            .ToList();
+
+        var values = new string[_rows.Count][];
+        for (var r = 0; r < _rows.Count; r++)
+        {
+            var row = _rows[r];
+            values[r] = new string[fields.Count];
+            if (row.IsMissing) continue;
+            for (var c = 0; c < fields.Count; c++)
+                values[r][c] = Value(fields[c].Field, row);
+        }
+
+        var used = Enumerable.Range(0, fields.Count)
+            .Where(c => values.Any(v => !string.IsNullOrEmpty(v[c])))
+            .ToList();
+
+        var group = _vm.ActiveGroup?.Name ?? "";
+        if (_columnFloorGroup != group)
+        {
+            _columnFloorGroup = group;
+            _columnFloor.Clear();
+        }
+
+        var grid = new Grid();
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        foreach (var c in used)
+        {
+            _columnFloor.TryGetValue(fields[c].Field, out var floor);
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+                { Width = GridLength.Auto, MinWidth = floor });
+        }
+
+        for (var r = 0; r <= _rows.Count; r++)   // header + one per contract
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var gap = Math.Clamp(_config.RowGap, 0, StealthConfig.MaxRowGap);
+        var yahei = new FontFamily("Microsoft YaHei");
+        var consolas = new FontFamily("Consolas");
+
+        TextBlock Cell(string text, int gridCol, int col, bool header, Brush brush,
+            FontWeight weight, double size, double topMargin)
+        {
+            var mono = fields[col].Field is not (StealthField.Code or StealthField.Name);
+            var family = header || !mono ? yahei : consolas;
+            var block = new TextBlock
+            {
+                Text = text,
+                FontSize = size,
+                FontWeight = weight,
+                FontFamily = family,
+                Foreground = brush,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = !header && mono ? TextAlignment.Right : TextAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Margin = new Thickness(gridCol == 0 ? 0 : 8, topMargin, 0, 0),
+            };
+            Grid.SetColumn(block, gridCol);
+            grid.Children.Add(block);
+
+            var measured = new FormattedText(text,
+                System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface(family, FontStyles.Normal, weight, FontStretches.Normal),
+                size, brush, dpi).Width;
+            var key = fields[col].Field;
+            if (!_columnFloor.TryGetValue(key, out var known) || measured > known)
+                _columnFloor[key] = measured;
+            return block;
+        }
+
+        var headerBrush = Brush("#7E8798");
+        for (var i = 0; i < used.Count; i++)
+        {
+            var cell = Cell(Label(fields[used[i]].Field), i, used[i], header: true,
+                headerBrush, FontWeights.Normal, 9.5, 0);
+            Grid.SetRow(cell, 0);
+        }
+
+        for (var r = 0; r < _rows.Count; r++)
+        {
+            var row = _rows[r];
+            var top = r == 0 ? 2.0 : gap;
+
+            if (row.IsMissing)
+            {
+                var missing = new TextBlock
+                {
+                    Text = "无行情", FontSize = 12, Foreground = Brushes.Gray,
+                    Margin = new Thickness(0, top, 0, 0),
+                };
+                Grid.SetRow(missing, r + 1);
+                Grid.SetColumnSpan(missing, Math.Max(1, used.Count));
+                grid.Children.Add(missing);
+                continue;
+            }
+
+            for (var i = 0; i < used.Count; i++)
+            {
+                var c = used[i];
+                var f = fields[c];
+                var cell = Cell(values[r][c] ?? "", i, c, header: false,
+                    Brush(ColorFor(f, row)),
+                    f.Field == StealthField.Name ? FontWeights.SemiBold : FontWeights.Normal,
+                    12, top);
+                Grid.SetRow(cell, r + 1);
+            }
+        }
+
+        return grid;
     }
 
     /// <summary>
@@ -635,41 +756,6 @@ public partial class StealthWindow : Window
     }
 
     /// <summary>One horizontal line of field TextBlocks for a contract (or "无行情").</summary>
-    private UIElement RowFor(QuoteRow? row)
-    {
-        var line = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-
-        if (row is null || row.IsMissing)
-        {
-            line.Children.Add(new TextBlock { Text = "无行情", FontSize = 12, Foreground = Brushes.Gray });
-            return line;
-        }
-
-        var first = true;
-        foreach (var f in _config.Fields.Where(f => f.Visible))
-        {
-            var text = Value(f.Field, row);
-            if (text.Length == 0) continue;
-
-            line.Children.Add(new TextBlock
-            {
-                Text = text,
-                FontSize = 12,
-                FontWeight = f.Field == StealthField.Name ? FontWeights.SemiBold : FontWeights.Normal,
-                FontFamily = f.Field is StealthField.Code or StealthField.Name
-                    ? new FontFamily("Microsoft YaHei")
-                    : new FontFamily("Consolas"),
-                Foreground = Brush(ColorFor(f, row)),
-                Margin = new Thickness(first ? 0 : 7, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-
-            first = false;
-        }
-
-        return line;
-    }
-
     /// <summary>
     /// A signed field takes its up/down colour from its own move; everything else
     /// takes its single colour.
@@ -711,7 +797,7 @@ public partial class StealthWindow : Window
     private static string Value(StealthField field, QuoteRow r) => field switch
     {
         // Not a per-row field: it is drawn once beside the whole block. Returning
-        // empty keeps RowFor from repeating the group name on every line.
+        // empty keeps the grid from repeating the group name on every line.
         StealthField.GroupName => "",
         StealthField.Code => r.Code,
         StealthField.Name => r.Name,
@@ -1256,15 +1342,17 @@ public partial class StealthWindow : Window
         else if (e.ClickCount == 2)
         {
             // Double-click = instant blackout: shade straight to 0, the same
-            // endpoint holding Win+Alt+Down reaches one step at a time. At 0 the
-            // window's pixels are fully transparent and the mouse falls through,
-            // so the way back is Win+Alt+Up — which is also why this is a one-way
-            // gesture rather than a toggle: an invisible panel can't be
-            // double-clicked again.
+            // endpoint holding Win+Alt+Down reaches one step at a time. The
+            // shade it had is remembered (machine-local, survives restarts) so
+            // a second double-click brings it right back — the invisible panel
+            // can't receive WPF clicks, so that return path rides the mouse
+            // hook (see WheelHook), watching for a double-click inside the
+            // panel's rect while shade is 0.
+            AppPrefs.PanelShadeRestore = _config.Shade;
             _config.Shade = 0;
             ApplyShade();
             _save();
-            Snapshot("double-click -> INVISIBLE (Win+Alt+Up to bring back)");
+            Snapshot("double-click -> INVISIBLE (双击原处或 Win+Alt+Up 恢复)");
         }
 
         Probe.Log($"Root_Drag after:  size={ActualWidth:F0}x{ActualHeight:F0} " +
@@ -1354,8 +1442,46 @@ public partial class StealthWindow : Window
               "(falls back to WM_MOUSEWHEEL)");
     }
 
+    // Double-click detection over the INVISIBLE panel: at shade 0 the window is
+    // click-through, so WPF never sees the restoring double-click — the hook
+    // watches for two rapid clicks inside the panel's rect instead. Clicks are
+    // NOT swallowed: the desktop underneath stays fully usable; restoring is a
+    // side effect of a double-click that lands where the panel sleeps.
+    private int _ghostClickTime;
+    private int _ghostClickX, _ghostClickY;
+
     private IntPtr WheelHook(int code, IntPtr wParam, IntPtr lParam)
     {
+        if (code >= 0 && wParam.ToInt32() == Native.WmLButtonDownMsg && _config.Shade == 0)
+        {
+            var click = System.Runtime.InteropServices.Marshal
+                .PtrToStructure<Native.MouseLowLevel>(lParam);
+            var h = _source?.Handle ?? IntPtr.Zero;
+            if (h != IntPtr.Zero && Native.GetWindowRect(h, out var r)
+                && r.Contains(click.X, click.Y))
+            {
+                var isDouble = _ghostClickTime != 0
+                    && click.Time - _ghostClickTime <= Native.GetDoubleClickTime()
+                    && Math.Abs(click.X - _ghostClickX) <= 8
+                    && Math.Abs(click.Y - _ghostClickY) <= 8;
+                _ghostClickTime = isDouble ? 0 : click.Time;
+                _ghostClickX = click.X;
+                _ghostClickY = click.Y;
+
+                if (isDouble)
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        _config.Shade = Math.Clamp(
+                            AppPrefs.PanelShadeRestore > 0 ? AppPrefs.PanelShadeRestore : 7,
+                            1, MaxShade);
+                        ApplyShade();
+                        _save();
+                        Snapshot("ghost double-click -> restore shade");
+                    }), DispatcherPriority.Input);
+            }
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+        }
+
         if (code < 0 || wParam.ToInt32() != Native.WmMouseWheelMsg)
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
 
@@ -1518,6 +1644,10 @@ internal static class Native
     public const int WhMouseLl = 14;
     public const int WhKeyboardLl = 13;
     public const int WmMouseWheelMsg = 0x020A;
+    public const int WmLButtonDownMsg = 0x0201;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    public static extern uint GetDoubleClickTime();
     public const int WmKeyDown = 0x0100;
     public const int WmSysKeyDown = 0x0104;
 
