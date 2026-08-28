@@ -15,7 +15,7 @@ public static class AppPrefs
         "StockClient", "app.json");
 
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
-        int PanelShadeRestore = 0);
+        int PanelShadeRestore = 0, bool UpdateToast = true);
 
     private static Doc _doc = Load();
 
@@ -53,6 +53,15 @@ public static class AppPrefs
     {
         get => _doc.AutoUpdate;
         set { if (_doc.AutoUpdate == value) return; _doc = _doc with { AutoUpdate = value }; Save(); }
+    }
+
+    /// <summary>Desktop toast when a new release is found (default on) — the
+    /// in-app update bar shows regardless; this is the one visible from the
+    /// desktop / stealth mode. Toggle lives in 系统设置.</summary>
+    public static bool UpdateToast
+    {
+        get => _doc.UpdateToast;
+        set { if (_doc.UpdateToast == value) return; _doc = _doc with { UpdateToast = value }; Save(); }
     }
 
     /// <summary>The shade the panel had before a double-click blackout, so a

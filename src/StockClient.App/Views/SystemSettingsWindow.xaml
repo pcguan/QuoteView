@@ -14,6 +14,11 @@
         <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                    Text="发现新版本后，仅当系统连续 10 分钟无键鼠输入时才静默下载、安装并重启（重启后自动登录，简洁面板开着会自动恢复）。关闭后仅保留底部提示条的手动更新。" />
 
+        <CheckBox x:Name="UpdateToastBox" Content="发现新版本时桌面弹窗提醒" Foreground="#EDF1F7"
+                  Margin="0,12,0,0" Checked="UpdateToast_Changed" Unchecked="UpdateToast_Changed" />
+        <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="右下角弹窗，可点「后台升级」立即更新或「关闭」忽略（每个版本只弹一次，20 秒无操作自动消失）。主窗口最小化或简洁面板模式下也能看到。" />
+
         <Separator Margin="0,16,0,14" Background="#232B3B" />
 
         <TextBlock Text="关于" Foreground="#EDF1F7" Margin="0,0,0,6" />

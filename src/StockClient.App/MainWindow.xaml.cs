@@ -227,6 +227,7 @@ public partial class MainWindow : FluentWindow
 
             _stealth?.Close();
             _systemSettings?.Close();
+            _updateToast?.Close();
 
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
@@ -673,6 +674,15 @@ public partial class MainWindow : FluentWindow
             // manual check always shows it.
             if (!manual && _dismissedVersion == check.Release!.Version) return;
             ShowUpdateBar(check);
+
+            // Desktop toast, once per version — the visible-from-anywhere twin
+            // of the in-app bar (minimized window, stealth mode).
+            if (!manual && AppPrefs.UpdateToast && !_updateApplying
+                && _toastVersion != check.Release!.Version)
+            {
+                _toastVersion = check.Release!.Version;
+                ShowUpdateToast(check.Release!);
+            }
             return;
         }
 
@@ -713,6 +723,23 @@ public partial class MainWindow : FluentWindow
     }
 
     private DateTime _autoUpdateFailedAt = DateTime.MinValue;
+    private Version? _toastVersion;
+    private Views.UpdateToastWindow? _updateToast;
+
+    private void ShowUpdateToast(ReleaseInfo release)
+    {
+        _updateToast?.Close();
+        var toast = new Views.UpdateToastWindow(release.DisplayName, release.Notes);
+        toast.UpgradeRequested += async () =>
+        {
+            if (_updateApplying) return;
+            var error = await ApplyUpdateAsync(release, toast.Progress);
+            if (error is not null) toast.ShowError(error.Message);
+        };
+        toast.Closed += (_, _) => { if (ReferenceEquals(_updateToast, toast)) _updateToast = null; };
+        _updateToast = toast;
+        toast.Show();
+    }
 
     /// <summary>
     /// The one download-and-restart path, shared by the bar's 更新 button and

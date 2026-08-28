@@ -571,8 +571,10 @@ def kline_body(secid, klt, fqt, lmt):
 def sweep_once():
     """One throttled pass over whatever is missing for today. Returns idle time hint."""
     now = datetime.now(CN)
-    # After close + settle margin only; well-defined because SH/SZ share one bell.
-    if now.weekday() >= 5 or now.time() < datetime.strptime("15:20", "%H:%M").time():
+    # One minute after the SH/SZ bell: the closing auction settles at 15:00 and
+    # the minute feeds carry the full day right away — same-day history should
+    # be queryable while the day is still fresh, not at 15:20.
+    if now.weekday() >= 5 or now.time() < datetime.strptime("15:01", "%H:%M").time():
         return
     day = f"{now:%F}"
 
@@ -706,7 +708,14 @@ def scheduler():
             sweep_once()
         except Exception as e:  # noqa: BLE001 - the loop must survive anything
             log(f"sweep error: {e}")
-        time.sleep(300)
+        # Wake AT the archive minute: a flat 300s cadence could push the first
+        # after-close pass to ~15:06, defeating the 15:01 promise.
+        now = datetime.now(CN)
+        target = now.replace(hour=15, minute=1, second=0, microsecond=0)
+        if now.weekday() < 5 and now < target:
+            time.sleep(min(300, max(1, (target - now).total_seconds())))
+        else:
+            time.sleep(300)
 
 
 # ---------------------------------------------------------------- http
