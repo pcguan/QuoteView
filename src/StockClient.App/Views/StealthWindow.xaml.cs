@@ -1462,6 +1462,11 @@ public partial class StealthWindow : Window
     private int _ghostClickTime;
     private int _ghostClickX, _ghostClickY;
 
+    // The union of recently-used panel footprints (see the wheel handler) and
+    // when it expires, in the hook's own millisecond clock.
+    private Native.Rect _stickyRect;
+    private int _stickyUntil;
+
     private IntPtr WheelHook(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0 && wParam.ToInt32() == Native.WmLButtonDownMsg && _config.Shade == 0)
@@ -1502,9 +1507,21 @@ public partial class StealthWindow : Window
 
         // Physical screen pixels on both sides, so DPI scaling never enters into it.
         var hwnd = _source?.Handle ?? IntPtr.Zero;
-        if (hwnd == IntPtr.Zero
-            || !Native.GetWindowRect(hwnd, out var rect)
-            || !rect.Contains(data.X, data.Y))
+        if (hwnd == IntPtr.Zero || !Native.GetWindowRect(hwnd, out var rect))
+        {
+            _wheelPassed++;
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+        }
+
+        // Sticky footprint: a group switch (Ctrl+wheel) RESIZES the panel — the
+        // column floors reset per group — and a shrink drops the pointer off
+        // the window mid-gesture, so the next notch fell through to whatever
+        // was underneath (a browser zooming was how it surfaced). For a short
+        // grace after each handled notch, the union of recent footprints still
+        // counts as "over the panel".
+        var sticky = unchecked(data.Time - _stickyUntil) < 0
+            && _stickyRect.Contains(data.X, data.Y);
+        if (!rect.Contains(data.X, data.Y) && !sticky)
         {
             _wheelPassed++;
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
@@ -1514,6 +1531,17 @@ public partial class StealthWindow : Window
         if (delta == 0) return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
 
         _wheelHits++;
+
+        _stickyRect = sticky
+            ? new Native.Rect
+            {
+                Left = Math.Min(_stickyRect.Left, rect.Left),
+                Top = Math.Min(_stickyRect.Top, rect.Top),
+                Right = Math.Max(_stickyRect.Right, rect.Right),
+                Bottom = Math.Max(_stickyRect.Bottom, rect.Bottom),
+            }
+            : rect;
+        _stickyUntil = data.Time + 800;
 
         // Modifier routing: plain wheel walks contracts, Shift+wheel steps the
         // shade (up = brighter — works even at shade 0, when the panel is
