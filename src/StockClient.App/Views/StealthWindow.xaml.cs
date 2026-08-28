@@ -369,7 +369,7 @@ public partial class StealthWindow : Window
         var hwnd = _source?.Handle ?? IntPtr.Zero;
 
         var snapshot =
-            $"shade={_config.Shade} opacity={Opacity:F2} visible={IsVisible} state={WindowState} " +
+            $"shade={_config.Shade} opacity={ContentOpacity:F2} visible={IsVisible} state={WindowState} " +
             $"size={ActualWidth:F0}x{ActualHeight:F0} pos={Left:F0},{Top:F0} " +
             $"children={Rows.Children.Count} rows={_rows.Count} " +
             $"wheel={_wheelHits}/{_wheelPassed} hook={(_wheelHook != IntPtr.Zero ? "on" : "off")} " +
@@ -808,19 +808,35 @@ public partial class StealthWindow : Window
     }
 
     /// <summary>
-    /// Shade drives window opacity, 0 meaning fully invisible.
+    /// Shade drives the CONTENT's opacity, 0 meaning fully invisible.
     ///
     /// It has to reach a true 0: colours don't fade at the same rate. Relative
     /// luminance of white is 255, but of the default red (#EF5350) only ~116, so
     /// against a dark desktop the red text sinks out of sight while white is
     /// still legible. Any floor above zero would leave the brighter fields
     /// showing. The tray icon is what makes a fully invisible panel safe.
+    ///
+    /// The fade must NOT ride Window.Opacity: that multiplies the Root border's
+    /// #01-alpha mouse-catch background too, and at shade 2 (0.2 × 1/255) the
+    /// result rounded to zero — the panel ignored the mouse everywhere except
+    /// the text glyphs themselves, which read as "sometimes I can't grab it".
+    /// The window stays at 1 and the inner content fades instead, so the catch
+    /// layer keeps its one alpha step at every shade.
     /// </summary>
     private void ApplyShade()
     {
         var t = Math.Clamp(_config.Shade, 0, MaxShade) / (double)MaxShade;
-        Opacity = t;
+
+        Opacity = 1;
+        if (Root.Child is UIElement body) body.Opacity = t;
+
+        // Shade 0 stays genuinely click-through on purpose: an invisible panel
+        // must not eat clicks meant for the desktop underneath.
+        IsHitTestVisible = t > 0;
     }
+
+    /// <summary>What the heartbeat reports as the panel's visual opacity.</summary>
+    private double ContentOpacity => Root.Child is UIElement b ? b.Opacity : Opacity;
 
     private ContextMenu BuildMenu()
     {
@@ -1231,7 +1247,7 @@ public partial class StealthWindow : Window
     private void Root_Drag(object sender, MouseButtonEventArgs e)
     {
         Probe.Log($"Root_Drag clicks={e.ClickCount} before: size={ActualWidth:F0}x{ActualHeight:F0} " +
-                  $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
+                  $"pos={Left:F0},{Top:F0} opacity={ContentOpacity:F2} children={Rows.Children.Count}");
 
         if (e.ClickCount == 1)
         {
@@ -1252,7 +1268,7 @@ public partial class StealthWindow : Window
         }
 
         Probe.Log($"Root_Drag after:  size={ActualWidth:F0}x{ActualHeight:F0} " +
-                  $"pos={Left:F0},{Top:F0} opacity={Opacity:F2} children={Rows.Children.Count}");
+                  $"pos={Left:F0},{Top:F0} opacity={ContentOpacity:F2} children={Rows.Children.Count}");
     }
 
     // Widest the panel has been for the current group, used as a floor so it never
