@@ -21,6 +21,8 @@ public sealed class TrendChart : FrameworkElement
 {
     private static readonly Brush UpBrush = Frozen("#EF5350");
     private static readonly Brush DownBrush = Frozen("#26A69A");
+    private static readonly Brush MainTag = Frozen("#DCE4EE");
+    private static readonly Brush CompareTag = Frozen("#4C8DFF");
     private static readonly Pen PriceLine = FrozenPen("#DCE4EE", 1.3);
     private static readonly Pen AvgLine = FrozenPen("#FFC107", 1.2);
     private static readonly Pen BaselinePen = FrozenPen("#5F6672", 1, dashed: true);
@@ -144,22 +146,48 @@ public sealed class TrendChart : FrameworkElement
             priceMax = pre + dev;
         }
 
+        // One shared volume scale across BOTH days, so in compare mode the two
+        // lanes' bar heights are directly comparable.
+        var cmpPoints = _compare is { Points.Count: > 0 } cmpForVolume ? cmpForVolume.Points : null;
         var volumeMax = points.Max(p => p.Volume);
+        if (cmpPoints is not null) volumeMax = Math.Max(volumeMax, cmpPoints.Max(p => p.Volume));
 
         double PriceToY(double p) =>
             priceMax <= priceMin
                 ? (plotTop + priceBottom) / 2
                 : priceBottom - (p - priceMin) / (priceMax - priceMin) * (priceBottom - plotTop);
 
-        double VolumeToY(double v) =>
-            volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * (plotBottom - volumeTop);
-
         // Full-session width even before the day fills: A-share 241, HK/US/KR more.
         var slots = ExpectedSlots(points);
         var step = PlotWidth / slots;
 
         DrawGrid(dc, priceMin, priceMax, pre, plotTop, priceBottom, PriceToY);
-        DrawVolume(dc, step, VolumeToY, plotBottom, pre, points);
+
+        if (cmpPoints is null)
+        {
+            double VolumeToY(double v) =>
+                volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * (plotBottom - volumeTop);
+            DrawVolume(dc, step, VolumeToY, volumeTop, plotBottom, volumeMax, pre, points, null);
+        }
+        else
+        {
+            // Compare mode: the volume band splits into two lanes — the picked
+            // day on top, the compare day beneath — each tagged at its left
+            // edge with the day's legend colour.
+            const double laneGap = 3;
+            var laneHeight = Math.Max(1, (plotBottom - volumeTop - laneGap) / 2);
+            var laneOneBottom = volumeTop + laneHeight;
+            var laneTwoTop = laneOneBottom + laneGap;
+
+            double LaneOneY(double v) =>
+                volumeMax <= 0 ? laneOneBottom : laneOneBottom - v / volumeMax * laneHeight;
+            double LaneTwoY(double v) =>
+                volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * laneHeight;
+
+            DrawVolume(dc, step, LaneOneY, volumeTop, laneOneBottom, volumeMax, pre, points, MainTag);
+            DrawVolume(dc, step, LaneTwoY, laneTwoTop, plotBottom, volumeMax,
+                _compare!.PreClose, cmpPoints, CompareTag);
+        }
         DrawCompare(dc, step, PriceToY, pre);
         DrawLines(dc, step, PriceToY, points);
         DrawTimeAxis(dc, step, plotBottom, points);
@@ -247,18 +275,37 @@ public sealed class TrendChart : FrameworkElement
         dc.DrawGeometry(null, AvgLine, new PathGeometry { Figures = { avg } });
     }
 
+    /// <summary>
+    /// Minute-volume bars, coloured by TICK DIRECTION — up vs the previous
+    /// minute red, down green, unchanged carries the previous colour (the
+    /// mainstream 分时图 convention; the first bar compares against 昨收).
+    /// Colouring vs 昨收, as before, painted a day that traded entirely above
+    /// yesterday's close solid red. A non-null laneTag marks the lane's left
+    /// edge with that day's legend colour (compare mode stacks two lanes).
+    /// </summary>
     private void DrawVolume(
-        DrawingContext dc, double step, Func<double, double> volumeToY, double volumeBottom,
-        double pre, IReadOnlyList<TrendPoint> points)
+        DrawingContext dc, double step, Func<double, double> volumeToY, double laneTop,
+        double laneBottom, double volumeMax, double pre, IReadOnlyList<TrendPoint> points,
+        Brush? laneTag)
     {
+        if (points.Count == 0) return;
+
+        if (laneTag is not null)
+            dc.DrawRectangle(laneTag, null,
+                new Rect(PadLeft - 6, laneTop, 3, Math.Max(0, laneBottom - laneTop)));
+
         var width = Math.Max(1, step * 0.7);
+        var brush = UpBrush;
         for (var i = 0; i < points.Count; i++)
         {
             var p = points[i];
-            var brush = p.Price >= pre ? UpBrush : DownBrush;
+            var prev = i > 0 ? points[i - 1].Price : pre;
+            if (p.Price > prev) brush = UpBrush;
+            else if (p.Price < prev) brush = DownBrush;
+
             var x = X(i, step);
             var y = volumeToY(p.Volume);
-            dc.DrawRectangle(brush, null, new Rect(x - width / 2, y, width, Math.Max(0, volumeBottom - y)));
+            dc.DrawRectangle(brush, null, new Rect(x - width / 2, y, width, Math.Max(0, laneBottom - y)));
         }
     }
 
