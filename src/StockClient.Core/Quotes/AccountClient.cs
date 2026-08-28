@@ -39,6 +39,29 @@ public sealed class AccountClient
         if (token is not null) request.Headers.Authorization = new("Bearer", token);
     }
 
+    /// <summary>
+    /// Why the server rejects this token: "kicked" for an admin force logout,
+    /// "" for anything else (expired, unknown, network trouble). The session
+    /// consults this before its silent re-login self-heal — an admin kick must
+    /// stay kicked until a human signs in again.
+    /// </summary>
+    public async Task<string> AuthRejectReasonAsync(string token, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, Base + "/ping");
+            Stamp(request, token);
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode != System.Net.HttpStatusCode.Unauthorized) return "";
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return body.Contains("kicked") ? "kicked" : "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
     public Task<AuthResult> LoginAsync(string username, string password, CancellationToken ct) =>
         AuthAsync("/login", username, password, ct);
 

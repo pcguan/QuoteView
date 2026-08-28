@@ -45,6 +45,19 @@ public sealed class AccountSession
         Changed?.Invoke();
     }
 
+    /// <summary>Raised once when the server reports this session was force
+    /// logged out by an administrator.</summary>
+    public event Action? Kicked;
+
+    private void KickedByAdmin()
+    {
+        _token = null;
+        AutoLogin = false;   // stay signed out across restarts until a HUMAN logs in
+        Save();
+        Changed?.Invoke();
+        Kicked?.Invoke();
+    }
+
     /// <summary>Signed in = a token exists. It may still be stale; CallAsync heals that.</summary>
     public bool IsSignedIn => _token is not null;
 
@@ -236,6 +249,15 @@ public sealed class AccountSession
 
         var (result, unauthorized) = await op(token);
         if (!unauthorized) return result;
+
+        // A 401 has two very different meanings: a lost/expired token should
+        // self-heal silently, an ADMIN FORCE-LOGOUT must not — the self-heal
+        // is exactly what used to log the "kicked" client straight back in.
+        if (await _client.AuthRejectReasonAsync(token, CancellationToken.None) == "kicked")
+        {
+            KickedByAdmin();
+            return fallback;
+        }
 
         // Stale token. One renewal attempt with the remembered password.
         _token = null;

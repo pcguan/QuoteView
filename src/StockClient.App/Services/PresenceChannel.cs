@@ -100,6 +100,13 @@ public sealed class PresenceChannel : IAsyncDisposable
             }
 
             Probe.Log($"presence: disconnected, retry in {backoff.TotalSeconds:0}s");
+
+            // One authenticated probe per drop: if the server just force-logged
+            // this session out (admin kick severs the socket), the ping's 401
+            // carries the reason and the session signs out locally within
+            // seconds instead of at the next 60s heartbeat.
+            _ = _session.PingAsync();
+
             await IdleAsync(backoff);
             backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, 60));
         }

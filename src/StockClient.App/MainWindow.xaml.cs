@@ -85,6 +85,8 @@ public partial class MainWindow : FluentWindow
             UpdateAccountButton();
             UpdateGates();
         });
+        _session.Kicked += () => Dispatcher.InvokeAsync(async () =>
+            await InfoDialog("已退出登录", "该账户已被管理员登出；如需继续使用请重新登录。"));
 
         _klineRepo = new KlineRepository(
             new EastMoneyKlineClient(_klineHttp),

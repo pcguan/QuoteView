@@ -1284,6 +1284,11 @@ class Handler(BaseHTTPRequestHandler):
         if doc.get("disabled"):
             self._bad("账户已禁用", 401)
             return None
+        entry = next((t for t in doc.get("tokens") or []
+                      if isinstance(t, dict) and t.get("t") == token), None)
+        if entry is not None and entry.get("kicked"):
+            self._bad("kicked", 401)
+            return None
         touch_token(user, token, self._ip(), self._ver())
         # Re-read after the touch so callers see the freshest doc.
         return user, load_account(user) or doc, token
@@ -1345,6 +1350,8 @@ class Handler(BaseHTTPRequestHandler):
                 normalize_tokens(doc)
                 sessions = []
                 for t in doc["tokens"]:
+                    if t.get("kicked"):
+                        continue   # force-logged-out; kept only for the reason
                     ip = t.get("ip") or ""
                     # Loopback/blank IPs are pre-proxy-fix leftovers, no signal.
                     if ip in ("", "127.0.0.1"):
@@ -1541,14 +1548,16 @@ class Handler(BaseHTTPRequestHandler):
             token = str(doc.get("token") or "")
             ver = re.sub(r"[^A-Za-z0-9._-]", "", str(doc.get("ver") or ""))[:32]
             user, account = user_for_token(token)
-            if user is None or (account or {}).get("disabled"):
+            if user is None or (account or {}).get("disabled") or any(
+                    isinstance(t, dict) and t.get("t") == token and t.get("kicked")
+                    for t in (account or {}).get("tokens") or []):
                 ws_send(sock, 8)
                 return
 
             ip = self._ip()
             with _ws_lock:
                 WS_CONNS[token] = {"user": user, "ip": ip, "ver": ver,
-                                   "since": f"{datetime.now(CN):%F %T}"}
+                                   "since": f"{datetime.now(CN):%F %T}", "sock": sock}
             touch_token(user, token, ip, ver)
             ws_send(sock, 1, b'{"ok":true}')
             log(f"ws connect {user} from {ip} ver={ver or '-'}")
@@ -1591,6 +1600,8 @@ class Handler(BaseHTTPRequestHandler):
             tokens = []
             online = 0
             for t in doc["tokens"]:
+                if t.get("kicked"):
+                    continue
                 ip = t.get("ip") or ""
                 is_online = ip not in ("", "127.0.0.1")   # valid session = online
                 duration = ""
@@ -1708,8 +1719,11 @@ class Handler(BaseHTTPRequestHandler):
                 account = load_account(user) or account
                 normalize_tokens(account)
                 cutoff = f"{datetime.now(CN) - timedelta(days=30):%F %T}"
+                kick_cutoff = f"{datetime.now(CN) - timedelta(days=1):%F %T}"
                 account["tokens"] = [t for t in account["tokens"]
-                                     if (t.get("seen") or t.get("created") or "") >= cutoff]
+                                     if (t.get("seen") or t.get("created") or "") >= cutoff
+                                     and not (t.get("kicked")
+                                              and (t.get("kickedAt") or "") < kick_cutoff)]
                 account["tokens"] = account["tokens"][-(MAX_TOKENS - 1):] + [token]
                 logins = account.get("logins") or []
                 account["logins"] = (logins + [self._login_entry()])[-100:]
@@ -2020,10 +2034,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         if action == "logout":
+            # Revoke-with-reason, NOT delete: a deleted token 401s exactly like
+            # an expired one, and the client's remembered-password self-heal
+            # silently logged straight back in — force logout looked like a
+            # no-op. A kicked marker lets _auth answer "kicked", which the
+            # client treats as "stay signed out until a HUMAN logs in".
             with _lock:
-                account["tokens"] = []
+                account = load_account(user) or account
+                normalize_tokens(account)
+                for t in account["tokens"]:
+                    t["kicked"] = actor_name
+                    t["kickedAt"] = f"{datetime.now(CN):%F %T}"
                 save_account(user, account)
             _token_cache.clear()
+            with _ws_lock:
+                for tok, conn in list(WS_CONNS.items()):
+                    if conn.get("user") == user:
+                        try:
+                            conn.get("sock") and conn["sock"].close()
+                        except Exception:
+                            pass
+                        WS_CONNS.pop(tok, None)
             self._log_login(user, "warn", f"被管理员登出（{actor_name}）")
             log(f"admin[{actor_name}]: logout {user}")
             return self._json({"ok": True})
