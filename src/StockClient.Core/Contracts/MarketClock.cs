@@ -30,6 +30,9 @@ public interface IMarketClock
     /// which is why the K-line cache can't simply be keyed by trading date alone.
     /// </summary>
     bool IsAfterClose(Market market, DateTimeOffset instant);
+
+    /// <summary>Current wall-clock time in the exchange's own timezone.</summary>
+    TimeOnly LocalTime(Market market);
 }
 
 public sealed class MarketClock : IMarketClock
@@ -55,6 +58,13 @@ public sealed class MarketClock : IMarketClock
         var zone = ResolveZone(info.TimeZoneId);
         var local = TimeZoneInfo.ConvertTime(_utcNow(), zone);
         return DateOnly.FromDateTime(local.DateTime);
+    }
+
+    public TimeOnly LocalTime(Market market)
+    {
+        var info = MarketInfo.Of(market);
+        var local = TimeZoneInfo.ConvertTime(_utcNow(), ResolveZone(info.TimeZoneId));
+        return TimeOnly.FromDateTime(local.DateTime);
     }
 
     public bool IsAfterClose(Market market, DateTimeOffset instant)
