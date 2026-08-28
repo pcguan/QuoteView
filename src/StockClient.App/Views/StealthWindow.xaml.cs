@@ -914,6 +914,13 @@ public partial class StealthWindow : Window
     /// The window stays at 1 and the inner content fades instead, so the catch
     /// layer keeps its one alpha step at every shade.
     /// </summary>
+    private void StepShade(int step)
+    {
+        _config.Shade = Math.Clamp(_config.Shade + step, 0, MaxShade);
+        ApplyShade();
+        _save();
+    }
+
     private void ApplyShade()
     {
         var t = Math.Clamp(_config.Shade, 0, MaxShade) / (double)MaxShade;
@@ -1508,9 +1515,21 @@ public partial class StealthWindow : Window
 
         _wheelHits++;
 
+        // Modifier routing: plain wheel walks contracts, Shift+wheel steps the
+        // shade (up = brighter — works even at shade 0, when the panel is
+        // otherwise unclickable), Ctrl+wheel cycles groups. Keys are read here
+        // (GetAsyncKeyState) because a low-level hook has no modifier state.
+        var shift = (Native.GetAsyncKeyState(Native.VkShift) & 0x8000) != 0;
+        var ctrl = (Native.GetAsyncKeyState(Native.VkControl) & 0x8000) != 0;
+
         // Posted, not run inline: the hook has a system timeout, and stepping the
         // contract redraws the panel.
-        Dispatcher.BeginInvoke(new Action(() => StepByWheel(delta)), DispatcherPriority.Input);
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (shift) StepShade(delta > 0 ? 1 : -1);
+            else if (ctrl) _vm.StealthStepGroup(delta > 0 ? -1 : 1);
+            else StepByWheel(delta);
+        }), DispatcherPriority.Input);
 
         // Swallowed, so the window underneath doesn't scroll as well.
         return new IntPtr(1);
@@ -1656,6 +1675,8 @@ internal static class Native
     public const int WmKeyDown = 0x0100;
     public const int WmSysKeyDown = 0x0104;
 
+    public const int VkShift = 0x10;
+    public const int VkControl = 0x11;
     public const int VkLWin = 0x5B;
     public const int VkRWin = 0x5C;
     public const int VkMenu = 0x12;

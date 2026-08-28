@@ -652,6 +652,15 @@ public partial class MainWindow : FluentWindow
     /// </summary>
     private async Task CheckForUpdatesAsync(bool manual)
     {
+        // 检查更新 clicked while a download is already running used to do
+        // NOTHING (every path was guarded) — answer instead of ignoring.
+        if (manual && _updateApplying)
+        {
+            await InfoDialog("正在更新",
+                "新版本正在下载安装中（进度见底部提示条），完成后将按当前状态自动重启。");
+            return;
+        }
+
         UpdateCheck check;
         try
         {
@@ -676,10 +685,11 @@ public partial class MainWindow : FluentWindow
                     || Views.Native.IdleTime() >= TimeSpan.FromMinutes(10))
                 && DateTime.Now - _autoUpdateFailedAt >= TimeSpan.FromMinutes(30))
             {
-                var error = await ApplyUpdateAsync(check.Release!, new Progress<double>(_ => { }));
+                var error = await ApplyUpdateAsync(check.Release!, AutoUpdateProgress(check.Release!));
                 if (error is null) return;   // unreachable on success (app restarts)
                 _autoUpdateFailedAt = DateTime.Now;
                 Probe.Log($"auto-update failed: {error.Message}");
+                RestoreUpdateBarPrompt(check);
             }
 
             // An auto-check doesn't re-pop a version the user already closed; a
@@ -735,6 +745,31 @@ public partial class MainWindow : FluentWindow
     }
 
     private DateTime _autoUpdateFailedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// An automatic update is silent by nature — surface it in the update bar
+    /// so a foreground user SEES the download happening instead of wondering
+    /// why the app "does nothing" (立即自动更新 especially). The button shows
+    /// live progress, disabled.
+    /// </summary>
+    private IProgress<double> AutoUpdateProgress(ReleaseInfo release)
+    {
+        _pendingRelease = release;
+        UpdateBarText.Text = $"正在自动更新到 {release.DisplayName}，完成后按当前状态自动重启";
+        UpdateBarText.ToolTip = string.IsNullOrWhiteSpace(release.Notes) ? null : release.Notes;
+        UpdateBarUpdate.IsEnabled = false;
+        UpdateBarUpdate.Content = "准备中…";
+        UpdateBar.Visibility = Visibility.Visible;
+        return new Progress<double>(p => UpdateBarUpdate.Content = $"下载中 {p * 100:0}%");
+    }
+
+    /// <summary>A failed auto attempt hands the bar back to the manual prompt.</summary>
+    private void RestoreUpdateBarPrompt(UpdateCheck check)
+    {
+        UpdateBarText.Text = $"发现新版本 {check.Release!.DisplayName}　当前 v{check.Current}";
+        UpdateBarUpdate.Content = "更新";
+        UpdateBarUpdate.IsEnabled = true;
+    }
     private Version? _toastVersion;
     private Views.UpdateToastWindow? _updateToast;
 

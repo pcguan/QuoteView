@@ -39,7 +39,7 @@
           <ui:Button Height="26" Padding="8,0" Margin="8,0,0,0"
                      Icon="{ui:SymbolIcon EyeOff24}" Content="简洁面板" FontSize="11"
                      Click="Stealth_Click"
-                     ToolTip="切到桌面置顶单行行情，主窗口退到后台&#10;Win+Alt+End 主窗口/面板互切 · Win+Alt+↑/↓ 变亮/变暗 · Win+Alt+←/→ 切合约 · Win+Alt+PageUp/PageDown 切分组 · 右键面板或托盘图标还原" />
+                     ToolTip="切到桌面置顶单行行情，主窗口退到后台&#10;Win+Alt+End 主窗口/面板互切 · Win+Alt+↑/↓ 变亮/变暗 · Win+Alt+←/→ 切合约 · Win+Alt+PageUp/PageDown 切分组&#10;面板上：滚轮切合约 · Shift+滚轮调亮度 · Ctrl+滚轮切分组 · 双击隐藏/原位双击恢复 · 右键面板或托盘图标还原" />
         </StackPanel>
       </ui:TitleBar.Header>
     </ui:TitleBar>
