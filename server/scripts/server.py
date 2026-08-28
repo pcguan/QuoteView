@@ -958,14 +958,14 @@ tr.err:hover td{background:#331722}
   <section id=tab-logs hidden>
     <div class=card>
       <h2>登录日志　
-        <select id=ll onchange="renderLogs()">
+        <select id=ll onchange="filterChanged('login')">
           <option value="">全部级别</option>
           <option value=info>INFO</option>
           <option value=warn>WARN</option>
           <option value=error>ERROR</option>
         </select>
         <input id=lf placeholder="按用户/IP/日期/事件过滤…" style="width:220px"
-          oninput="renderLogs()">
+          oninput="filterChanged('login')">
         <button id=rl class=icon title="刷新日志" onclick="spinReload('rl', loadLogs)">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
@@ -976,13 +976,13 @@ tr.err:hover td{background:#331722}
     </div>
     <div class=card>
       <h2>配置修改日志（设置 / 分组推送，只记实际变更）　
-        <select id=ck onchange="renderChanges()">
+        <select id=ck onchange="filterChanged('chg')">
           <option value="">全部类型</option>
           <option value=设置>设置</option>
           <option value=分组>分组</option>
         </select>
         <input id=cf placeholder="按用户/IP/日期/内容过滤…" style="width:220px"
-          oninput="renderChanges()">
+          oninput="filterChanged('chg')">
         <button id=rc class=icon title="刷新日志" onclick="spinReload('rc', loadLogs)">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke-linecap="round"
@@ -1118,10 +1118,44 @@ async function spinReload(btnId, loader){
   const b = $(btnId); b.classList.add('spin');
   try { await loader(); } finally { setTimeout(() => b.classList.remove('spin'), 300); }
 }
+// Fixed rows + pagination for every log list: page size from a dropdown,
+// prev/next, page resets when the filter changes. The lists used to render
+// everything and just grow.
+const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50} };
+
+function pager(key, total){
+  const st = PAGES[key];
+  const pages = Math.max(1, Math.ceil(total / st.size));
+  if (st.page >= pages) st.page = pages - 1;
+  const opts = [20, 50, 100, 200].map(n =>
+    `<option value=${n} ${n === st.size ? 'selected' : ''}>${n} 行/页</option>`).join('');
+  return `<div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+    <select onchange="setPageSize('${key}', this.value)">${opts}</select>
+    <button class=op ${st.page === 0 ? 'disabled' : ''}
+            onclick="setPage('${key}', ${st.page - 1})">上一页</button>
+    <span class=dim>第 ${st.page + 1} / ${pages} 页 · 共 ${total} 条</span>
+    <button class=op ${st.page >= pages - 1 ? 'disabled' : ''}
+            onclick="setPage('${key}', ${st.page + 1})">下一页</button>
+  </div>`;
+}
+function pageSlice(key, rows){
+  const st = PAGES[key];
+  return rows.slice(st.page * st.size, (st.page + 1) * st.size);
+}
+function setPage(key, p){ PAGES[key].page = Math.max(0, p); rerenderLog(key); }
+function setPageSize(key, n){ PAGES[key].size = +n; PAGES[key].page = 0; rerenderLog(key); }
+function rerenderLog(key){
+  if (key === 'login') renderLogs();
+  else if (key === 'chg') renderChanges();
+  else renderPw();
+}
+function filterChanged(key){ PAGES[key].page = 0; rerenderLog(key); }
+
 async function loadLogs(){
   LOGS = await api('logs');
   renderLogs();
   renderChanges();
+  renderPw();
   const stats = {};
   for (const l of LOGS.logins){
     if ((l.level || 'info') !== 'info') continue;   // stats = successful logins
@@ -1134,38 +1168,45 @@ async function loadLogs(){
       `<tr><td><b>${u}</b></td><td>${st.n}</td>
        <td>${st.ips.size}<div class="dim mono" style="font-size:11px">${[...st.ips].join('<br>')}</div></td>
        <td class=mono>${st.last}</td></tr>`).join('') + '</table>';
-  $('pw-list').innerHTML = LOGS.passwords.length
-    ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>` +
-      LOGS.passwords.map(l => `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
-        <td class=mono>${l.ip||'-'}</td><td>${l.by==='self'?'本人':l.by}</td></tr>`).join('') + '</table>'
+}
+function renderPw(){
+  if (!LOGS) return;
+  const all = LOGS.passwords || [];
+  const rows = pageSlice('pw', all).map(l =>
+    `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
+     <td class=mono>${l.ip||'-'}</td><td>${l.by==='self'?'本人':l.by}</td></tr>`).join('');
+  $('pw-list').innerHTML = all.length
+    ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>${rows}</table>`
+      + pager('pw', all.length)
     : '<div class=dim>无记录</div>';
 }
 function renderChanges(){
   if (!LOGS) return;
   const f = $('cf').value.trim().toLowerCase();
   const k = $('ck').value;
-  const rows = (LOGS.changes || []).filter(l =>
+  const all = (LOGS.changes || []).filter(l =>
     (!k || l.kind === k) &&
     (!f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f)
-        || (l.detail||'').toLowerCase().includes(f)))
-    .slice(0, 200).map(l => `<tr>
+        || (l.detail||'').toLowerCase().includes(f)));
+  const rows = pageSlice('chg', all).map(l => `<tr>
       <td class=mono>${l.at}</td><td><b>${l.user}</b></td>
       <td><span class="tag t-role">${l.kind}</span></td>
       <td style="max-width:520px;word-break:break-all">${l.detail}</td>
       <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
-  $('chg-list').innerHTML = rows
+  $('chg-list').innerHTML = all.length
     ? `<table><tr><th>时间</th><th>用户</th><th>类型</th><th>变更内容</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
+      + pager('chg', all.length)
     : '<div class=dim>无记录</div>';
 }
 function renderLogs(){
   if (!LOGS) return;
   const f = $('lf').value.trim().toLowerCase();
   const lv = $('ll').value;
-  const rows = LOGS.logins.filter(l =>
+  const all = LOGS.logins.filter(l =>
     (!lv || (l.level||'info') === lv) &&
     (!f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f)
-        || (l.event||'').toLowerCase().includes(f)))
-    .slice(0, 200).map(l => {
+        || (l.event||'').toLowerCase().includes(f)));
+  const rows = pageSlice('login', all).map(l => {
       const level = l.level || 'info';
       return `<tr${level === 'error' ? ' class=err' : ''}>
         <td><span class="lv lv-${level}">${level.toUpperCase()}</span></td>
@@ -1173,8 +1214,9 @@ function renderLogs(){
         <td class=mono>${l.at}</td><td class=mono>${l.ip||'-'}</td>
         <td class=mono>${l.ver||'-'}</td></tr>`;
     }).join('');
-  $('login-list').innerHTML = rows
+  $('login-list').innerHTML = all.length
     ? `<table><tr><th>级别</th><th>用户</th><th>事件</th><th>时间</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
+      + pager('login', all.length)
     : '<div class=dim>无匹配记录</div>';
 }
 
@@ -1365,8 +1407,10 @@ class Handler(BaseHTTPRequestHandler):
             logins.sort(key=lambda x: x["at"], reverse=True)
             passwords.sort(key=lambda x: x["at"], reverse=True)
             changes.sort(key=lambda x: x["at"], reverse=True)
-            return self._json({"logins": logins[:500], "passwords": passwords[:200],
-                               "changes": changes[:300]})
+            # Pagination lives client-side now, so the merged caps are only a
+            # payload guard, not a display limit.
+            return self._json({"logins": logins[:1000], "passwords": passwords[:500],
+                               "changes": changes[:1000]})
 
         if url.path == "/web/api/accounts":
             actor = self._admin()
