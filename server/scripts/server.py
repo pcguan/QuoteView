@@ -90,10 +90,15 @@ def diff_stealth(old, new, prefix=""):
     """One human sentence per concrete change inside a StealthConfig blob."""
     old, new = old or {}, new or {}
     parts = []
-    for key, label in (("shade", "亮度"), ("rows", "显示行数"), ("rowGap", "行距")):
+    for key, label in (("shade", "亮度"), ("rows", "显示行数"), ("rowGap", "行距"),
+                       ("fontSize", "字体大小")):
         if old.get(key) != new.get(key):
             parts.append("%s%s %s→%s" % (prefix, label,
                                          fmt_num(old.get(key)), fmt_num(new.get(key))))
+    if old.get("header") != new.get("header"):
+        parts.append(prefix + ("显示列名" if new.get("header") else "隐藏列名"))
+    if old.get("headerColor") != new.get("headerColor"):
+        parts.append(prefix + "列名颜色")
     if old.get("chart") != new.get("chart"):
         parts.append("%s面板图表→%s" % (prefix,
                      CHART_NAMES.get(new.get("chart"), new.get("chart"))))

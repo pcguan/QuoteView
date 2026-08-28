@@ -11,9 +11,15 @@ public partial class App : Application
     private Mutex? _single;
     private EventWaitHandle? _showSignal;
 
+    /// <summary>Set by "--background": this launch finishes a background
+    /// update, so the main window starts minimized and unactivated.</summary>
+    public static bool StartBackground { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        StartBackground = e.Args.Contains("--background");
 
         // A background poll failure should surface in the UI, not kill the app.
         DispatcherUnhandledException += OnDispatcherUnhandledException;

@@ -57,6 +57,15 @@ public partial class MainWindow : FluentWindow
     {
         InitializeComponent();
 
+        // A background-update relaunch must not surface: start minimized and
+        // unactivated — the stealth panel (if it was up) re-opens from Loaded,
+        // and a foreground relaunch stays exactly as it was.
+        if (App.StartBackground)
+        {
+            WindowState = WindowState.Minimized;
+            ShowActivated = false;
+        }
+
         // Sweep any leftover *.old from a previous self-update.
         UpdateService.CleanupOld();
 
@@ -656,12 +665,15 @@ public partial class MainWindow : FluentWindow
 
         if (check.HasUpdate)
         {
-            // 自动更新 (default on, toggleable): apply silently once the machine
-            // has been input-idle a while — an active user is never interrupted,
-            // and the panel/state is restored by the relaunch. A failed attempt
-            // backs off so a broken download isn't retried every 30 seconds.
-            if (!manual && AppPrefs.AutoUpdate && !_updateApplying
-                && Views.Native.IdleTime() >= TimeSpan.FromMinutes(10)
+            // 自动更新, three modes: silent waits for 10 idle minutes (an
+            // active user is never interrupted), instant applies on detection,
+            // off never applies (bar/toast still prompt). The relaunch keeps
+            // the current state either way. A failed attempt backs off so a
+            // broken download isn't retried every 30 seconds.
+            var mode = AppPrefs.AutoUpdateMode;
+            if (!manual && mode != AppPrefs.AutoOff && !_updateApplying
+                && (mode == AppPrefs.AutoInstant
+                    || Views.Native.IdleTime() >= TimeSpan.FromMinutes(10))
                 && DateTime.Now - _autoUpdateFailedAt >= TimeSpan.FromMinutes(30))
             {
                 var error = await ApplyUpdateAsync(check.Release!, new Progress<double>(_ => { }));
@@ -753,10 +765,16 @@ public partial class MainWindow : FluentWindow
         _settingsPushTimer?.Stop();
         await FlushSettingsPushAsync();
 
+        // State-preserving restart: foreground stays foreground; a minimized
+        // window or an open stealth panel means the whole update runs — and
+        // finishes — in the background (the panel itself re-opens via
+        // AppPrefs.PanelOpen).
+        var background = WindowState == WindowState.Minimized || _stealth is not null;
+
         try
         {
             // On success the app restarts and shuts down — this call won't return.
-            await _updates.DownloadAndApplyAsync(release, progress);
+            await _updates.DownloadAndApplyAsync(release, progress, background);
             return null;
         }
         catch (Exception ex)
@@ -905,15 +923,18 @@ public partial class MainWindow : FluentWindow
         menu.Items.Add("恢复本体", null, (_, _) => Dispatcher.Invoke(() => RestoreFromStealth("tray menu 恢复本体")));
         menu.Items.Add("显示/隐藏行情条", null, (_, _) => Dispatcher.Invoke(TogglePanel));
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-        var auto = new System.Windows.Forms.ToolStripMenuItem("自动更新（空闲时静默安装）")
+        var auto = new System.Windows.Forms.ToolStripMenuItem("自动更新")
         {
-            Checked = AppPrefs.AutoUpdate,
+            Checked = AppPrefs.AutoUpdateMode != AppPrefs.AutoOff,
             CheckOnClick = true,
         };
-        auto.CheckedChanged += (_, _) => AppPrefs.AutoUpdate = auto.Checked;
-        // The settings window can flip the flag while the tray sits open-less;
+        // Three modes collapse to on/off out here: unchecking turns auto-update
+        // off, checking restores 静默; the finer choice lives in 系统设置.
+        auto.CheckedChanged += (_, _) =>
+            AppPrefs.AutoUpdateMode = auto.Checked ? AppPrefs.AutoSilent : AppPrefs.AutoOff;
+        // The settings window can flip the mode while the tray sits open-less;
         // re-read on every open so the check mark never shows a stale state.
-        menu.Opening += (_, _) => auto.Checked = AppPrefs.AutoUpdate;
+        menu.Opening += (_, _) => auto.Checked = AppPrefs.AutoUpdateMode != AppPrefs.AutoOff;
         menu.Items.Add(auto);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(Close));

@@ -88,8 +88,12 @@ public sealed class UpdateService
     /// Downloads the release's exe and swaps it in, then restarts. On success the
     /// process exits. Throws on failure, leaving the current install untouched.
     /// </summary>
+    /// <param name="background">Relaunch without surfacing the main window —
+    /// the update happened while the app was minimized or in stealth mode, and
+    /// finishing it must not steal the desktop.</param>
     public async Task DownloadAndApplyAsync(
-        ReleaseInfo release, IProgress<double>? progress, CancellationToken cancellationToken = default)
+        ReleaseInfo release, IProgress<double>? progress, bool background = false,
+        CancellationToken cancellationToken = default)
     {
         var exe = Environment.ProcessPath
                   ?? throw new InvalidOperationException("无法定位当前程序路径");
@@ -127,7 +131,8 @@ public sealed class UpdateService
         // --updated: we're still alive for a beat after Process.Start, and the
         // single-instance mutex would make the new copy yield to us and exit.
         // The flag tells it to wait for the mutex instead.
-        Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
+        var args = background ? "--updated --background" : "--updated";
+        Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true });
         Application.Current.Shutdown();
     }
 

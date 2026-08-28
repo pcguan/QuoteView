@@ -20,7 +20,12 @@ public partial class SystemSettingsWindow : Window
         InitializeComponent();
 
         PanelHost.Content = new StealthSettingsView(root, save, onChanged);
-        AutoUpdateBox.IsChecked = AppPrefs.AutoUpdate;
+        (AppPrefs.AutoUpdateMode switch
+        {
+            AppPrefs.AutoInstant => AutoInstantRadio,
+            AppPrefs.AutoOff => AutoOffRadio,
+            _ => AutoSilentRadio,
+        }).IsChecked = true;
         UpdateToastBox.IsChecked = AppPrefs.UpdateToast;
         VersionText.Text = $"当前版本 v{UpdateService.Current}";
         Tabs.SelectedIndex = tab;
@@ -31,7 +36,11 @@ public partial class SystemSettingsWindow : Window
     private void AutoUpdate_Changed(object sender, RoutedEventArgs e)
     {
         // The ctor's seeding assignment fires this before the window is loaded.
-        if (IsLoaded) AppPrefs.AutoUpdate = AutoUpdateBox.IsChecked == true;
+        if (!IsLoaded) return;
+        AppPrefs.AutoUpdateMode =
+            AutoInstantRadio.IsChecked == true ? AppPrefs.AutoInstant
+            : AutoOffRadio.IsChecked == true ? AppPrefs.AutoOff
+            : AppPrefs.AutoSilent;
     }
 
     private void UpdateToast_Changed(object sender, RoutedEventArgs e)

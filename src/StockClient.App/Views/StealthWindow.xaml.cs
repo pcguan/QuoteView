@@ -410,7 +410,7 @@ public partial class StealthWindow : Window
         if (_rows.Count == 0)
         {
             Rows.Children.Add(new TextBlock
-                { Text = "无行情", FontSize = 12, Foreground = Brushes.Gray });
+                { Text = "无行情", FontSize = _config.FontSize, Foreground = Brushes.Gray });
             Resync();
             return;
         }
@@ -469,10 +469,12 @@ public partial class StealthWindow : Window
                 { Width = GridLength.Auto, MinWidth = floor });
         }
 
-        for (var r = 0; r <= _rows.Count; r++)   // header + one per contract
+        var showHeader = _config.ShowHeader;
+        for (var r = 0; r <= _rows.Count; r++)   // (optional) header + one per contract
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var gap = Math.Clamp(_config.RowGap, 0, StealthConfig.MaxRowGap);
+        var fontSize = (double)_config.FontSize;
         var yahei = new FontFamily("Microsoft YaHei");
         var consolas = new FontFamily("Consolas");
 
@@ -506,24 +508,27 @@ public partial class StealthWindow : Window
             return block;
         }
 
-        var headerBrush = Brush("#7E8798");
-        for (var i = 0; i < used.Count; i++)
+        if (showHeader)
         {
-            var cell = Cell(Label(fields[used[i]].Field), i, used[i], header: true,
-                headerBrush, FontWeights.Normal, 9.5, 0);
-            Grid.SetRow(cell, 0);
+            var headerBrush = Brush(_config.HeaderColor);
+            for (var i = 0; i < used.Count; i++)
+            {
+                var cell = Cell(Label(fields[used[i]].Field), i, used[i], header: true,
+                    headerBrush, FontWeights.Normal, Math.Max(8, fontSize - 2.5), 0);
+                Grid.SetRow(cell, 0);
+            }
         }
 
         for (var r = 0; r < _rows.Count; r++)
         {
             var row = _rows[r];
-            var top = r == 0 ? 2.0 : gap;
+            var top = r == 0 ? (showHeader ? 2.0 : 0.0) : gap;
 
             if (row.IsMissing)
             {
                 var missing = new TextBlock
                 {
-                    Text = "无行情", FontSize = 12, Foreground = Brushes.Gray,
+                    Text = "无行情", FontSize = _config.FontSize, Foreground = Brushes.Gray,
                     Margin = new Thickness(0, top, 0, 0),
                 };
                 Grid.SetRow(missing, r + 1);
@@ -539,7 +544,7 @@ public partial class StealthWindow : Window
                 var cell = Cell(values[r][c] ?? "", i, c, header: false,
                     Brush(ColorFor(f, row)),
                     f.Field == StealthField.Name ? FontWeights.SemiBold : FontWeights.Normal,
-                    12, top);
+                    fontSize, top);
                 Grid.SetRow(cell, r + 1);
             }
         }

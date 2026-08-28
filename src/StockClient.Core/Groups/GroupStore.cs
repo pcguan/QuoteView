@@ -178,6 +178,9 @@ public static class StealthConfigOps
         into.RowGap = from.RowGap;
         into.Chart = from.Chart;
         into.ShowTrend = from.ShowTrend;
+        into.ShowHeader = from.ShowHeader;
+        into.HeaderColor = from.HeaderColor;
+        into.FontSize = from.FontSize;
         into.Fields.Clear();
         into.Fields.AddRange(from.Fields.Select(Clone));
         into.Normalize();
@@ -226,6 +229,18 @@ public sealed class StealthConfig
     /// <summary>Vertical gap in pixels between rows when several are shown. 0 = tight.</summary>
     [JsonPropertyName("rowGap")]
     public int RowGap { get; set; }
+
+    /// <summary>Header line naming each column above the rows.</summary>
+    [JsonPropertyName("header")]
+    public bool ShowHeader { get; set; } = true;
+
+    /// <summary>One colour for the whole header line (not per column).</summary>
+    [JsonPropertyName("headerColor")]
+    public string HeaderColor { get; set; } = "#7E8798";
+
+    /// <summary>Row text size in px; the header renders slightly smaller.</summary>
+    [JsonPropertyName("fontSize")]
+    public int FontSize { get; set; } = 12;
 
     /// <summary>
     /// Pre-1.0.17 flag for the sparkline. Kept only so an existing config still
@@ -313,6 +328,8 @@ public sealed class StealthConfig
         Shade = Math.Clamp(Shade, 0, 10);
         Rows = Math.Clamp(Rows, 1, MaxRows);
         RowGap = Math.Clamp(RowGap, 0, MaxRowGap);
+        FontSize = FontSize == 0 ? 12 : Math.Clamp(FontSize, 9, 20);
+        if (string.IsNullOrWhiteSpace(HeaderColor)) HeaderColor = "#7E8798";
 
         // Config written before the chart became a three-way choice: carry the old
         // on/off flag over once, then keep the two in step.

@@ -15,7 +15,7 @@ public static class AppPrefs
         "StockClient", "app.json");
 
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
-        int PanelShadeRestore = 0, bool UpdateToast = true);
+        int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "");
 
     private static Doc _doc = Load();
 
@@ -46,13 +46,22 @@ public static class AppPrefs
         }
     }
 
-    /// <summary>静默自动更新 (default on): apply a pending release once the
-    /// machine has been input-idle long enough. The update bar still shows for
-    /// manual updating either way.</summary>
-    public static bool AutoUpdate
+    public const string AutoSilent = "silent";
+    public const string AutoInstant = "instant";
+    public const string AutoOff = "off";
+
+    /// <summary>
+    /// 自动更新的三档模式: silent (default) applies once the machine has been
+    /// input-idle long enough; instant applies the moment a release is found;
+    /// off never auto-applies (bar/toast still prompt). Migrates from the old
+    /// AutoUpdate bool the first time it is read.
+    /// </summary>
+    public static string AutoUpdateMode
     {
-        get => _doc.AutoUpdate;
-        set { if (_doc.AutoUpdate == value) return; _doc = _doc with { AutoUpdate = value }; Save(); }
+        get => _doc.AutoUpdateMode is AutoSilent or AutoInstant or AutoOff
+            ? _doc.AutoUpdateMode
+            : _doc.AutoUpdate ? AutoSilent : AutoOff;
+        set { if (AutoUpdateMode == value) return; _doc = _doc with { AutoUpdateMode = value }; Save(); }
     }
 
     /// <summary>Desktop toast when a new release is found (default on) — the

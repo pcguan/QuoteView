@@ -91,6 +91,24 @@ public partial class StealthSettingsView : UserControl
             Apply();
         };
 
+        _seeding = true;
+        FontSlider.Value = _editing.FontSize;
+        FontValue.Text = _editing.FontSize.ToString();
+        HeaderBox.IsChecked = _editing.ShowHeader;
+        _seeding = false;
+        RebuildHeaderPicker();
+        UpdateSampleFont();
+
+        FontSlider.ValueChanged += (_, e) =>
+        {
+            if (_seeding) return;
+            var v = (int)e.NewValue;
+            FontValue.Text = v.ToString();
+            _editing.FontSize = v;
+            UpdateSampleFont();   // the sample previews the size live, like 行距
+            Apply();
+        };
+
         // Same three states the Win+Alt+Delete cycle walks; here they're pickable
         // directly, and ShowTrend is kept in step so an older build still reads
         // the setting.
@@ -163,12 +181,17 @@ public partial class StealthSettingsView : UserControl
         ShadeSlider.Value = _editing.Shade;
         ShadeValue.Text = _editing.Shade.ToString();
         GapPreview.Opacity = _editing.Shade / 10.0;
+        FontSlider.Value = _editing.FontSize;
+        FontValue.Text = _editing.FontSize.ToString();
+        HeaderBox.IsChecked = _editing.ShowHeader;
         ChartNone.IsChecked = _editing.Chart == PanelChart.None;
         ChartTrend.IsChecked = _editing.Chart == PanelChart.Trend;
         ChartDepth.IsChecked = _editing.Chart == PanelChart.Depth;
         UpdateGapPreview();
         _seeding = false;
 
+        RebuildHeaderPicker();
+        UpdateSampleFont();
         UpdateFieldsSummary();
     }
 
@@ -279,6 +302,30 @@ public partial class StealthSettingsView : UserControl
             { Owner = Window.GetWindow(this) };
         window.ShowDialog();
         UpdateFieldsSummary();
+    }
+
+    private void Header_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_seeding) return;
+        _editing.ShowHeader = HeaderBox.IsChecked == true;
+        Apply();
+    }
+
+    /// <summary>The picker's seed hex is a ctor arg, so a template switch (new
+    /// draft) rebuilds the control rather than mutating it.</summary>
+    private void RebuildHeaderPicker() =>
+        HeaderColorHost.Content = new ColorPickerButton(
+            _editing.HeaderColor,
+            hex => { _editing.HeaderColor = hex; Apply(); },
+            "列名整体颜色", 100);
+
+    private void UpdateSampleFont()
+    {
+        foreach (var child in GapPreview.Children)
+            if (child is StackPanel row)
+                foreach (var cell in row.Children)
+                    if (cell is TextBlock text)
+                        text.FontSize = _editing.FontSize;
     }
 
     private void UpdateFieldsSummary() => FieldsSummary.Text =
