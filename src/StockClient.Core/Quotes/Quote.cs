@@ -16,6 +16,34 @@ public sealed record DepthLevel(double Price, double Volume);
 /// Levels the feed left empty are dropped, so an empty list means "not reported"
 /// rather than "no orders".
 /// </summary>
+/// <summary>
+/// Display decimals for a price context. At least 2 — the A-share convention —
+/// raised to 3-4 only when a price in sight ACTUALLY carries those digits
+/// (0.001-tick ETFs). Never inferred from 现价 alone: the moment it lands on a
+/// round 5.90, trailing-zero stripping says "one decimal" and the whole order
+/// book renders as 5.9 until the next tick moves off the round number.
+/// </summary>
+public static class PriceScale
+{
+    public static int Decimals(double now, QuoteDepth? depth = null)
+    {
+        var most = DigitsOf(now);
+        if (depth is not null)
+        {
+            foreach (var level in depth.Bids) most = Math.Max(most, DigitsOf(level.Price));
+            foreach (var level in depth.Asks) most = Math.Max(most, DigitsOf(level.Price));
+        }
+        return Math.Clamp(most, 2, 4);
+    }
+
+    private static int DigitsOf(double v)
+    {
+        var text = v.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
+        var dot = text.IndexOf('.');
+        return dot < 0 ? 0 : text.Length - dot - 1;
+    }
+}
+
 public sealed record QuoteDepth
 {
     public IReadOnlyList<DepthLevel> Bids { get; init; } = Array.Empty<DepthLevel>();

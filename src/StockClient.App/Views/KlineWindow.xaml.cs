@@ -105,15 +105,8 @@ public partial class KlineWindow : Window
         DepthTime.Text = live is null ? "" : $"{live.Name}  {live.Now}  {live.Time}";
     }
 
-    /// <summary>Renders prices the way the feed sent them (1341.67 vs 466.400).</summary>
-    private static int Decimals(StockClient.Core.Quotes.Quote? quote)
-    {
-        if (quote is null) return 2;
-
-        var text = quote.Now.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-        var dot = text.IndexOf('.');
-        return dot < 0 ? 2 : text.Length - dot - 1;
-    }
+    private static int Decimals(StockClient.Core.Quotes.Quote? quote) =>
+        quote is null ? 2 : StockClient.Core.Quotes.PriceScale.Decimals(quote.Now, quote.Depth);
 
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
     {

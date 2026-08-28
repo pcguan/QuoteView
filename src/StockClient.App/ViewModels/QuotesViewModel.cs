@@ -86,15 +86,7 @@ public sealed class QuoteRow : ObservableObject
     /// rounded, so this reads the quote back rather than guessing per market:
     /// 1341.67 and 466.400 both need to render the way the feed sent them.
     /// </summary>
-    public int PriceDecimals
-    {
-        get
-        {
-            var text = _quote.Now.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-            var dot = text.IndexOf('.');
-            return dot < 0 ? 2 : text.Length - dot - 1;
-        }
-    }
+    public int PriceDecimals => PriceScale.Decimals(_quote.Now, _quote.Depth);
 
     // Per-market extras as structured numbers (null = not reported by the market),
     // for the optional grid columns. The grid shows these scaled (311.01万); the
