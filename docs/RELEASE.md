@@ -31,6 +31,11 @@ ssh corp-win "rmdir /s /q C:\work\stock\dist"
 - `check_release.sh` 会拿本地 exe 对 `build.json` 逐项核验（版本/字节数/SHA-256），
   **清单缺失或对不上 = 同步失败**，直接 FAIL——scp 半途断连的残件再也过不了关
   （2026-08-27 一个 977KB 残件曾因"清单从残件生成"而自洽过检并放倒了 home-win）。
+- **隧道不稳时的兜底传输**：scp/长 ssh 流反复截断的话，改用分块 base64 过 ssh exec 通道
+  （512KB/块、逐块校验重试，`[Convert]::ToBase64String(bytes, off, len)` 读段），
+  拼好后仍走 check_release 整体核验（2026-08-28 实战过一次）。
+- **发布动作必须全部链在 check_release 之后**——包括 GitHub：一次残件曾因 GitHub 上传
+  写在校验链之外而被推上兜底源。
 - `release/` 已 gitignore（大二进制不进库），只作本地暂存 + 国内源上传的主拷贝。
 
 ## 4. 提交并推送
@@ -74,6 +79,7 @@ ssh nas 'chmod 644 /vol3/1000/HDD2/tool/docker/nginx/html/quoteview/*'   # 必�
 ### 5b. GitHub 源（兜底）
 ```bash
 # 建 release（带 token；<PAT> 见私有 memory，勿写进仓库）
+# 正文末尾必须带一行 "SHA256: <build.json的sha256>"——客户端对 GitHub 兜底源就靠它校验下载
 curl -s -X POST -H "Authorization: token <PAT>" -H "User-Agent: sc" \
   https://api.github.com/repos/pcguan/QuoteView/releases \
   -d '{"tag_name":"v<ver>","target_commitish":"main","name":"v<ver>","body":"本版更新说明"}'
