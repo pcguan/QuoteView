@@ -37,6 +37,14 @@ public sealed class GithubReleaseClient
             string.Equals(a.Name, AssetName, StringComparison.OrdinalIgnoreCase));
         if (asset?.DownloadUrl is null) return null;
 
+        // GitHub assets carry no hash of their own; the release body does —
+        // the publisher writes "SHA256: <hex>" so the fallback source gets the
+        // same download verification the domestic manifest has. A truncated
+        // upload once made asset size self-consistent with the broken file.
+        var sha = System.Text.RegularExpressions.Regex.Match(
+            dto.Body ?? "", @"SHA-?256[:：]\s*([0-9a-fA-F]{64})",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
         return new ReleaseInfo
         {
             Version = version,
@@ -45,6 +53,7 @@ public sealed class GithubReleaseClient
             Notes = dto.Body ?? "",
             Source = "GitHub",
             Size = asset.Size ?? 0,
+            Sha256 = sha.Success ? sha.Groups[1].Value.ToLowerInvariant() : "",
         };
     }
 
