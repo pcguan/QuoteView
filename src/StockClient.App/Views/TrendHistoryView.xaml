@@ -43,11 +43,17 @@
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" /><RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <StackPanel Grid.Row="0" Margin="6,2,6,4">
-          <TextBlock x:Name="SummaryMain" FontSize="12" FontFamily="Consolas"
-                     Foreground="#DCE4EE" Visibility="Collapsed" />
-          <TextBlock x:Name="SummaryCompare" FontSize="12" FontFamily="Consolas"
-                     Foreground="#4C8DFF" Visibility="Collapsed" />
+        <!-- One boxed stat panel per day, side by side with identical row
+             layout, so comparing 两天 is a straight horizontal glance. Content
+             is built in code (FillStats); the ■ in each header matches its
+             line colour in the chart. -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,2,6,6">
+          <Border x:Name="StatsMain" Visibility="Collapsed" Background="#0F1420"
+                  BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
+                  Padding="12,7,14,9" />
+          <Border x:Name="StatsCompare" Visibility="Collapsed" Background="#0F1420"
+                  BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
+                  Padding="12,7,14,9" Margin="10,0,0,0" />
         </StackPanel>
         <views:TrendChart x:Name="Chart" Grid.Row="1" />
         <TextBlock x:Name="Empty" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center"

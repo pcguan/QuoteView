@@ -151,17 +151,29 @@ public static class Program
         var cmpSeries = new StockClient.Core.Quotes.TrendSeries
             { Code = "SH600519", Name = "贵州茅台", PreClose = 102.2, Points = pts2 };
 
-        var history3 = new StockClient.App.Views.TrendHistoryView { Width = 1050, Height = 470 };
+        var mainWithSummary = fakeSeries with
+        {
+            Summary = new StockClient.Core.Quotes.TrendDaySummary
+                { Percent = -6.07, Amount = 83.44e8, Volume = 111.99e4, Outer = 51.70e4, Inner = 60.29e4 },
+        };
+        var cmpWithSummary = cmpSeries with
+        {
+            Summary = new StockClient.Core.Quotes.TrendDaySummary
+                { Percent = 1.20, Amount = 65.02e8, Volume = 88.10e4, Outer = 45.00e4, Inner = 43.10e4 },
+        };
+
+        var history3 = new StockClient.App.Views.TrendHistoryView { Width = 1050, Height = 560 };
         var t3 = typeof(StockClient.App.Views.TrendHistoryView);
         var chart3 = (StockClient.App.Views.TrendChart)t3.GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
-        chart3.SetSeries(fakeSeries);
-        chart3.SetCompare(cmpSeries);
-        var sm = (System.Windows.Controls.TextBlock)t3.GetField("SummaryMain", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
-        var sc = (System.Windows.Controls.TextBlock)t3.GetField("SummaryCompare", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
-        sm.Text = "2026-08-24  涨跌幅 -6.07%  成交额 83.44亿  成交量 111.99万手  外盘 51.70万  内盘 60.29万";
-        sm.Visibility = Visibility.Visible;
-        sc.Text = "2026-08-21  涨跌幅 +1.20%  成交额 65.02亿  成交量 88.10万手  外盘 45.00万  内盘 43.10万";
-        sc.Visibility = Visibility.Visible;
+        chart3.SetSeries(mainWithSummary);
+        chart3.SetCompare(cmpWithSummary);
+        var fill = t3.GetMethod("FillStats", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var accM = t3.GetField("MainAccent", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var accC = t3.GetField("CompareAccent", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var boxM = t3.GetField("StatsMain", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
+        var boxC = t3.GetField("StatsCompare", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
+        fill.Invoke(null, new[] { boxM, new DateOnly(2026, 8, 24), mainWithSummary, accM });
+        fill.Invoke(null, new[] { boxC, new DateOnly(2026, 8, 21), cmpWithSummary, accC });
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history3 },
             @"C:\work\preview-compare.png");
 

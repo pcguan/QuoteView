@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using StockClient.App.ViewModels;
 using StockClient.Core.Contracts;
 using StockClient.App.Services;
@@ -163,8 +165,9 @@ public partial class TrendHistoryView : UserControl
         Chart.SetSeries(series);
         Chart.SetCompare(compare);
 
-        ShowSummary(SummaryMain, date, series);
-        ShowSummary(SummaryCompare, (CompareBox.SelectedItem as DateOnly?) ?? default, compare);
+        FillStats(StatsMain, date, series, MainAccent);
+        FillStats(StatsCompare, (CompareBox.SelectedItem as DateOnly?) ?? default,
+            compare, CompareAccent);
     }
 
     /// <summary>Local cache first — every server fetch is written back, so each
@@ -187,27 +190,118 @@ public partial class TrendHistoryView : UserControl
         return series;
     }
 
-    private static void ShowSummary(TextBlock target, DateOnly date, TrendSeries? series)
+    // Accents match each day's line colour in the chart below.
+    private static readonly Brush MainAccent = Frozen("#DCE4EE");
+    private static readonly Brush CompareAccent = Frozen("#4C8DFF");
+    private static readonly Brush LabelBrush = Frozen("#5F6672");
+    private static readonly Brush Flat = Frozen("#DCE4EE");
+    private static readonly Brush Up = Frozen("#EF5350");
+    private static readonly Brush Down = Frozen("#26A69A");
+
+    /// <summary>
+    /// The day's closing stats as a boxed grid — 收盘/涨跌/振幅, 今开/最高/最低/
+    /// 昨收, 量/额/外盘/内盘. Both days' boxes share the exact cell layout so a
+    /// comparison is a straight horizontal glance. Prices come from the minute
+    /// series itself; turnover fields need the server's after-close summary and
+    /// show "--" on snapshots from before that existed.
+    /// </summary>
+    private static void FillStats(Border box, DateOnly date, TrendSeries? series, Brush accent)
     {
-        if (series is null)
+        if (series is null || series.Points.Count == 0)
         {
-            target.Visibility = Visibility.Collapsed;
+            box.Visibility = Visibility.Collapsed;
             return;
         }
 
+        var pre = series.PreClose;
+        var open = series.Points[0].Price;
+        var close = series.Points[^1].Price;
+        var high = series.Points.Max(p => p.Price);
+        var low = series.Points.Min(p => p.Price);
         var s = series.Summary;
-        target.Text = s is null
-            ? $"{date:yyyy-MM-dd}  当日指标暂无（旧快照）"
-            : $"{date:yyyy-MM-dd}  涨跌幅 {s.Percent:+0.00;-0.00;0.00}%  成交额 {s.Amount / 1e8:0.00}亿  " +
-              $"成交量 {s.Volume / 1e4:0.00}万手  外盘 {s.Outer / 1e4:0.00}万  内盘 {s.Inner / 1e4:0.00}万";
-        target.Visibility = Visibility.Visible;
+        var pct = s?.Percent ?? (pre > 0 ? (close / pre - 1) * 100 : 0);
+
+        Brush VsPre(double v) => v > pre ? Up : v < pre ? Down : Flat;
+        var pctBrush = pct > 0 ? Up : pct < 0 ? Down : Flat;
+
+        var cells = new (string Label, string Value, Brush Colour)[]
+        {
+            ("收盘", Px(close), VsPre(close)),
+            ("涨跌幅", pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", pctBrush),
+            ("涨跌额", (close - pre).ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture), pctBrush),
+            ("振幅", pre > 0 ? ((high - low) / pre * 100).ToString("0.00") + "%" : "--", Flat),
+            ("今开", Px(open), VsPre(open)),
+            ("最高", Px(high), VsPre(high)),
+            ("最低", Px(low), VsPre(low)),
+            ("昨收", Px(pre), Flat),
+            ("成交量", s is null ? "--" : Big(s.Volume) + "手", Flat),
+            ("成交额", s is null ? "--" : Big(s.Amount), Flat),
+            ("外盘", s is null ? "--" : Big(s.Outer), Up),
+            ("内盘", s is null ? "--" : Big(s.Inner), Down),
+        };
+
+        var panel = new StackPanel();
+
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
+        header.Children.Add(new Border
+        {
+            Width = 9, Height = 9, CornerRadius = new CornerRadius(2),
+            Background = accent, VerticalAlignment = VerticalAlignment.Center,
+        });
+        header.Children.Add(new TextBlock
+        {
+            Text = $"{date:yyyy-MM-dd}", Margin = new Thickness(6, 0, 0, 0),
+            FontFamily = new FontFamily("Consolas"), FontSize = 12,
+            Foreground = accent, VerticalAlignment = VerticalAlignment.Center,
+        });
+        panel.Children.Add(header);
+
+        var grid = new System.Windows.Controls.Primitives.UniformGrid { Columns = 4 };
+        foreach (var (label, value, colour) in cells)
+        {
+            var cell = new StackPanel { Margin = new Thickness(0, 2, 18, 2) };
+            cell.Children.Add(new TextBlock
+            {
+                Text = label, FontSize = 10.5, Foreground = LabelBrush,
+            });
+            cell.Children.Add(new TextBlock
+            {
+                Text = value, FontSize = 12.5, FontFamily = new FontFamily("Consolas"),
+                Foreground = colour,
+            });
+            grid.Children.Add(cell);
+        }
+        panel.Children.Add(grid);
+
+        box.Child = panel;
+        box.Visibility = Visibility.Visible;
+    }
+
+    private static string Px(double v) =>
+        v.ToString(v < 10 ? "0.000" : "0.00", CultureInfo.InvariantCulture);
+
+    /// <summary>进位显示, same units the rest of the app uses (万/亿/万亿).</summary>
+    private static string Big(double v)
+    {
+        var a = Math.Abs(v);
+        return a >= 1e12 ? (v / 1e12).ToString("0.00", CultureInfo.InvariantCulture) + "万亿"
+            : a >= 1e8 ? (v / 1e8).ToString("0.00", CultureInfo.InvariantCulture) + "亿"
+            : a >= 1e4 ? (v / 1e4).ToString("0.00", CultureInfo.InvariantCulture) + "万"
+            : v.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private static Brush Frozen(string hex)
+    {
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+        brush.Freeze();
+        return brush;
     }
 
     private void ShowEmpty(string message)
     {
         Chart.Visibility = Visibility.Collapsed;
-        SummaryMain.Visibility = Visibility.Collapsed;
-        SummaryCompare.Visibility = Visibility.Collapsed;
+        StatsMain.Visibility = Visibility.Collapsed;
+        StatsCompare.Visibility = Visibility.Collapsed;
         Empty.Text = message;
         Empty.Visibility = Visibility.Visible;
     }
