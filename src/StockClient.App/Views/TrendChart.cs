@@ -346,7 +346,7 @@ public sealed class TrendChart : FrameworkElement
         var pct = pre > 0 ? (p.Price / pre - 1) * 100 : 0;
         var brush = p.Price >= pre ? UpBrush : DownBrush;
 
-        var lines = new[]
+        var lines = new List<(string, string, Brush)>
         {
             ("时间", p.Clock, AxisText),
             ("价", FormatPrice(p.Price), brush),
@@ -355,6 +355,23 @@ public sealed class TrendChart : FrameworkElement
             ("涨跌幅", pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", brush),
             ("量", FormatVolume(p.Volume), AxisText),
         };
+
+        // Compare mode: the OTHER day's same minute right below, so one hover
+        // reads both days at once instead of only the picked one.
+        if (_compare is { PreClose: > 0 } cmp
+            && _hoverIndex >= 0 && _hoverIndex < cmp.Points.Count)
+        {
+            var q = cmp.Points[_hoverIndex];
+            var cmpPct = (q.Price / cmp.PreClose - 1) * 100;
+            var cmpBrush = q.Price >= cmp.PreClose ? UpBrush : DownBrush;
+            var cmpDate = q.Time is { Length: >= 10 } t ? t[..10] : "";
+
+            lines.Add(("对比", cmpDate, CompareText));
+            lines.Add(("价", FormatPrice(q.Price), cmpBrush));
+            lines.Add(("涨跌幅",
+                cmpPct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", cmpBrush));
+            lines.Add(("量", FormatVolume(q.Volume), AxisText));
+        }
 
         var texts = lines
             .Select(l => (Key: Label(l.Item1, AxisText), Val: Label(l.Item2, l.Item3)))

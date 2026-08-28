@@ -110,22 +110,69 @@ public partial class StealthFieldsWindow : Window
     private GhostAdorner? _ghost;
     private bool _chipsWired;
 
+    private readonly ObservableCollection<object> _fixed = new();
+
     private void BuildChips()
     {
+        _fixed.Clear();
         _chips.Clear();
-        // The header rides the same grid as a pseudo-field: its checkbox is the
-        // 显隐, its swatch the one colour. Pinned first, not part of the order.
-        _chips.Add(new HeaderChip(_editing));
+
+        // 固定项: the header line and the group name — both drawn OUTSIDE the
+        // column order (header above it, group name beside the rows), so they
+        // toggle and recolour like any field but have no position to drag.
+        _fixed.Add(new HeaderChip(_editing));
         foreach (var field in _editing.Fields)
-            _chips.Add(new FieldChip(field, FieldName(field.Field), CanHide));
+        {
+            if (field.Field == StealthField.GroupName)
+                _fixed.Add(new FieldChip(field, FieldName(field.Field), CanHide));
+            else
+                _chips.Add(new FieldChip(field, FieldName(field.Field), CanHide));
+        }
 
         if (_chipsWired) return;
         _chipsWired = true;
+        FixedChips.ItemsSource = _fixed;
         FieldChips.ItemsSource = _chips;
         FieldChips.PreviewMouseLeftButtonDown += Chips_Down;
         FieldChips.PreviewMouseMove += Chips_Move;
         FieldChips.PreviewMouseLeftButtonUp += Chips_Up;
         FieldChips.LostMouseCapture += (_, _) => EndChipDrag();
+        FixedChips.PreviewMouseLeftButtonDown += Fixed_Down;
+        FixedChips.PreviewMouseLeftButtonUp += Fixed_Up;
+    }
+
+    private int _fixedPress = -1;
+    private bool _fixedArmed;
+
+    private void Fixed_Down(object sender, MouseButtonEventArgs e)
+    {
+        _fixedPress = IndexAt(FixedChips, _fixed.Count, e.GetPosition(FixedChips));
+
+        if (e.ClickCount == 2 && _fixedPress >= 0
+            && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject))
+        {
+            var chip = (IChip)_fixed[_fixedPress];
+            chip.Visible = !chip.Visible;   // undo click #1's toggle
+            _fixedArmed = false;
+            e.Handled = true;
+            if (chip is HeaderChip header) EditHeaderColor(header);
+            else if (chip is FieldChip field) EditColors(field);
+            return;
+        }
+
+        _fixedArmed = _fixedPress >= 0
+            && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject);
+    }
+
+    private void Fixed_Up(object sender, MouseButtonEventArgs e)
+    {
+        if (_fixedArmed && _fixedPress >= 0
+            && IndexAt(FixedChips, _fixed.Count, e.GetPosition(FixedChips)) == _fixedPress)
+        {
+            var chip = (IChip)_fixed[_fixedPress];
+            chip.Visible = !chip.Visible;
+        }
+        _fixedArmed = false;
     }
 
     /// <summary>At least one ROW field must stay visible — an all-blank line
@@ -220,7 +267,9 @@ public partial class StealthFieldsWindow : Window
         foreach (var chip in _chips.OfType<FieldChip>()) chip.Dragging = false;
         DimDragged();
 
+        var groupName = _editing.Fields.FirstOrDefault(f => f.Field == StealthField.GroupName);
         _editing.Fields.Clear();
+        if (groupName is not null) _editing.Fields.Add(groupName);
         foreach (var chip in _chips.OfType<FieldChip>()) _editing.Fields.Add(chip.Field);
         Apply();
     }
@@ -265,12 +314,15 @@ public partial class StealthFieldsWindow : Window
     private FrameworkElement? ChipContainer(int index) =>
         FieldChips.ItemContainerGenerator.ContainerFromIndex(index) as FrameworkElement;
 
-    private int ChipIndexAt(Point p)
+    private int ChipIndexAt(Point p) => IndexAt(FieldChips, _chips.Count, p);
+
+    private static int IndexAt(ItemsControl host, int count, Point p)
     {
-        for (var i = 0; i < _chips.Count; i++)
+        for (var i = 0; i < count; i++)
         {
-            if (ChipContainer(i) is not { } c) continue;
-            var bounds = new Rect(c.TranslatePoint(new Point(0, 0), FieldChips), c.RenderSize);
+            if (host.ItemContainerGenerator.ContainerFromIndex(i)
+                is not FrameworkElement c) continue;
+            var bounds = new Rect(c.TranslatePoint(new Point(0, 0), host), c.RenderSize);
             if (bounds.Contains(p)) return i;
         }
         return -1;
@@ -288,9 +340,11 @@ public partial class StealthFieldsWindow : Window
 
     // ---- 全选 / 全清 / 默认 / 一键排序 ------------------------------------
 
+    private IEnumerable<IChip> AllChips => _fixed.Concat(_chips).Cast<IChip>();
+
     private void FieldsAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var chip in _chips.Cast<IChip>()) chip.Visible = true;
+        foreach (var chip in AllChips) chip.Visible = true;
     }
 
     private void FieldsNone_Click(object sender, RoutedEventArgs e)
@@ -299,7 +353,7 @@ public partial class StealthFieldsWindow : Window
         foreach (var chip in _chips.OfType<FieldChip>()
                      .Where(c => c.Field.Field == StealthField.Name))
             chip.Visible = true;
-        foreach (var chip in _chips.Cast<IChip>()
+        foreach (var chip in AllChips
                      .Where(c => c is not FieldChip f || f.Field.Field != StealthField.Name))
             chip.Visible = false;
     }

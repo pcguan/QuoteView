@@ -119,20 +119,43 @@ public partial class TrendHistoryView : UserControl
         var restored = previous is { } p ? Array.IndexOf(dates, p) : -1;
         DateBox.SelectedIndex = restored >= 0 ? restored : 0;
 
-        // Compare choices: "(无)" + every other date.
-        var prevCompare = CompareBox.SelectedItem as DateOnly?;
-        var compareItems = new List<object> { "（无）" };
-        compareItems.AddRange(dates.Cast<object>());
-        CompareBox.ItemsSource = compareItems;
-        var keep = prevCompare is { } pc ? compareItems.IndexOf(pc) : -1;
-        CompareBox.SelectedIndex = keep >= 0 ? keep : 0;
+        RefreshCompareItems();
     }
 
-    private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        _ = LoadSelectedAsync();
+    private bool _refreshingCompare;
 
-    private void CompareBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+    /// <summary>
+    /// Compare choices: "(无)" + every archived date EXCEPT the picked main
+    /// day — comparing a day with itself is meaningless, so it simply isn't
+    /// offered. If the current compare selection just became the main day,
+    /// it falls back to "(无)".
+    /// </summary>
+    private void RefreshCompareItems()
+    {
+        var dates = DateBox.ItemsSource as DateOnly[] ?? Array.Empty<DateOnly>();
+        var main = DateBox.SelectedItem as DateOnly?;
+        var previous = CompareBox.SelectedItem as DateOnly?;
+
+        var items = new List<object> { "（无）" };
+        items.AddRange(dates.Where(d => main is null || d != main.Value).Cast<object>());
+
+        _refreshingCompare = true;
+        CompareBox.ItemsSource = items;
+        var keep = previous is { } pc ? items.IndexOf(pc) : -1;
+        CompareBox.SelectedIndex = keep >= 0 ? keep : 0;
+        _refreshingCompare = false;
+    }
+
+    private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        RefreshCompareItems();
         _ = LoadSelectedAsync();
+    }
+
+    private void CompareBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_refreshingCompare) _ = LoadSelectedAsync();
+    }
 
     private int _loadRequest;
 

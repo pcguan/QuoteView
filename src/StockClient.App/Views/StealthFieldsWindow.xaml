@@ -6,34 +6,45 @@
         Background="#12161F" FontFamily="Microsoft YaHei" FontSize="13"
         TextOptions.TextFormattingMode="Display">
   <StackPanel Margin="16,14">
+    <!-- Two sections, one shared chip template: 固定项 (the header line and
+         the group name — both live OUTSIDE the column order, nothing to drag)
+         and the orderable fields. ItemsControl, not ListBox: no selection
+         visuals to fight the chips. Everything visible at once — this window
+         exists so the list never scrolls. -->
+    <StackPanel.Resources>
+      <DataTemplate x:Key="ChipTemplate">
+        <Border Background="#1B2233" BorderBrush="#2C3547" BorderThickness="1"
+                CornerRadius="4" Padding="8,5" Margin="0,0,6,6">
+          <StackPanel Orientation="Horizontal">
+            <CheckBox IsChecked="{Binding Visible, Mode=TwoWay}" MinWidth="0"
+                      VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Name}" Margin="5,0,7,0" VerticalAlignment="Center"
+                       Foreground="#EDF1F7" />
+            <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
+                    Background="{Binding Swatch1}" />
+            <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
+                    Margin="3,0,0,0" Background="{Binding Swatch2}"
+                    Visibility="{Binding Swatch2Visible}" />
+          </StackPanel>
+        </Border>
+      </DataTemplate>
+      <ItemsPanelTemplate x:Key="ChipPanel"><WrapPanel /></ItemsPanelTemplate>
+    </StackPanel.Resources>
+
     <TextBlock Text="点击字段块勾选/取消显示，按住拖动调整顺序（面板按此顺序显示），双击字段块修改颜色。"
                Foreground="#8B93A3" FontSize="11" Margin="0,0,0,10" />
 
-    <!-- ItemsControl, not ListBox: no selection visuals to fight the chips. All
-         chips visible at once — this window exists so the list never scrolls. -->
-    <ItemsControl x:Name="FieldChips" Background="Transparent">
-      <ItemsControl.ItemsPanel>
-        <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
-      </ItemsControl.ItemsPanel>
-      <ItemsControl.ItemTemplate>
-        <DataTemplate>
-          <Border Background="#1B2233" BorderBrush="#2C3547" BorderThickness="1"
-                  CornerRadius="4" Padding="8,5" Margin="0,0,6,6">
-            <StackPanel Orientation="Horizontal">
-              <CheckBox IsChecked="{Binding Visible, Mode=TwoWay}" MinWidth="0"
-                        VerticalAlignment="Center" />
-              <TextBlock Text="{Binding Name}" Margin="5,0,7,0" VerticalAlignment="Center"
-                         Foreground="#EDF1F7" />
-              <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
-                      Background="{Binding Swatch1}" />
-              <Border Width="10" Height="10" CornerRadius="2" VerticalAlignment="Center"
-                      Margin="3,0,0,0" Background="{Binding Swatch2}"
-                      Visibility="{Binding Swatch2Visible}" />
-            </StackPanel>
-          </Border>
-        </DataTemplate>
-      </ItemsControl.ItemTemplate>
-    </ItemsControl>
+    <TextBlock Text="固定项（不参与列顺序，点击勾选、双击调色）" Foreground="#5F6672"
+               FontSize="11" Margin="0,0,0,6" />
+    <ItemsControl x:Name="FixedChips" Background="Transparent"
+                  ItemTemplate="{StaticResource ChipTemplate}"
+                  ItemsPanel="{StaticResource ChipPanel}" />
+
+    <TextBlock Text="字段（面板列按以下顺序显示，按住拖动调整）" Foreground="#5F6672"
+               FontSize="11" Margin="0,4,0,6" />
+    <ItemsControl x:Name="FieldChips" Background="Transparent"
+                  ItemTemplate="{StaticResource ChipTemplate}"
+                  ItemsPanel="{StaticResource ChipPanel}" />
 
     <Grid Margin="0,10,0,0">
       <StackPanel Orientation="Horizontal">
