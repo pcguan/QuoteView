@@ -491,7 +491,7 @@ public partial class StealthWindow : Window
                 FontFamily = family,
                 Foreground = brush,
                 VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment = !header && mono ? TextAlignment.Right : TextAlignment.Left,
+                TextAlignment = mono ? TextAlignment.Right : TextAlignment.Left,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(gridCol == 0 ? 0 : 8, topMargin, 0, 0),
             };
@@ -514,7 +514,7 @@ public partial class StealthWindow : Window
             for (var i = 0; i < used.Count; i++)
             {
                 var cell = Cell(Label(fields[used[i]].Field), i, used[i], header: true,
-                    headerBrush, FontWeights.Normal, Math.Max(8, fontSize - 2.5), 0);
+                    headerBrush, FontWeights.Normal, fontSize, 0);
                 Grid.SetRow(cell, 0);
             }
         }

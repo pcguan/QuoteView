@@ -93,7 +93,13 @@ public partial class StealthFieldsWindow : Window
     // colour editor. Chip order IS _editing.Fields order — what the panel
     // renders. All of it stays buffered until 「保存」.
 
-    private readonly ObservableCollection<FieldChip> _chips = new();
+    private readonly ObservableCollection<object> _chips = new();
+
+    /// <summary>What every chip can do regardless of kind.</summary>
+    private interface IChip
+    {
+        bool Visible { get; set; }
+    }
 
     private Point _pressPoint;
     private Point _grabOffset;
@@ -107,6 +113,9 @@ public partial class StealthFieldsWindow : Window
     private void BuildChips()
     {
         _chips.Clear();
+        // The header rides the same grid as a pseudo-field: its checkbox is the
+        // 显隐, its swatch the one colour. Pinned first, not part of the order.
+        _chips.Add(new HeaderChip(_editing));
         foreach (var field in _editing.Fields)
             _chips.Add(new FieldChip(field, FieldName(field.Field), CanHide));
 
@@ -135,11 +144,12 @@ public partial class StealthFieldsWindow : Window
         if (e.ClickCount == 2 && _pressIndex >= 0
             && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject))
         {
-            var chip = _chips[_pressIndex];
+            var chip = (IChip)_chips[_pressIndex];
             chip.Visible = !chip.Visible;
             _armed = false;
             e.Handled = true;
-            EditColors(chip);
+            if (chip is FieldChip field) EditColors(field);
+            else if (chip is HeaderChip header) EditHeaderColor(header);
             return;
         }
 
@@ -158,6 +168,10 @@ public partial class StealthFieldsWindow : Window
 
         if (!_draggingChip)
         {
+            // The header chip toggles and recolours like any other but has no
+            // position in the field order — nothing to drag.
+            if (_pressIndex < 0 || _chips[_pressIndex] is not FieldChip) return;
+
             if (Math.Abs(p.X - _pressPoint.X) < SystemParameters.MinimumHorizontalDragDistance &&
                 Math.Abs(p.Y - _pressPoint.Y) < SystemParameters.MinimumVerticalDragDistance)
                 return;
@@ -171,7 +185,7 @@ public partial class StealthFieldsWindow : Window
         _ghost?.SetPosition(new Point(p.X - _grabOffset.X, p.Y - _grabOffset.Y));
 
         var over = ChipIndexAt(p);
-        if (over >= 0 && over != _dragIndex)
+        if (over >= 0 && over != _dragIndex && _chips[over] is FieldChip)
         {
             _chips.Move(_dragIndex, over);
             _dragIndex = over;
@@ -189,7 +203,8 @@ public partial class StealthFieldsWindow : Window
         else if (_armed && _pressIndex >= 0
                  && ChipIndexAt(e.GetPosition(FieldChips)) == _pressIndex)
         {
-            _chips[_pressIndex].Visible = !_chips[_pressIndex].Visible;
+            var chip = (IChip)_chips[_pressIndex];
+            chip.Visible = !chip.Visible;
         }
 
         _armed = false;
@@ -202,17 +217,17 @@ public partial class StealthFieldsWindow : Window
         _draggingChip = false;
         _dragIndex = -1;
         RemoveGhost();
-        foreach (var chip in _chips) chip.Dragging = false;
+        foreach (var chip in _chips.OfType<FieldChip>()) chip.Dragging = false;
         DimDragged();
 
         _editing.Fields.Clear();
-        foreach (var chip in _chips) _editing.Fields.Add(chip.Field);
+        foreach (var chip in _chips.OfType<FieldChip>()) _editing.Fields.Add(chip.Field);
         Apply();
     }
 
     private void ShowGhost(int index)
     {
-        _chips[index].Dragging = true;
+        if (_chips[index] is FieldChip dragged) dragged.Dragging = true;
         DimDragged();
 
         if (ChipContainer(index) is not { } c || c.ActualWidth < 1) return;
@@ -244,7 +259,7 @@ public partial class StealthFieldsWindow : Window
     {
         for (var i = 0; i < _chips.Count; i++)
             if (ChipContainer(i) is { } c)
-                c.Opacity = _chips[i].Dragging ? 0.3 : 1.0;
+                c.Opacity = _chips[i] is FieldChip { Dragging: true } ? 0.3 : 1.0;
     }
 
     private FrameworkElement? ChipContainer(int index) =>
@@ -275,15 +290,17 @@ public partial class StealthFieldsWindow : Window
 
     private void FieldsAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var chip in _chips) chip.Visible = true;
+        foreach (var chip in _chips.Cast<IChip>()) chip.Visible = true;
     }
 
     private void FieldsNone_Click(object sender, RoutedEventArgs e)
     {
         // 名称 stays on first, so the ≥1-row-field guard never trips mid-loop.
-        foreach (var chip in _chips.Where(c => c.Field.Field == StealthField.Name))
+        foreach (var chip in _chips.OfType<FieldChip>()
+                     .Where(c => c.Field.Field == StealthField.Name))
             chip.Visible = true;
-        foreach (var chip in _chips.Where(c => c.Field.Field != StealthField.Name))
+        foreach (var chip in _chips.Cast<IChip>()
+                     .Where(c => c is not FieldChip f || f.Field.Field != StealthField.Name))
             chip.Visible = false;
     }
 
@@ -292,6 +309,8 @@ public partial class StealthFieldsWindow : Window
         var def = StealthConfig.CreateDefault().Normalize();
         _editing.Fields.Clear();
         _editing.Fields.AddRange(def.Fields);
+        _editing.ShowHeader = true;
+        _editing.HeaderColor = "#7E8798";
         BuildChips();
         Apply();
     }
@@ -367,8 +386,93 @@ public partial class StealthFieldsWindow : Window
         dialog.ShowDialog();
     }
 
+    /// <summary>Single-colour editor for the header pseudo-field.</summary>
+    private void EditHeaderColor(HeaderChip chip)
+    {
+        var body = new StackPanel { Margin = new Thickness(16, 14, 16, 14) };
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 10) };
+        row.ColumnDefinitions.Add(new ColumnDefinition());
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var text = new TextBlock
+        {
+            Text = "颜色", Foreground = Frozen("#8B93A3"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var picker = Picker(_editing.HeaderColor,
+            h => { _editing.HeaderColor = h; chip.RefreshSwatches(); }, "列名整体颜色", 100);
+        Grid.SetColumn(text, 0);
+        Grid.SetColumn(picker, 1);
+        row.Children.Add(text);
+        row.Children.Add(picker);
+        body.Children.Add(row);
+
+        var close = new Button
+        {
+            Content = "完成", Padding = new Thickness(14, 3, 14, 3),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        body.Children.Add(close);
+
+        var dialog = new Window
+        {
+            Title = "列名颜色",
+            Owner = this,
+            Width = 300,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            Background = Frozen("#12161F"),
+            FontFamily = new FontFamily("Microsoft YaHei"),
+            Content = body,
+        };
+        close.Click += (_, _) => dialog.Close();
+        dialog.ShowDialog();
+    }
+
+    /// <summary>The header line as a chip: checkbox = 显隐, swatch = its one
+    /// colour (whole line, not per column). Pinned first, never reordered.</summary>
+    private sealed class HeaderChip : INotifyPropertyChanged, IChip
+    {
+        private readonly StealthConfig _editing;
+
+        public HeaderChip(StealthConfig editing) => _editing = editing;
+
+        public string Name => "列名（表头）";
+
+        public bool Visible
+        {
+            get => _editing.ShowHeader;
+            set
+            {
+                if (_editing.ShowHeader == value) return;
+                _editing.ShowHeader = value;
+                Notify(nameof(Visible));
+            }
+        }
+
+        public Brush Swatch1
+        {
+            get
+            {
+                try { return new SolidColorBrush((Color)ColorConverter.ConvertFromString(_editing.HeaderColor)); }
+                catch { return Brushes.Transparent; }
+            }
+        }
+
+        public Brush Swatch2 => Brushes.Transparent;
+        public Visibility Swatch2Visible => Visibility.Collapsed;
+
+        public void RefreshSwatches() => Notify(nameof(Swatch1));
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void Notify(string name) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
     /// <summary>One field as a togglable chip; writes straight into the draft.</summary>
-    private sealed class FieldChip : INotifyPropertyChanged
+    private sealed class FieldChip : INotifyPropertyChanged, IChip
     {
         private readonly Func<StealthFieldConfig, bool> _canHide;
 

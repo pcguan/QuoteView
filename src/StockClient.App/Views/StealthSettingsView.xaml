@@ -75,13 +75,6 @@
                  FontSize="11" Foreground="#8B93A3" />
     </StackPanel>
 
-    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-      <CheckBox x:Name="HeaderBox" Content="显示列名（表头行）" Foreground="#EDF1F7" MinWidth="0"
-                VerticalAlignment="Center" Checked="Header_Changed" Unchecked="Header_Changed" />
-      <TextBlock Text="列名颜色" Foreground="#8B93A3" FontSize="11" Margin="16,0,8,0"
-                 VerticalAlignment="Center" />
-      <ContentControl x:Name="HeaderColorHost" VerticalAlignment="Center" />
-    </StackPanel>
 
     <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                Text="编辑写入模板草稿，点「保存」生效并应用到面板；切换模板即切换面板外观。字段的勾选、排序与调色在「字段与颜色设置…」子窗口中进行。" />

@@ -94,9 +94,7 @@ public partial class StealthSettingsView : UserControl
         _seeding = true;
         FontSlider.Value = _editing.FontSize;
         FontValue.Text = _editing.FontSize.ToString();
-        HeaderBox.IsChecked = _editing.ShowHeader;
         _seeding = false;
-        RebuildHeaderPicker();
         UpdateSampleFont();
 
         FontSlider.ValueChanged += (_, e) =>
@@ -183,14 +181,12 @@ public partial class StealthSettingsView : UserControl
         GapPreview.Opacity = _editing.Shade / 10.0;
         FontSlider.Value = _editing.FontSize;
         FontValue.Text = _editing.FontSize.ToString();
-        HeaderBox.IsChecked = _editing.ShowHeader;
         ChartNone.IsChecked = _editing.Chart == PanelChart.None;
         ChartTrend.IsChecked = _editing.Chart == PanelChart.Trend;
         ChartDepth.IsChecked = _editing.Chart == PanelChart.Depth;
         UpdateGapPreview();
         _seeding = false;
 
-        RebuildHeaderPicker();
         UpdateSampleFont();
         UpdateFieldsSummary();
     }
@@ -303,21 +299,6 @@ public partial class StealthSettingsView : UserControl
         window.ShowDialog();
         UpdateFieldsSummary();
     }
-
-    private void Header_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_seeding) return;
-        _editing.ShowHeader = HeaderBox.IsChecked == true;
-        Apply();
-    }
-
-    /// <summary>The picker's seed hex is a ctor arg, so a template switch (new
-    /// draft) rebuilds the control rather than mutating it.</summary>
-    private void RebuildHeaderPicker() =>
-        HeaderColorHost.Content = new ColorPickerButton(
-            _editing.HeaderColor,
-            hex => { _editing.HeaderColor = hex; Apply(); },
-            "列名整体颜色", 100);
 
     private void UpdateSampleFont()
     {
