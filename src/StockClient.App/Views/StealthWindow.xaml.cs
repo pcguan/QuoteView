@@ -824,7 +824,10 @@ public partial class StealthWindow : Window
         StealthField.AvgPrice => r.AvgPrice is { } a ? Price(a) : "",
         StealthField.PeTtm => Plain(r.PeTtm),
         StealthField.Pb => Plain(r.Pb),
-        StealthField.PrevDay => SignedPct(r.PrevDayPercent),
+        // "-" rather than empty while the baseline chain is rebuilding (or KR,
+        // which never has one): an all-empty column has no width, and a picked
+        // field that silently vanishes reads as lost configuration.
+        StealthField.PrevDay => r.PrevDayPercent is { } pd ? SignedPct(pd) : "-",
         StealthField.Return3 => SignedPct(r.Return3),
         StealthField.Return5 => SignedPct(r.Return5),
         StealthField.Return10 => SignedPct(r.Return10),
