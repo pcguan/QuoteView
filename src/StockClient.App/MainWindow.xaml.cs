@@ -147,7 +147,40 @@ public partial class MainWindow : FluentWindow
 
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
-            _quotes = new QuotesViewModel(Dispatcher, _vm.Repository);
+            // The daily-kline fetch behind 昨日涨幅 mirrors _klineRepo's
+            // server-first routing, but with a tiny lmt and NO shared-cache
+            // write — storing a 12-candle series there would become what the
+            // chart draws for the rest of the day.
+            var dailyClient = new EastMoneyKlineClient(_klineHttp);
+            _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
+                fetchDaily: async (contract, ct) =>
+                {
+                    const int count = 12;
+                    if (_session.IsSignedIn)
+                    {
+                        try
+                        {
+                            var json = await _session.KlineJsonAsync(
+                                contract.EastMoneySecId,
+                                EastMoneyKlineClient.PeriodCode(KlinePeriod.Day),
+                                EastMoneyKlineClient.AdjustCode(KlineAdjust.Qfq),
+                                count);
+                            if (json is not null)
+                            {
+                                var fromServer = EastMoneyKlineClient.ParseSeries(
+                                    json, contract, KlinePeriod.Day, KlineAdjust.Qfq);
+                                if (fromServer.Candles.Count > 0) return fromServer;
+                            }
+                        }
+                        catch (Exception)
+                        {
+                            // Fall through to the direct fetch.
+                        }
+                    }
+
+                    return await dailyClient.FetchAsync(
+                        contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
+                });
             Quotes.DataContext = _quotes;
 
             // Every later config save pushes the preference slice back up,

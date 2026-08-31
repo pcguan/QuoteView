@@ -114,7 +114,40 @@ public sealed class QuoteRow : ObservableObject
     // with the quote instead of with the fetch.
     private ReturnBaselines? _baselines;
 
-    public double? PrevDayPercent => _baselines?.PrevDayPercent;
+    // Final daily candles (newest last), the authoritative source for 昨日涨幅:
+    // settled history can't suffer the snapshot feed's rollover races. Matching
+    // the quote's OWN previous close against a candle close picks the session
+    // the feed is calling "yesterday" right now, so the value flips exactly
+    // when the quote itself rolls over — no clock guessing.
+    private IReadOnlyList<Kline>? _daily;
+
+    public void SetDaily(IReadOnlyList<Kline>? candles)
+    {
+        _daily = candles;
+        OnPropertyChanged(nameof(PrevDayPercent));
+    }
+
+    public double? PrevDayPercent
+    {
+        get
+        {
+            var y = _quote.Yesterday;
+            if (y > 0 && _daily is { Count: > 1 } candles)
+            {
+                var tolerance = Math.Max(y * 1e-3, 0.005);
+                for (var i = candles.Count - 1; i >= 1; i--)
+                {
+                    if (Math.Abs(candles[i].Close - y) > tolerance) continue;
+                    return candles[i - 1].Close > 0
+                        ? (candles[i].Close / candles[i - 1].Close - 1) * 100
+                        : null;
+                }
+            }
+
+            // Snapshot-built chain: covers a failed kline fetch and nothing else.
+            return _baselines?.PrevDayPercent;
+        }
+    }
     public double? Return3 => Ret(_baselines?.Day3);
     public double? Return5 => Ret(_baselines?.Day5);
     public double? Return10 => Ret(_baselines?.Day10);
@@ -315,6 +348,21 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly ContractRepository _contracts;
     private readonly DispatcherTimer _flashTimer;
     private readonly DispatcherTimer _baselineTimer;
+    private readonly MarketClock _marketClock = new();
+
+    /// <summary>
+    /// Daily-kline fetch for 昨日涨幅 (lmt kept tiny; server proxy first, direct
+    /// EastMoney fallback — wired in by the window). Never touches the chart's
+    /// shared kline cache: whatever count is stored there becomes what charts
+    /// draw, so this path keeps its own in-memory copy instead.
+    /// </summary>
+    private readonly Func<Contract, CancellationToken, Task<KlineSeries?>>? _fetchDaily;
+
+    // Final daily candles per code, plus the freshness mark of the fetch that
+    // produced them (same rule as the kline cache: good all day, except taken
+    // during the session and read after the close).
+    private readonly Dictionary<string, IReadOnlyList<Kline>> _daily = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (DateOnly Stamp, bool Settled)> _dailyMeta = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Whether any fund-flow/涨速 column is on, so the secondary poll should run.</summary>
     private bool _fundFlowActive;
@@ -327,10 +375,12 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private string _status = "等待行情…";
     private string _error = "";
 
-    public QuotesViewModel(Dispatcher dispatcher, ContractRepository contracts)
+    public QuotesViewModel(Dispatcher dispatcher, ContractRepository contracts,
+        Func<Contract, CancellationToken, Task<KlineSeries?>>? fetchDaily = null)
     {
         _dispatcher = dispatcher;
         _contracts = contracts;
+        _fetchDaily = fetchDaily;
 
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
@@ -359,7 +409,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         {
             Interval = TimeSpan.FromMinutes(10),
         };
-        _baselineTimer.Tick += (_, _) => _ = RefreshBaselinesAsync();
+        _baselineTimer.Tick += (_, _) =>
+        {
+            _ = RefreshBaselinesAsync();
+            _ = RefreshDailyAsync();
+        };
         _baselineTimer.Start();
 
         _flashTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
@@ -848,6 +902,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         RefreshExtraPolling();
         ApplyBaselines();
         _ = RefreshBaselinesAsync();
+        _ = RefreshDailyAsync();
     }
 
     /// <summary>
@@ -857,7 +912,85 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     {
         var known = _returns.Current;
         foreach (var (code, row) in _rows)
+        {
             row.SetBaselines(known.TryGetValue(code, out var b) ? b : null);
+            row.SetDaily(_daily.TryGetValue(code, out var d) ? d : null);
+        }
+    }
+
+    /// <summary>
+    /// Tops up the per-contract daily candles 昨日涨幅 reads from. Freshness is
+    /// per trading date with one extra fetch after the close (the same rule the
+    /// kline cache uses), so a pass where everything is current costs nothing.
+    /// Serialised with a small gap: the whole group can go stale at once (first
+    /// run of the day) and a burst is what gets a source throttled.
+    /// </summary>
+    private bool _dailyRefreshing;
+
+    private async Task RefreshDailyAsync()
+    {
+        if (_fetchDaily is null || _activeGroup is null || _dailyRefreshing) return;
+        _dailyRefreshing = true;
+        try
+        {
+            await RefreshDailyCoreAsync();
+        }
+        finally
+        {
+            _dailyRefreshing = false;
+        }
+    }
+
+    private async Task RefreshDailyCoreAsync()
+    {
+        if (_fetchDaily is null || _activeGroup is null) return;
+
+        var contracts = _activeGroup.Model.Codes
+            .Where(CodeMapper.IsValid)
+            .Select(c => _contracts.Find(c.ToUpperInvariant()))
+            .Where(c => c is not null && c.Market != Market.KR)
+            .Select(c => c!)
+            .ToArray();
+
+        foreach (var contract in contracts)
+        {
+            var stamp = _marketClock.TradingDate(contract.Market);
+            var settled = _marketClock.IsAfterClose(contract.Market, DateTimeOffset.Now);
+            if (_dailyMeta.TryGetValue(contract.Code, out var meta)
+                && meta.Stamp == stamp && (meta.Settled || !settled))
+                continue;
+
+            KlineSeries? series;
+            try
+            {
+                series = await _fetchDaily(contract, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                series = null;
+            }
+
+            if (series is { Candles.Count: > 0 })
+            {
+                // Keep settled candles only: mid-session the last row is the
+                // running candle, whose close is just the current price.
+                var candles = series.Candles;
+                if (!settled && candles[^1].Date == stamp.ToString("yyyy-MM-dd"))
+                    candles = candles.Take(candles.Count - 1).ToArray();
+
+                _daily[contract.Code] = candles;
+                _dailyMeta[contract.Code] = (stamp, settled);
+
+                var code = contract.Code;
+                _ = _dispatcher.InvokeAsync(() =>
+                {
+                    if (_rows.TryGetValue(code, out var row))
+                        row.SetDaily(_daily.TryGetValue(code, out var d) ? d : null);
+                });
+            }
+
+            await Task.Delay(150);
+        }
     }
 
     /// <summary>
