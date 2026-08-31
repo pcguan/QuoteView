@@ -35,7 +35,11 @@ public sealed class UpdateService
 
     public UpdateService()
     {
-        _http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
+        // Proxy off (see DirectHttp): the NAS source is domestic-direct, and a
+        // stale process-cached proxy must not silently kill the update loop.
+        // GitHub might genuinely benefit from a proxy, but it is only the
+        // fallback — reachable or not, the NAS source carries every release.
+        _http = DirectHttp.Create(TimeSpan.FromMinutes(3));
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("QuoteView-Updater");
         _domestic = new DomesticReleaseClient(_http);
         _github = new GithubReleaseClient(_http);

@@ -392,7 +392,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _contracts = contracts;
         _fetchDaily = fetchDaily;
 
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+        _http = Services.DirectHttp.Create(TimeSpan.FromSeconds(8));
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
         _store = new GroupStore();

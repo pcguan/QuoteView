@@ -38,7 +38,10 @@ public partial class BriefView : UserControl
     public BriefView()
     {
         InitializeComponent();
-        _client = new BriefClient(_store);
+        // Direct client: the brief source is the NAS (domestic); a stale
+        // process-cached system proxy must not black-hole it (see DirectHttp).
+        _client = new BriefClient(_store,
+            Services.DirectHttp.Create(TimeSpan.FromSeconds(20)));
         Loaded += (_, _) => _ = ReloadAsync();
     }
 

@@ -72,7 +72,7 @@ public partial class MainWindow : FluentWindow
         _vm = new MainViewModel(Dispatcher);
         DataContext = _vm;
 
-        _klineHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        _klineHttp = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
         _klineHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
         var appVersion = System.Reflection.Assembly.GetExecutingAssembly()

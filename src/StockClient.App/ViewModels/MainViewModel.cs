@@ -62,7 +62,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         _dispatcher = dispatcher;
 
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        _http = Services.DirectHttp.Create(TimeSpan.FromSeconds(20));
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
         _clock = new MarketClock();
