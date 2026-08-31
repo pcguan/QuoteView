@@ -157,6 +157,26 @@ public partial class TrendHistoryView : UserControl
         if (!_refreshingCompare) _ = LoadSelectedAsync();
     }
 
+    // What the newest load is about to render. A ComboBox raises no
+    // SelectionChanged when the user re-picks the item it already shows — so
+    // after a failed fetch, re-choosing the same date looked like a dead
+    // control. DropDownClosed compares the selection against this instead:
+    // any mismatch (failure reset it to null) reloads, and a plain
+    // open-and-close stays a no-op.
+    private DateOnly? _pendingMain, _pendingCompare;
+
+    private void DateBox_DropDownClosed(object? sender, EventArgs e)
+    {
+        if (DateBox.SelectedItem is DateOnly want && want != _pendingMain)
+            _ = LoadSelectedAsync();
+    }
+
+    private void CompareBox_DropDownClosed(object? sender, EventArgs e)
+    {
+        if (CompareBox.SelectedItem as DateOnly? != _pendingCompare)
+            _ = LoadSelectedAsync();
+    }
+
     private int _loadRequest;
 
     private async Task LoadSelectedAsync()
@@ -166,20 +186,26 @@ public partial class TrendHistoryView : UserControl
             return;
 
         var request = ++_loadRequest;
+        var compareDate = CompareBox.SelectedItem as DateOnly?;
+        _pendingMain = date;
+        _pendingCompare = compareDate;
 
         var series = await LoadDayAsync(item.Code, date);
         if (request != _loadRequest) return;
 
         if (series is null)
         {
+            // Null the pending marks so re-picking the very same dates retries.
+            _pendingMain = null;
+            _pendingCompare = null;
             ShowEmpty(_session.IsSignedIn ? "该日快照获取失败(服务端不可达或缺失)" : "本地无此日快照；登录后可从服务端获取");
             return;
         }
 
         TrendSeries? compare = null;
-        if (CompareBox.SelectedItem is DateOnly compareDate && compareDate != date)
+        if (compareDate is { } cd && cd != date)
         {
-            compare = await LoadDayAsync(item.Code, compareDate);
+            compare = await LoadDayAsync(item.Code, cd);
             if (request != _loadRequest) return;
         }
 
@@ -189,8 +215,20 @@ public partial class TrendHistoryView : UserControl
         Chart.SetCompare(compare);
 
         FillStats(StatsMain, date, series, MainAccent);
-        FillStats(StatsCompare, (CompareBox.SelectedItem as DateOnly?) ?? default,
-            compare, CompareAccent);
+
+        if (compareDate is { } wanted && wanted != date && compare is null)
+        {
+            // The pick failed (server unreachable / day missing). Silently
+            // clearing the overlay read as "the compare chart won't refresh" —
+            // say so instead, and let re-picking the same date retry.
+            _pendingCompare = null;
+            FillStatsError(StatsCompare, wanted, CompareAccent,
+                _session.IsSignedIn ? "该日快照获取失败，重选日期可重试" : "本地无此日快照，登录后可从服务端获取");
+        }
+        else
+        {
+            FillStats(StatsCompare, compareDate ?? default, compare, CompareAccent);
+        }
     }
 
     /// <summary>Local cache first — every server fetch is written back, so each
@@ -295,6 +333,35 @@ public partial class TrendHistoryView : UserControl
             grid.Children.Add(cell);
         }
         panel.Children.Add(grid);
+
+        box.Child = panel;
+        box.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>The compare box's failure face: date header + why, visible —
+    /// the one thing a silent collapse never told the user.</summary>
+    private static void FillStatsError(Border box, DateOnly date, Brush accent, string message)
+    {
+        var panel = new StackPanel();
+
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
+        header.Children.Add(new Border
+        {
+            Width = 9, Height = 9, CornerRadius = new CornerRadius(2),
+            Background = accent, VerticalAlignment = VerticalAlignment.Center,
+        });
+        header.Children.Add(new TextBlock
+        {
+            Text = $"{date:yyyy-MM-dd}", Margin = new Thickness(6, 0, 0, 0),
+            FontFamily = new FontFamily("Consolas"), FontSize = 12,
+            Foreground = accent, VerticalAlignment = VerticalAlignment.Center,
+        });
+        panel.Children.Add(header);
+        panel.Children.Add(new TextBlock
+        {
+            Text = message, FontSize = 11.5, Foreground = LabelBrush,
+            TextWrapping = TextWrapping.Wrap, MaxWidth = 260,
+        });
 
         box.Child = panel;
         box.Visibility = Visibility.Visible;

@@ -101,7 +101,7 @@ public static class Program
         var pts = new List<StockClient.Core.Quotes.TrendPoint>();
         for (var i = 0; i < 240; i++)
         {
-            var t = new DateTime(2026, 8, 21, 9, 30, 0).AddMinutes(i <= 120 ? i : i + 90);
+            var t = new DateTime(2026, 8, 24, 9, 30, 0).AddMinutes(i <= 120 ? i : i + 90);
             var price = 100 + 3 * Math.Sin(i / 24.0) + i * 0.004;
             pts.Add(new StockClient.Core.Quotes.TrendPoint
             {
@@ -166,6 +166,10 @@ public static class Program
         var chart3 = (StockClient.App.Views.TrendChart)t3.GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history3)!;
         chart3.SetSeries(mainWithSummary);
         chart3.SetCompare(cmpWithSummary);
+        // Fake a crosshair hover so the twin per-day readout boxes render too.
+        typeof(StockClient.App.Views.TrendChart)
+            .GetField("_hoverIndex", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(chart3, 150);
         var fill = t3.GetMethod("FillStats", BindingFlags.NonPublic | BindingFlags.Static)!;
         var accM = t3.GetField("MainAccent", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
         var accC = t3.GetField("CompareAccent", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;

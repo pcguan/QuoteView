@@ -48,6 +48,7 @@ public sealed class TrendChart : FrameworkElement
 
     private static readonly Pen ComparePen = FrozenPen("#4C8DFF", 1.4);
     private static readonly Brush CompareText = Frozen("#4C8DFF");
+    private static readonly Brush MainText = Frozen("#DCE4EE");
 
     public TrendChart()
     {
@@ -342,11 +343,53 @@ public sealed class TrendChart : FrameworkElement
 
     private void DrawReadout(DrawingContext dc, TrendPoint p)
     {
-        var pre = _series!.PreClose;
+        var main = ReadoutLines(p, _series!.PreClose);
+
+        // Compare mode: one box PER day, side by side, identical rows — a
+        // straight horizontal glance instead of the two days stacked into one
+        // frame. Each box is headed by its date in the day's legend colour.
+        if (_compare is { PreClose: > 0 } cmp
+            && _hoverIndex >= 0 && _hoverIndex < cmp.Points.Count)
+        {
+            var other = ReadoutLines(cmp.Points[_hoverIndex], cmp.PreClose);
+
+            // Shared column widths so the twin boxes line up as one grid.
+            var all = main.Concat(other).ToArray();
+            var keyWidth = all.Max(t => t.Key.Width);
+            var valWidth = all.Max(t => t.Val.Width);
+
+            var headMain = Label(Day(_series), MainText);
+            var headCmp = Label(Day(cmp), CompareText);
+            var width = Math.Max(keyWidth + valWidth + 22,
+                Math.Max(headMain.Width, headCmp.Width) + 16);
+
+            var x = PadLeft + 6;
+            DrawReadoutBox(dc, x, headMain, main, width, keyWidth);
+            DrawReadoutBox(dc, x + width + 8, headCmp, other, width, keyWidth);
+            return;
+        }
+
+        var rowHeight = main[0].Key.Height + 3;
+        var kw = main.Max(t => t.Key.Width);
+        var vw = main.Max(t => t.Val.Width);
+        var box = new Rect(PadLeft + 6, PadTop + 6, kw + vw + 22, rowHeight * main.Length + 10);
+        dc.DrawRectangle(ReadoutBg, new Pen(ReadoutBorder, 1), box);
+
+        var yy = box.Top + 5;
+        foreach (var (key, val) in main)
+        {
+            dc.DrawText(key, new Point(box.Left + 8, yy));
+            dc.DrawText(val, new Point(box.Right - 8 - val.Width, yy));
+            yy += rowHeight;
+        }
+    }
+
+    private (FormattedText Key, FormattedText Val)[] ReadoutLines(TrendPoint p, double pre)
+    {
         var pct = pre > 0 ? (p.Price / pre - 1) * 100 : 0;
         var brush = p.Price >= pre ? UpBrush : DownBrush;
 
-        var lines = new List<(string, string, Brush)>
+        var lines = new (string, string, Brush)[]
         {
             ("时间", p.Clock, AxisText),
             ("价", FormatPrice(p.Price), brush),
@@ -355,36 +398,19 @@ public sealed class TrendChart : FrameworkElement
             ("涨跌幅", pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", brush),
             ("量", FormatVolume(p.Volume), AxisText),
         };
+        return lines.Select(l => (Label(l.Item1, AxisText), Label(l.Item2, l.Item3))).ToArray();
+    }
 
-        // Compare mode: the OTHER day's same minute right below, so one hover
-        // reads both days at once instead of only the picked one.
-        if (_compare is { PreClose: > 0 } cmp
-            && _hoverIndex >= 0 && _hoverIndex < cmp.Points.Count)
-        {
-            var q = cmp.Points[_hoverIndex];
-            var cmpPct = (q.Price / cmp.PreClose - 1) * 100;
-            var cmpBrush = q.Price >= cmp.PreClose ? UpBrush : DownBrush;
-            var cmpDate = q.Time is { Length: >= 10 } t ? t[..10] : "";
-
-            lines.Add(("对比", cmpDate, CompareText));
-            lines.Add(("价", FormatPrice(q.Price), cmpBrush));
-            lines.Add(("涨跌幅",
-                cmpPct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", cmpBrush));
-            lines.Add(("量", FormatVolume(q.Volume), AxisText));
-        }
-
-        var texts = lines
-            .Select(l => (Key: Label(l.Item1, AxisText), Val: Label(l.Item2, l.Item3)))
-            .ToArray();
-
-        var rowHeight = texts[0].Key.Height + 3;
-        var keyWidth = texts.Max(t => t.Key.Width);
-        var valWidth = texts.Max(t => t.Val.Width);
-        var box = new Rect(PadLeft + 6, PadTop + 6, keyWidth + valWidth + 22, rowHeight * texts.Length + 10);
+    private void DrawReadoutBox(DrawingContext dc, double x, FormattedText header,
+        (FormattedText Key, FormattedText Val)[] rows, double width, double keyWidth)
+    {
+        var rowHeight = rows[0].Key.Height + 3;
+        var box = new Rect(x, PadTop + 6, width, rowHeight * (rows.Length + 1) + 12);
         dc.DrawRectangle(ReadoutBg, new Pen(ReadoutBorder, 1), box);
 
-        var yy = box.Top + 5;
-        foreach (var (key, val) in texts)
+        dc.DrawText(header, new Point(box.Left + 8, box.Top + 5));
+        var yy = box.Top + 7 + rowHeight;
+        foreach (var (key, val) in rows)
         {
             dc.DrawText(key, new Point(box.Left + 8, yy));
             dc.DrawText(val, new Point(box.Right - 8 - val.Width, yy));
@@ -424,15 +450,15 @@ public sealed class TrendChart : FrameworkElement
         dc.DrawGeometry(null, ComparePen, geometry);
     }
 
+    private static string Day(TrendSeries s) =>
+        s.Points.Count > 0 && s.Points[0].Time.Length >= 10 ? s.Points[0].Time[..10] : "?";
+
     /// <summary>Top-left legend, shown only while comparing: which date is which colour.</summary>
     private void DrawLegend(DrawingContext dc)
     {
         if (_compare is not { Points.Count: > 0 } cmp || _series is null) return;
 
-        static string Day(TrendSeries s) =>
-            s.Points.Count > 0 && s.Points[0].Time.Length >= 10 ? s.Points[0].Time[..10] : "?";
-
-        var main = Label(Day(_series), Frozen("#DCE4EE"));
+        var main = Label(Day(_series), MainText);
         var other = Label(Day(cmp) + "（对比）", CompareText);
         dc.DrawText(main, new Point(PadLeft + 4, 4));
         dc.DrawText(other, new Point(PadLeft + 12 + main.Width, 4));
