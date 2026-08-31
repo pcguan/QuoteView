@@ -98,7 +98,14 @@ public sealed class ReturnBaselineRepository
             var date = BaselineDate(contract.Market);
             var stamp = date.ToString("yyyy-MM-dd");
 
+            // An entry with NO prior yet (fresh cache, new contract, or a fetch
+            // that raced ahead of the feed's own rollover) keeps retrying every
+            // pass — otherwise a morning fetch that lands before 东财 rolls 昨收
+            // stamps the new date and leaves 昨日涨幅 blank for the whole
+            // session. The chain completes at the first observed roll and the
+            // retries stop with it.
             if (_known.TryGetValue(contract.Code, out var have) && have.Date == stamp
+                && have.PriorClose > 0
                 && (have.Settled || !PostWindow(contract.Market)))
                 continue;
 
