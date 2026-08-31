@@ -15,7 +15,8 @@ public static class AppPrefs
         "StockClient", "app.json");
 
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
-        int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "");
+        int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
+        string ProxyMode = "", string ProxyAddress = "");
 
     private static Doc _doc = Load();
 
@@ -80,6 +81,31 @@ public static class AppPrefs
     {
         get => _doc.PanelShadeRestore;
         set { if (_doc.PanelShadeRestore == value) return; _doc = _doc with { PanelShadeRestore = value }; Save(); }
+    }
+
+    public const string ProxyOff = "off";
+    public const string ProxySystem = "system";
+    public const string ProxyManual = "manual";
+
+    /// <summary>
+    /// 网络代理三档: off (default) forces direct connections — every endpoint
+    /// is domestic and a process-cached system proxy that outlives the proxy
+    /// program black-holes the whole app (measured 2026-09-01); system uses
+    /// whatever Windows has configured; manual uses <see cref="ProxyAddress"/>.
+    /// HttpClients are built once at startup, so changes apply on restart
+    /// (the presence websocket reconnects pick them up live).
+    /// </summary>
+    public static string ProxyMode
+    {
+        get => _doc.ProxyMode is ProxySystem or ProxyManual ? _doc.ProxyMode : ProxyOff;
+        set { if (ProxyMode == value) return; _doc = _doc with { ProxyMode = value }; Save(); }
+    }
+
+    /// <summary>Manual proxy, "host:port" (scheme optional, http assumed).</summary>
+    public static string ProxyAddress
+    {
+        get => _doc.ProxyAddress;
+        set { if (_doc.ProxyAddress == value) return; _doc = _doc with { ProxyAddress = value }; Save(); }
     }
 
     /// <summary>Whether the stealth panel was up when the app last ran, so a

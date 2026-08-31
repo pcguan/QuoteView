@@ -27,6 +27,16 @@ public partial class SystemSettingsWindow : Window
             _ => AutoSilentRadio,
         }).IsChecked = true;
         UpdateToastBox.IsChecked = AppPrefs.UpdateToast;
+
+        (AppPrefs.ProxyMode switch
+        {
+            AppPrefs.ProxySystem => ProxySystemRadio,
+            AppPrefs.ProxyManual => ProxyManualRadio,
+            _ => ProxyOffRadio,
+        }).IsChecked = true;
+        ProxyAddressBox.Text = AppPrefs.ProxyAddress;
+        ProxyAddressBox.IsEnabled = AppPrefs.ProxyMode == AppPrefs.ProxyManual;
+
         VersionText.Text = $"当前版本 v{UpdateService.Current}";
         Tabs.SelectedIndex = tab;
     }
@@ -46,5 +56,20 @@ public partial class SystemSettingsWindow : Window
     private void UpdateToast_Changed(object sender, RoutedEventArgs e)
     {
         if (IsLoaded) AppPrefs.UpdateToast = UpdateToastBox.IsChecked == true;
+    }
+
+    private void Proxy_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        AppPrefs.ProxyMode =
+            ProxySystemRadio.IsChecked == true ? AppPrefs.ProxySystem
+            : ProxyManualRadio.IsChecked == true ? AppPrefs.ProxyManual
+            : AppPrefs.ProxyOff;
+        ProxyAddressBox.IsEnabled = ProxyManualRadio.IsChecked == true;
+    }
+
+    private void ProxyAddress_Changed(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded) AppPrefs.ProxyAddress = ProxyAddressBox.Text.Trim();
     }
 }

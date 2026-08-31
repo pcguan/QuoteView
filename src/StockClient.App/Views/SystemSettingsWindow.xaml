@@ -31,6 +31,25 @@
 
         <Separator Margin="0,16,0,14" Background="#232B3B" />
 
+        <TextBlock Text="网络代理" Foreground="#EDF1F7" Margin="0,0,0,8" />
+        <RadioButton x:Name="ProxyOffRadio" GroupName="px" Foreground="#EDF1F7"
+                     Content="不使用代理（推荐）" Checked="Proxy_Changed" />
+        <TextBlock Margin="26,2,0,8" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="行情与服务端均为国内直连，一般无需代理；且不受本机代理软件开关的影响。" />
+        <RadioButton x:Name="ProxySystemRadio" GroupName="px" Foreground="#EDF1F7"
+                     Content="使用系统代理" Checked="Proxy_Changed" />
+        <TextBlock Margin="26,2,0,8" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="跟随 Windows 的代理设置。注意：若代理软件在本程序运行中被关闭，需重启本程序恢复联网。" />
+        <RadioButton x:Name="ProxyManualRadio" GroupName="px" Foreground="#EDF1F7"
+                     Content="手动指定" Checked="Proxy_Changed" />
+        <TextBox x:Name="ProxyAddressBox" Margin="26,6,0,0" Width="200" HorizontalAlignment="Left"
+                 Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                 LostFocus="ProxyAddress_Changed" />
+        <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="格式：主机:端口（如 127.0.0.1:7890）。修改代理设置重启客户端后生效。" />
+
+        <Separator Margin="0,16,0,14" Background="#232B3B" />
+
         <TextBlock Text="关于" Foreground="#EDF1F7" Margin="0,0,0,6" />
         <TextBlock x:Name="VersionText" Foreground="#8B93A3" />
         <TextBlock FontSize="11" Foreground="#5F6672" Margin="0,4,0,0"

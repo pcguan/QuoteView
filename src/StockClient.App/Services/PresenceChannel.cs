@@ -62,9 +62,9 @@ public sealed class PresenceChannel : IAsyncDisposable
             try
             {
                 using var ws = new ClientWebSocket();
-                // Direct to the NAS: the process-cached system proxy outlives
-                // the proxy program (see DirectHttp) and would black-hole this.
-                ws.Options.Proxy = null;
+                // Per-connection, so the 网络代理 preference applies live here
+                // (HttpClients only pick it up on restart) — see DirectHttp.
+                DirectHttp.Apply(ws.Options);
                 ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(5);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                     _cts.Token, _kick.Token);
