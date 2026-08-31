@@ -66,8 +66,13 @@ public partial class MainWindow : FluentWindow
             ShowActivated = false;
         }
 
-        // Sweep any leftover *.old from a previous self-update.
+        // Sweep any leftover *.old from a previous self-update. The newest one
+        // is usually still LOCKED here — the process that renamed itself is
+        // exiting but not gone — so a delayed retry sweeps what this pass
+        // can't; otherwise the file sat on the desktop until the NEXT launch.
         UpdateService.CleanupOld();
+        _ = Task.Delay(TimeSpan.FromSeconds(15))
+            .ContinueWith(_ => UpdateService.CleanupOld());
 
         _vm = new MainViewModel(Dispatcher);
         DataContext = _vm;
