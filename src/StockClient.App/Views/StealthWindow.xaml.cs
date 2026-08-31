@@ -988,6 +988,7 @@ public partial class StealthWindow : Window
         // One item per chart rather than the old on/off, so the state is visible
         // (the hotkey cycles blind) and either chart is one click away.
         var chart = new MenuItem { Header = "面板图表", InputGestureText = "Win+Alt+Delete" };
+        var chartItems = new List<(PanelChart Kind, MenuItem Item)>();
         foreach (var (kind, label) in new[]
                  {
                      (PanelChart.None, "关闭"),
@@ -996,15 +997,22 @@ public partial class StealthWindow : Window
                  })
         {
             var captured = kind;
-            var item = new MenuItem
-            {
-                Header = label,
-                IsCheckable = true,
-                IsChecked = _config.Chart == kind,
-            };
-            item.Click += (_, _) => SetChart(captured);
+            var item = new MenuItem { Header = label, IsCheckable = true };
+            // Clicking the ALREADY-ACTIVE chart turns it off: a checkable item
+            // whose second click silently did nothing (same-value early return)
+            // is exactly how 分时缩略图 felt impossible to close.
+            item.Click += (_, _) =>
+                SetChart(_config.Chart == captured ? PanelChart.None : captured);
             chart.Items.Add(item);
+            chartItems.Add((captured, item));
         }
+        // Check marks re-read the CURRENT state on every open — they were
+        // stamped once at build time and went stale after the first change.
+        menu.Opened += (_, _) =>
+        {
+            foreach (var (kind, item) in chartItems)
+                item.IsChecked = _config.Chart == kind;
+        };
         menu.Items.Add(chart);
 
         menu.Items.Add(new Separator());
