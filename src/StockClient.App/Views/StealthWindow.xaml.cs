@@ -927,10 +927,25 @@ public partial class StealthWindow : Window
 
         Opacity = 1;
         if (Root.Child is UIElement body) body.Opacity = t;
-
-        // Shade 0 stays genuinely click-through on purpose: an invisible panel
-        // must not eat clicks meant for the desktop underneath.
         IsHitTestVisible = t > 0;
+
+        // Shade 0 must be click-through at the OS level: the #01-alpha catch
+        // layer keeps receiving input even with WPF hit-testing off — the
+        // events were EATEN, not passed down, and windows under the invisible
+        // panel became unusable. WS_EX_TRANSPARENT hands the whole rectangle
+        // back to whatever is beneath; the double-click restore is unaffected
+        // because the mouse HOOK watches the screen region, not the window.
+        SetClickThrough(t <= 0);
+    }
+
+    private void SetClickThrough(bool on)
+    {
+        var hwnd = _source?.Handle ?? IntPtr.Zero;
+        if (hwnd == IntPtr.Zero) return;
+
+        var ex = Native.GetWindowLongPtr(hwnd, Native.GwlExStyle).ToInt64();
+        var want = on ? ex | Native.WsExTransparent : ex & ~Native.WsExTransparent;
+        if (want != ex) Native.SetWindowLongPtr(hwnd, Native.GwlExStyle, new IntPtr(want));
     }
 
     /// <summary>What the heartbeat reports as the panel's visual opacity.</summary>
@@ -1156,6 +1171,7 @@ public partial class StealthWindow : Window
         // already owns the combination, and swallowing that leaves the arrows
         // silently dead with nothing on screen to explain why.
         Probe.Log($"HookHotkeys hwnd=0x{handle:X} source={(_source is null ? "NULL" : "ok")}");
+        SetClickThrough(_config.Shade <= 0);   // ApplyShade may have run hwnd-less
 
         var wanted = new (int Id, uint Mods, uint Vk, string Label)[]
         {
@@ -1538,6 +1554,19 @@ public partial class StealthWindow : Window
         var delta = (short)((data.MouseData >> 16) & 0xFFFF);
         if (delta == 0) return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
 
+        // Hidden (shade 0) = the area belongs to the windows underneath. Only
+        // Shift+wheel keeps working there, as the gesture that brings the
+        // panel back; plain and Ctrl wheel scroll whatever is below. Keys are
+        // read via GetAsyncKeyState because a low-level hook carries no
+        // modifier state of its own.
+        var shift = (Native.GetAsyncKeyState(Native.VkShift) & 0x8000) != 0;
+        var ctrl = (Native.GetAsyncKeyState(Native.VkControl) & 0x8000) != 0;
+        if (_config.Shade == 0 && !shift)
+        {
+            _wheelPassed++;
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
+        }
+
         _wheelHits++;
 
         _stickyRect = sticky
@@ -1552,12 +1581,7 @@ public partial class StealthWindow : Window
         _stickyUntil = data.Time + 800;
 
         // Modifier routing: plain wheel walks contracts, Shift+wheel steps the
-        // shade (up = brighter — works even at shade 0, when the panel is
-        // otherwise unclickable), Ctrl+wheel cycles groups. Keys are read here
-        // (GetAsyncKeyState) because a low-level hook has no modifier state.
-        var shift = (Native.GetAsyncKeyState(Native.VkShift) & 0x8000) != 0;
-        var ctrl = (Native.GetAsyncKeyState(Native.VkControl) & 0x8000) != 0;
-
+        // shade (up = brighter), Ctrl+wheel cycles groups.
         // Posted, not run inline: the hook has a system timeout, and stepping the
         // contract redraws the panel.
         Dispatcher.BeginInvoke(new Action(() =>
@@ -1710,6 +1734,14 @@ internal static class Native
     public static extern uint GetDoubleClickTime();
     public const int WmKeyDown = 0x0100;
     public const int WmSysKeyDown = 0x0104;
+
+    public const long WsExTransparent = 0x20;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
 
     public const int VkShift = 0x10;
     public const int VkControl = 0x11;
