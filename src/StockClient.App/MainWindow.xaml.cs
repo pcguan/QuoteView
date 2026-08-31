@@ -153,6 +153,11 @@ public partial class MainWindow : FluentWindow
             // chart draws for the rest of the day.
             var dailyEast = new EastMoneyKlineClient(_klineHttp);
             var dailyTencent = new TencentKlineClient(_klineHttp);
+            // Circuit breaker for the EastMoney kline host: it throttles with
+            // connection resets, and each dead call burns its full timeout —
+            // with a whole group crawled sequentially that added up to minutes
+            // of blank 昨日涨幅. One failure skips the host for a while.
+            var eastKlineDownUntil = DateTimeOffset.MinValue;
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
                 fetchDaily: async (contract, ct) =>
                 {
@@ -196,45 +201,70 @@ public partial class MainWindow : FluentWindow
                         };
                     }
 
-                    if (_session.IsSignedIn)
+                    async Task<KlineSeries?> East()
                     {
+                        if (DateTimeOffset.Now < eastKlineDownUntil) return null;
+
+                        if (_session.IsSignedIn)
+                        {
+                            try
+                            {
+                                var json = await _session.KlineJsonAsync(
+                                    contract.EastMoneySecId,
+                                    EastMoneyKlineClient.PeriodCode(KlinePeriod.Day),
+                                    EastMoneyKlineClient.AdjustCode(KlineAdjust.Qfq),
+                                    count);
+                                if (json is not null)
+                                {
+                                    var fromServer = EastMoneyKlineClient.ParseSeries(
+                                        json, contract, KlinePeriod.Day, KlineAdjust.Qfq);
+                                    if (fromServer.Candles.Count > 0) return fromServer;
+                                }
+                            }
+                            catch (Exception)
+                            {
+                                // Fall through to the direct fetch.
+                            }
+                        }
+
                         try
                         {
-                            var json = await _session.KlineJsonAsync(
-                                contract.EastMoneySecId,
-                                EastMoneyKlineClient.PeriodCode(KlinePeriod.Day),
-                                EastMoneyKlineClient.AdjustCode(KlineAdjust.Qfq),
-                                count);
-                            if (json is not null)
-                            {
-                                var fromServer = EastMoneyKlineClient.ParseSeries(
-                                    json, contract, KlinePeriod.Day, KlineAdjust.Qfq);
-                                if (fromServer.Candles.Count > 0) return fromServer;
-                            }
+                            var east = await dailyEast.FetchAsync(
+                                contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
+                            if (east.Candles.Count > 0) return east;
                         }
                         catch (Exception)
                         {
-                            // Fall through to the direct chain.
+                            // Routine throttling (connection resets); trip below.
                         }
+
+                        eastKlineDownUntil = DateTimeOffset.Now + TimeSpan.FromMinutes(5);
+                        return null;
                     }
 
-                    try
+                    // SH/SZ/HK: Tencent FIRST — full history, same vendor as the
+                    // quote poll (so 昨收 matches to the tick), and immune to the
+                    // EastMoney kline host's routine outages; EastMoney only as
+                    // its backup.
+                    if (contract.Market is Market.SH or Market.SZ or Market.HK)
                     {
-                        var east = await dailyEast.FetchAsync(
-                            contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
-                        if (east.Candles.Count > 0) return east;
-                    }
-                    catch (Exception)
-                    {
-                        // EastMoney throttles this path with CONNECTION RESETS as
-                        // routine behaviour (its other endpoints stay up), so the
-                        // Tencent chain below is a working state, not a rarity.
+                        try
+                        {
+                            var t = await dailyTencent.FetchAsync(
+                                contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
+                            if (t.Candles.Count > 0) return Trim(t);
+                        }
+                        catch (Exception)
+                        {
+                            // Fall through to EastMoney.
+                        }
+                        return await East();
                     }
 
-                    // Full history for SH/SZ/HK; BJ/US/KR come back same-day only
-                    // there and simply won't match — those wait for EastMoney.
-                    return Trim(await dailyTencent.FetchAsync(
-                        contract, KlinePeriod.Day, KlineAdjust.Qfq, ct));
+                    // BJ/US: EastMoney only — Tencent serves a single same-day
+                    // candle there, and caching that as "fresh" would stop the
+                    // retries; null keeps the 10-minute sweep trying instead.
+                    return await East();
                 });
             Quotes.DataContext = _quotes;
 

@@ -25,15 +25,20 @@ public sealed class TencentKlineClient
 
     public TencentKlineClient(HttpClient http) => _http = http;
 
+    public Task<KlineSeries> FetchAsync(
+        Contract contract, KlinePeriod period, KlineAdjust adjust, CancellationToken cancellationToken) =>
+        FetchAsync(contract, period, adjust, Count, cancellationToken);
+
     public async Task<KlineSeries> FetchAsync(
-        Contract contract, KlinePeriod period, KlineAdjust adjust, CancellationToken cancellationToken)
+        Contract contract, KlinePeriod period, KlineAdjust adjust, int count,
+        CancellationToken cancellationToken)
     {
         var api = TencentQuoteClient.ToApiCode(contract.Code);
         var span = Span(period);
         var (endpoint, adjustParam, prefix) = AdjustParts(adjust);
 
         var url = $"https://web.ifzq.gtimg.cn/appstock/app/{endpoint}" +
-                  $"?param={api},{span},,,{Count}{adjustParam}";
+                  $"?param={api},{span},,,{Math.Max(1, count)}{adjustParam}";
 
         using var response = await _http.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();

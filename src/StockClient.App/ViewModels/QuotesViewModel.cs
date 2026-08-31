@@ -360,9 +360,19 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
     // Final daily candles per code, plus the freshness mark of the fetch that
     // produced them (same rule as the kline cache: good all day, except taken
-    // during the session and read after the close).
+    // during the session and read after the close). Persisted, so a restart
+    // shows 昨日涨幅 immediately instead of re-crawling every contract.
     private readonly Dictionary<string, IReadOnlyList<Kline>> _daily = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (DateOnly Stamp, bool Settled)> _dailyMeta = new(StringComparer.OrdinalIgnoreCase);
+    private readonly DailyCloseCache _dailyCache = new();
+    private bool _dailyDirty;
+
+    // Last-known fund-flow extras, persisted: after the close they ARE the
+    // day's final numbers, so rows show them instantly instead of blank-until-
+    // the-poll (盘中 the live poll overwrites within seconds).
+    private readonly ExtraCache _extraCache = new();
+    private readonly Dictionary<string, QuoteExtra> _extrasKnown;
+    private DateTimeOffset _extrasSavedAt = DateTimeOffset.MinValue;
 
     /// <summary>Whether any fund-flow/涨速 column is on, so the secondary poll should run.</summary>
     private bool _fundFlowActive;
@@ -393,6 +403,21 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _poller.Failed += OnFailed;
 
         _extraPoller = new EastMoneyExtraPoller(new EastMoneyQuoteClient(_http));
+        _extrasKnown = _extraCache.Load();
+
+        foreach (var (code, entry) in _dailyCache.Load())
+        {
+            if (!DateOnly.TryParse(entry.Stamp, out var stamp)) continue;
+            _daily[code] = entry.Candles
+                .Where(c => c.Close > 0)
+                .Select(c => new Kline
+                {
+                    Date = c.Date, Open = c.Close, Close = c.Close,
+                    High = c.Close, Low = c.Close,
+                })
+                .ToArray();
+            _dailyMeta[code] = (stamp, entry.Settled);
+        }
 
         // Period-return baselines: one batch request per trading day, then the
         // percentages are computed locally against each tick's price.
@@ -891,6 +916,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             var row = new QuoteRow(code);
             FillMeta(row);
             row.Note = GetNote(code);
+            if (_extrasKnown.TryGetValue(code, out var cachedExtra)) row.UpdateExtra(cachedExtra);
             _rows[code] = row;
             Quotes.Add(row);
         }
@@ -926,22 +952,53 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     /// run of the day) and a burst is what gets a source throttled.
     /// </summary>
     private bool _dailyRefreshing;
+    private int _dailyGen;
 
     private async Task RefreshDailyAsync()
     {
-        if (_fetchDaily is null || _activeGroup is null || _dailyRefreshing) return;
+        if (_fetchDaily is null || _activeGroup is null) return;
+
+        // Bumping the generation makes a still-running crawl bail at its next
+        // step — a group switch mid-crawl used to leave the NEW group waiting
+        // behind the old one's slow fetches (minutes, with EastMoney down).
+        var gen = ++_dailyGen;
+        if (_dailyRefreshing) return;   // the running loop restarts on the bump
+
         _dailyRefreshing = true;
         try
         {
-            await RefreshDailyCoreAsync();
+            while (true)
+            {
+                gen = _dailyGen;
+                await RefreshDailyCoreAsync(gen);
+                if (gen == _dailyGen) break;
+            }
         }
         finally
         {
             _dailyRefreshing = false;
+
+            if (_dailyDirty)
+            {
+                _dailyDirty = false;
+                _dailyCache.Save(_daily.ToDictionary(
+                    kv => kv.Key,
+                    kv => new DailyCloseEntry
+                    {
+                        Code = kv.Key,
+                        Stamp = _dailyMeta.TryGetValue(kv.Key, out var m)
+                            ? m.Stamp.ToString("yyyy-MM-dd") : "",
+                        Settled = _dailyMeta.TryGetValue(kv.Key, out var m2) && m2.Settled,
+                        Candles = kv.Value
+                            .Select(c => new DailyClose { Date = c.Date, Close = c.Close })
+                            .ToArray(),
+                    },
+                    StringComparer.OrdinalIgnoreCase));
+            }
         }
     }
 
-    private async Task RefreshDailyCoreAsync()
+    private async Task RefreshDailyCoreAsync(int gen)
     {
         if (_fetchDaily is null || _activeGroup is null) return;
 
@@ -980,6 +1037,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
                 _daily[contract.Code] = candles;
                 _dailyMeta[contract.Code] = (stamp, settled);
+                _dailyDirty = true;
 
                 var code = contract.Code;
                 _ = _dispatcher.InvokeAsync(() =>
@@ -989,7 +1047,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
                 });
             }
 
+            // Fetched data is group-independent and already stored — bail only
+            // AFTER keeping it, then let the fresh crawl take over.
+            if (gen != _dailyGen) return;
             await Task.Delay(150);
+            if (gen != _dailyGen) return;
         }
     }
 
@@ -1070,7 +1132,18 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _dispatcher.InvokeAsync(() =>
         {
             foreach (var (code, extra) in extras)
+            {
+                _extrasKnown[code] = extra;
                 if (_rows.TryGetValue(code, out var row)) row.UpdateExtra(extra);
+            }
+
+            // Once a minute at most: the poll runs every few seconds, the file
+            // only needs to survive a restart.
+            if (DateTimeOffset.Now - _extrasSavedAt > TimeSpan.FromSeconds(60))
+            {
+                _extrasSavedAt = DateTimeOffset.Now;
+                _extraCache.Save(_extrasKnown);
+            }
         });
 
     /// <summary>
