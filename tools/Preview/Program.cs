@@ -144,7 +144,7 @@ public static class Program
             {
                 Time = t.ToString("yyyy-MM-dd HH:mm"),
                 Price = Math.Round(101 + 2.2 * Math.Cos(i / 30.0) - i * 0.006, 2),
-                AvgPrice = 0, Volume = 3000,
+                AvgPrice = Math.Round(101.6 - i * 0.004, 2), Volume = 3000,
             });
         }
         var cmpSeries = new StockClient.Core.Quotes.TrendSeries
