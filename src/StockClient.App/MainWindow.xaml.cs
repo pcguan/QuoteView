@@ -151,11 +151,16 @@ public partial class MainWindow : FluentWindow
             // server-first routing, but with a tiny lmt and NO shared-cache
             // write — storing a 12-candle series there would become what the
             // chart draws for the rest of the day.
-            var dailyClient = new EastMoneyKlineClient(_klineHttp);
+            var dailyEast = new EastMoneyKlineClient(_klineHttp);
+            var dailyTencent = new TencentKlineClient(_klineHttp);
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
                 fetchDaily: async (contract, ct) =>
                 {
                     const int count = 12;
+                    static KlineSeries Trim(KlineSeries s) =>
+                        s.Candles.Count <= count ? s
+                            : s with { Candles = s.Candles.TakeLast(count).ToArray() };
+
                     if (_session.IsSignedIn)
                     {
                         try
@@ -174,12 +179,27 @@ public partial class MainWindow : FluentWindow
                         }
                         catch (Exception)
                         {
-                            // Fall through to the direct fetch.
+                            // Fall through to the direct chain.
                         }
                     }
 
-                    return await dailyClient.FetchAsync(
-                        contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
+                    try
+                    {
+                        var east = await dailyEast.FetchAsync(
+                            contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
+                        if (east.Candles.Count > 0) return east;
+                    }
+                    catch (Exception)
+                    {
+                        // EastMoney throttles this path with CONNECTION RESETS as
+                        // routine behaviour (its other endpoints stay up), so the
+                        // Tencent chain below is a working state, not a rarity.
+                    }
+
+                    // Full history for SH/SZ/HK; BJ/US/KR come back same-day only
+                    // there and simply won't match — those wait for EastMoney.
+                    return Trim(await dailyTencent.FetchAsync(
+                        contract, KlinePeriod.Day, KlineAdjust.Qfq, ct));
                 });
             Quotes.DataContext = _quotes;
 
