@@ -47,7 +47,6 @@ public sealed class TrendChart : FrameworkElement
     private int _hoverIndex = -1;
 
     private static readonly Pen ComparePen = FrozenPen("#4C8DFF", 1.4);
-    private static readonly Pen CompareAvgPen = FrozenPen("#4C8DFF", 1.0, dashed: true);
     private static readonly Brush CompareText = Frozen("#4C8DFF");
     private static readonly Brush MainText = Frozen("#DCE4EE");
 
@@ -265,6 +264,10 @@ public sealed class TrendChart : FrameworkElement
 
         dc.DrawGeometry(null, PriceLine, new PathGeometry { Figures = { price } });
 
+        // No average lines in compare mode: four lines tangled in one plot read
+        // as clutter, and the crosshair readout still shows both days' 均价.
+        if (_compare is { Points.Count: > 0 }) return;
+
         // The average line is skipped entirely when the source doesn't report one
         // (Tencent fallback on BJ/US/KR) — drawing it from zeros would put a flat
         // line along the bottom that reads as a real average of 0.
@@ -449,28 +452,6 @@ public sealed class TrendChart : FrameworkElement
         }
         geometry.Freeze();
         dc.DrawGeometry(null, ComparePen, geometry);
-
-        // Its average line too, same normalization. Dashed: each day pairs by
-        // colour (white/yellow = picked day, blue solid/dashed = compare), so
-        // price-vs-average stays tellable apart inside the blue pair without
-        // borrowing the main day's yellow. Skipped when the source has no
-        // average, same as the main line.
-        if (!cmp.Points.Any(q => q.AvgPrice > 0)) return;
-
-        var avgGeometry = new StreamGeometry();
-        using (var ctx = avgGeometry.Open())
-        {
-            var started = false;
-            for (var i = 0; i < cmp.Points.Count; i++)
-            {
-                var mapped = pre * (cmp.Points[i].AvgPrice / cmp.PreClose);
-                var pt = new Point(X(i, step), priceToY(mapped));
-                if (!started) { ctx.BeginFigure(pt, false, false); started = true; }
-                else ctx.LineTo(pt, true, false);
-            }
-        }
-        avgGeometry.Freeze();
-        dc.DrawGeometry(null, CompareAvgPen, avgGeometry);
     }
 
     private static string Day(TrendSeries s) =>
