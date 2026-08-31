@@ -215,6 +215,7 @@ CLIENT_TTL_DAYS = 14
 
 CN = timezone(timedelta(hours=8))  # no DST in China
 CODE_RE = re.compile(r"^(SH|SZ)\d{6}$")
+KR_CODE_RE = re.compile(r"^KR\d{6}$")
 USER_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -404,6 +405,32 @@ def union_codes():
     return sorted(seen)
 
 
+def kr_codes():
+    """KR codes across every account synced within the TTL, deduped. Korea has
+    no queryable daily history anywhere we reach (EastMoney's period fields are
+    broken there, Tencent klines carry only the current day), so the server
+    archives each session's close itself — see kr_sweep_tick."""
+    cutoff = time.time() - CLIENT_TTL_DAYS * 86400
+    seen = set()
+    if not os.path.isdir(ACCOUNTS):
+        return []
+    for name in os.listdir(ACCOUNTS):
+        path = os.path.join(ACCOUNTS, name)
+        if not name.endswith(".json") or os.path.getmtime(path) < cutoff:
+            continue
+        try:
+            with open(path) as f:
+                doc = json.load(f)
+        except Exception:
+            continue
+        for group in doc.get("groups", []):
+            for code in group.get("codes", []):
+                code = str(code).upper()
+                if KR_CODE_RE.match(code):
+                    seen.add(code)
+    return sorted(seen)
+
+
 # ---------------------------------------------------------------- fetching
 
 def fetch_eastmoney(code):
@@ -571,6 +598,104 @@ def kline_body(secid, klt, fqt, lmt):
             time.sleep(1.5)
 
     return meta["body"] if meta else None
+
+
+# ------------------------------------------------------------- KR daily closes
+
+KR_DAILY = os.path.join(DATA, "kr-daily.json")
+KR_KEEP = 40
+
+
+def kr_load():
+    try:
+        with open(KR_DAILY) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def kr_sweep_tick():
+    """Self-maintained daily-close archive for Korea, one batched Tencent
+    quote per day after the KR close (15:30 KST = 14:30 CST). Each record keeps
+    the session's own date (taken from the QUOTE's timestamp, so a KR holiday
+    re-reads the old session and just overwrites the same entry), its close and
+    its previous close — one day of archive already yields one 昨日涨幅 pair.
+    Clients read it back via GET /krdaily."""
+    # Safe whenever the KR session (09:00-15:30 KST = 08:00-14:30 CST) is NOT
+    # live: the record's date comes from the QUOTE's own timestamp and the
+    # archive dedups by it, so an off-hours pass always lands on the last
+    # completed session — a small-hours catch-up included. Two passes a day:
+    # one after the close, one early-morning (catches a server that was down
+    # or deployed after the close).
+    now = datetime.now(CN)
+    live = datetime.strptime("07:50", "%H:%M").time() <= now.time() \
+        < datetime.strptime("15:01", "%H:%M").time()
+    if live:
+        return
+
+    mark = f"{now:%F}-" + ("pm" if now.time() >= datetime.strptime("15:01", "%H:%M").time() else "am")
+    state = load_state()
+    if state.get("kr_day") == mark:
+        return
+
+    codes = kr_codes()
+    if not codes:
+        with _lock:
+            state = load_state()
+            state["kr_day"] = mark
+            save_state(state)
+        return
+
+    url = "https://qt.gtimg.cn/q=" + ",".join(c.lower() for c in codes[:400])
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+        "Referer": "https://gu.qq.com/",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            body = r.read().decode("gbk", errors="replace")
+    except Exception as e:  # noqa: BLE001
+        log(f"kr sweep: quote batch failed: {e}")
+        return
+
+    doc = kr_load()
+    added = 0
+    for seg in body.split(";"):
+        seg = seg.strip()
+        if not seg.startswith("v_"):
+            continue
+        api, _, val = seg[2:].partition("=")
+        f = val.strip().strip('"').split("~")
+        if len(f) < 33:
+            continue
+        code = api.upper()
+        try:
+            close = float(f[3])
+            prev = float(f[4])
+            pct = float(f[32])
+        except ValueError:
+            continue
+        # KR timestamps come dashed ("2026-08-31 14:30:03"); the date names the
+        # session this quote settles, holiday-proof by construction.
+        day = f[30][:10]
+        if close <= 0 or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+            continue
+        records = [r for r in doc.get(code, []) if r.get("date") != day]
+        records.append({"date": day, "close": close, "prev": prev, "pct": pct})
+        records.sort(key=lambda r: r["date"])
+        doc[code] = records[-KR_KEEP:]
+        added += 1
+
+    if added:
+        tmp = KR_DAILY + ".tmp"
+        with open(tmp, "w") as fo:
+            json.dump(doc, fo)
+        os.replace(tmp, KR_DAILY)
+    with _lock:
+        state = load_state()
+        state["kr_day"] = mark
+        save_state(state)
+    log(f"kr sweep: archived {added}/{len(codes)} closes")
 
 
 def sweep_once():
@@ -895,6 +1020,10 @@ def scheduler():
             news_sweep_tick()
         except Exception as e:  # noqa: BLE001
             log(f"news sweep error: {e}")
+        try:
+            kr_sweep_tick()
+        except Exception as e:  # noqa: BLE001
+            log(f"kr sweep error: {e}")
         # Wake AT the archive minute: a flat 300s cadence could push the first
         # after-close pass to ~15:06, defeating the 15:01 promise.
         now = datetime.now(CN)
@@ -1677,6 +1806,22 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+
+        if url.path == "/krdaily":
+            if self._auth() is None:
+                return
+            code = (q.get("code") or [""])[0].upper()
+            if not KR_CODE_RE.match(code):
+                return self._bad("bad code")
+            records = kr_load().get(code) or []
+            candles = []
+            # The oldest record's own previous close is a free extra point —
+            # it makes 昨日涨幅 computable from a single archived day.
+            if records and records[0].get("prev", 0) > 0:
+                candles.append({"date": "", "close": records[0]["prev"]})
+            for r in records:
+                candles.append({"date": r.get("date", ""), "close": r.get("close", 0)})
+            return self._json({"candles": candles[-12:]})
 
         if url.path == "/groups":
             authed = self._auth()

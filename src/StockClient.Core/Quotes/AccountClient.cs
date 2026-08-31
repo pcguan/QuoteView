@@ -288,6 +288,29 @@ public sealed class AccountClient
 
     /// <summary>The server's /kline proxy body (EastMoney-shaped JSON), or null.
     /// lmt=0 asks for the full listed history, matching the chart's own shape.</summary>
+    /// <summary>The server-archived KR daily closes (Korea has no queryable
+    /// daily history upstream; the server archives each session itself).</summary>
+    public async Task<(string? Json, bool Unauthorized)> KrDailyJsonAsync(
+        string token, string code, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get, $"{Base}/krdaily?code={Uri.EscapeDataString(code)}");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+
+            return (await response.Content.ReadAsStringAsync(ct), false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
     public async Task<(string? Json, bool Unauthorized)> KlineJsonAsync(
         string token, string secid, int klt, int fqt, int lmt, CancellationToken ct)
     {

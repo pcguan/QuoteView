@@ -161,6 +161,41 @@ public partial class MainWindow : FluentWindow
                         s.Candles.Count <= count ? s
                             : s with { Candles = s.Candles.TakeLast(count).ToArray() };
 
+                    // Korea has no queryable daily history upstream (EastMoney's
+                    // period fields are broken there, Tencent klines carry only
+                    // the current day) — the SERVER archives each session's
+                    // close itself and serves the pairs back.
+                    if (contract.Market == Market.KR)
+                    {
+                        if (!_session.IsSignedIn) return null;
+                        var body = await _session.KrDailyJsonAsync(contract.Code);
+                        if (body is null) return null;
+
+                        using var doc = System.Text.Json.JsonDocument.Parse(body);
+                        if (!doc.RootElement.TryGetProperty("candles", out var arr)
+                            || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+                            return null;
+
+                        var candles = new List<Kline>();
+                        foreach (var c in arr.EnumerateArray())
+                        {
+                            var close = c.TryGetProperty("close", out var cl) ? cl.GetDouble() : 0;
+                            if (close <= 0) continue;
+                            var date = c.TryGetProperty("date", out var d) ? d.GetString() ?? "" : "";
+                            candles.Add(new Kline
+                            {
+                                Date = date, Open = close, Close = close,
+                                High = close, Low = close,
+                            });
+                        }
+                        return candles.Count == 0 ? null : new KlineSeries
+                        {
+                            Code = contract.Code, Name = contract.Name,
+                            Period = KlinePeriod.Day, Adjust = KlineAdjust.None,
+                            Candles = candles,
+                        };
+                    }
+
                     if (_session.IsSignedIn)
                     {
                         try

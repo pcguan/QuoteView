@@ -948,7 +948,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         var contracts = _activeGroup.Model.Codes
             .Where(CodeMapper.IsValid)
             .Select(c => _contracts.Find(c.ToUpperInvariant()))
-            .Where(c => c is not null && c.Market != Market.KR)
+            .Where(c => c is not null)
             .Select(c => c!)
             .ToArray();
 
