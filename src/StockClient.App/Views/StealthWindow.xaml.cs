@@ -828,12 +828,12 @@ public partial class StealthWindow : Window
         // which never has one): an all-empty column has no width, and a picked
         // field that silently vanishes reads as lost configuration.
         StealthField.PrevDay => r.PrevDayPercent is { } pd ? SignedPct(pd) : "-",
-        StealthField.Return3 => SignedPct(r.Return3),
-        StealthField.Return5 => SignedPct(r.Return5),
-        StealthField.Return10 => SignedPct(r.Return10),
-        StealthField.Return20 => SignedPct(r.Return20),
-        StealthField.Return60 => SignedPct(r.Return60),
-        StealthField.ReturnYtd => SignedPct(r.ReturnYtd),
+        StealthField.Return3 => r.Return3 is { } r3 ? SignedPct(r3) : "-",
+        StealthField.Return5 => r.Return5 is { } r5 ? SignedPct(r5) : "-",
+        StealthField.Return10 => r.Return10 is { } r10 ? SignedPct(r10) : "-",
+        StealthField.Return20 => r.Return20 is { } r20 ? SignedPct(r20) : "-",
+        StealthField.Return60 => r.Return60 is { } r60 ? SignedPct(r60) : "-",
+        StealthField.ReturnYtd => r.ReturnYtd is { } ry ? SignedPct(ry) : "-",
         StealthField.Speed => SignedPct(r.Speed),
         StealthField.MainInflow => Scale(r.MainInflow),
         StealthField.MainInflowPct => SignedPct(r.MainInflowPct),

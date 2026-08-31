@@ -18,8 +18,10 @@ public sealed class ReturnBaselineRepository
     /// <summary>
     /// Backoff after a failed fetch. EastMoney throttles this host in bursts, and
     /// there is nothing time-critical here — the data only changes once a day.
+    /// Long on purpose: retrying INTO an active throttle keeps it alive, which
+    /// is how a half-rebuilt cache stayed half-rebuilt all evening.
     /// </summary>
-    private static readonly TimeSpan RetryAfterFailure = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RetryAfterFailure = TimeSpan.FromMinutes(15);
 
     private readonly ReturnBaselineClient _client;
     private readonly ReturnBaselineCache _cache;
@@ -126,7 +128,14 @@ public sealed class ReturnBaselineRepository
             return false;
         }
 
-        if (fetched.Count == 0) return false;
+        if (fetched.Count == 0)
+        {
+            // A throttled EastMoney often answers HTTP 200 with an EMPTY list —
+            // that is a failure too. Without this backoff the 10-minute sweep
+            // re-hit the throttled host every tick and kept itself throttled.
+            _failedUntil = DateTimeOffset.Now + RetryAfterFailure;
+            return false;
+        }
 
         foreach (var (code, next) in fetched)
         {
