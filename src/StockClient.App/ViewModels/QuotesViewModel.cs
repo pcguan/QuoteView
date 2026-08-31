@@ -314,6 +314,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly ReturnBaselineRepository _returns;
     private readonly ContractRepository _contracts;
     private readonly DispatcherTimer _flashTimer;
+    private readonly DispatcherTimer _baselineTimer;
 
     /// <summary>Whether any fund-flow/涨速 column is on, so the secondary poll should run.</summary>
     private bool _fundFlowActive;
@@ -350,6 +351,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _extraPoller.Tick += OnExtraTick;
 
         Groups = new ObservableCollection<GroupRow>(_config.Groups.Select(g => new GroupRow(g)));
+
+        // Catches session rollovers without waiting for a group switch: the
+        // repository skips instantly when nothing is due, so an idle tick costs
+        // no request. This is what turns 昨日涨幅 over on weekends/evenings.
+        _baselineTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
+        {
+            Interval = TimeSpan.FromMinutes(10),
+        };
+        _baselineTimer.Tick += (_, _) => _ = RefreshBaselinesAsync();
+        _baselineTimer.Start();
 
         _flashTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
         {

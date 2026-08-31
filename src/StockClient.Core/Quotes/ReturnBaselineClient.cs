@@ -100,12 +100,28 @@ public sealed class ReturnBaselineClient
             var price = Num(row, "f2");
             if (price is not > 0) continue;
 
+            var prevClose = Num(row, "f18") ?? 0;
+
+            // IDLE feed (现价≈昨收): the session f18 belongs to hasn't traded a
+            // tick yet — evenings, weekends, holidays. There f18 is the LAST
+            // completed session's close while f3 still carries that session's
+            // move, so inverting yields its previous close: the exact partner
+            // 昨日涨幅 needs. Mid-session the two fields describe different
+            // things and nothing can be derived (a price merely CROSSING the
+            // previous close is filtered later: the repository only uses this
+            // outside trading hours).
+            var idle = prevClose > 0 && Math.Abs(price.Value - prevClose) <= prevClose * 2e-4;
+            var implied = idle && Num(row, "f3") is { } todayPct
+                ? Baseline(prevClose, todayPct)
+                : 0;
+
             var baselines = new ReturnBaselines
             {
                 Code = target.Code,
                 Date = target.Date.ToString("yyyy-MM-dd"),
                 // Previous close is served directly, no inversion needed.
-                PrevClose = Num(row, "f18") ?? 0,
+                PrevClose = prevClose,
+                ImpliedPrior = implied,
                 Day3 = Baseline(price.Value, Num(row, "f127")),
                 Day5 = Baseline(price.Value, Num(row, "f109")),
                 Day10 = Baseline(price.Value, Num(row, "f160")),

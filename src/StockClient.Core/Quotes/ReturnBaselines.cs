@@ -42,6 +42,34 @@ public sealed record ReturnBaselines
     [JsonPropertyName("priorDate")]
     public string PriorDate { get; init; } = "";
 
+    /// <summary>
+    /// The last COMPLETED session's own previous close, reverse-derived from an
+    /// IDLE feed snapshot (现价≈昨收 — evenings, weekends, holidays). In that
+    /// state 昨收 is the finished session's close while 涨跌幅 still carries its
+    /// move, so its baseline falls straight out: 上收 = 昨收 ÷ (1 + 涨跌幅).
+    /// Zero when the snapshot was taken mid-session (nothing to derive).
+    /// </summary>
+    [JsonPropertyName("implied")]
+    public double ImpliedPrior { get; init; }
+
+    /// <summary>
+    /// <see cref="PriorClose"/> came from (or was verified against) the feed's
+    /// own idle snapshot — adjacent BY CONSTRUCTION, so the date-gap heuristic
+    /// doesn't apply. Without this, an entry chained across an unobserved
+    /// double rollover (app off from Thursday, first fetch Monday morning)
+    /// pairs closes two sessions apart and labels the ratio "yesterday".
+    /// </summary>
+    [JsonPropertyName("feedPrior")]
+    public bool PriorFromFeed { get; init; }
+
+    /// <summary>
+    /// An idle post-close snapshot has been merged for this previous-close
+    /// value — nothing newer can appear until the NEXT session finishes, so
+    /// the repository stops re-fetching until the baseline date advances.
+    /// </summary>
+    [JsonPropertyName("settled")]
+    public bool Settled { get; init; }
+
     [JsonPropertyName("d3")]
     public double Day3 { get; init; }
 
@@ -71,13 +99,16 @@ public sealed record ReturnBaselines
                             && Math.Abs(Day3 - Day60) > 1e-6;
 
     /// <summary>
-    /// Yesterday's move, derived from two consecutive days of previous closes.
+    /// The last completed session's move, from two consecutive previous closes.
     ///
-    /// Null unless the earlier entry is genuinely the day before: with no trading
-    /// calendar to consult, "within 4 calendar days" is the test, which covers
-    /// weekends. After a long holiday the first day shows nothing rather than
-    /// labelling a week's move as yesterday's — wrong is worse than missing, and it
-    /// corrects itself the next day.
+    /// A feed-verified pair (<see cref="PriorFromFeed"/>) is trusted outright.
+    /// A pair chained from a stored predecessor must be genuinely adjacent:
+    /// with no trading calendar to consult, "within 4 calendar days" is the
+    /// test, which covers weekends (gap 0 is legal — a post-close re-fetch
+    /// rolls the chain under the same baseline date). After a long offline
+    /// stretch the first day shows nothing rather than labelling a week's move
+    /// as yesterday's — wrong is worse than missing, and it corrects itself at
+    /// the next session close.
     /// </summary>
     [JsonIgnore]
     public double? PrevDayPercent
@@ -85,11 +116,17 @@ public sealed record ReturnBaselines
         get
         {
             if (PrevClose <= 0 || PriorClose <= 0) return null;
-            if (!DateOnly.TryParse(Date, out var day)) return null;
-            if (!DateOnly.TryParse(PriorDate, out var prior)) return null;
 
-            var gap = day.DayNumber - prior.DayNumber;
-            return gap is >= 1 and <= 4 ? (PrevClose / PriorClose - 1) * 100 : null;
+            if (!PriorFromFeed)
+            {
+                if (!DateOnly.TryParse(Date, out var day)) return null;
+                if (!DateOnly.TryParse(PriorDate, out var prior)) return null;
+
+                var gap = day.DayNumber - prior.DayNumber;
+                if (gap is not (>= 0 and <= 4)) return null;
+            }
+
+            return (PrevClose / PriorClose - 1) * 100;
         }
     }
 

@@ -60,9 +60,24 @@ public sealed class ReturnBaselineRepository
     }
 
     /// <summary>
-    /// Brings the given contracts up to date, fetching only those whose own market
-    /// has moved past what is stored. Returns true when anything changed, so the
-    /// caller can refresh its rows.
+    /// True when the market's session for its current baseline date cannot be
+    /// trading any more: a later calendar day (weekend, overnight), or past the
+    /// close (with settle margin) on the day itself. Only in this window is an
+    /// idle feed snapshot trusted — mid-session, 现价 merely CROSSING 昨收
+    /// would fake one.
+    /// </summary>
+    private bool PostWindow(Market market)
+    {
+        var date = BaselineDate(market);
+        return _clock.TradingDate(market) != date
+               || _clock.IsAfterClose(market, DateTimeOffset.Now);
+    }
+
+    /// <summary>
+    /// Brings the given contracts up to date. A contract is due when its market's
+    /// baseline date moved past what is stored, or after its session closed and
+    /// the post-close rollover hasn't been captured yet (<c>Settled</c>).
+    /// Returns true when anything changed, so the caller can refresh its rows.
     /// </summary>
     public async Task<bool> RefreshAsync(
         IReadOnlyList<Contract> contracts, CancellationToken cancellationToken)
@@ -71,6 +86,7 @@ public sealed class ReturnBaselineRepository
         if (DateTimeOffset.Now < _failedUntil) return false;
 
         var stale = new List<(string Code, string SecId, DateOnly Date)>();
+        var marketOf = new Dictionary<string, Market>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var contract in contracts)
         {
@@ -82,8 +98,11 @@ public sealed class ReturnBaselineRepository
             var date = BaselineDate(contract.Market);
             var stamp = date.ToString("yyyy-MM-dd");
 
-            if (_known.TryGetValue(contract.Code, out var have) && have.Date == stamp) continue;
+            if (_known.TryGetValue(contract.Code, out var have) && have.Date == stamp
+                && (have.Settled || !PostWindow(contract.Market)))
+                continue;
 
+            marketOf[contract.Code] = contract.Market;
             stale.Add((contract.Code, contract.EastMoneySecId, date));
         }
 
@@ -104,27 +123,69 @@ public sealed class ReturnBaselineRepository
 
         foreach (var (code, next) in fetched)
         {
+            // The chain advances on the previous-close VALUE, not the calendar:
+            // f18 flips exactly once per session (at its close), while the
+            // clock-guessed date stamp lies inside rollover windows — stamping
+            // a weekend fetch "Friday" once paired Friday's close against
+            // Wednesday's and displayed the ratio as 昨日涨幅.
+            var post = marketOf.TryGetValue(code, out var market) && PostWindow(market);
+            var implied = post ? next.ImpliedPrior : 0;
+            var settledNow = implied > 0;
+
             if (!_known.TryGetValue(code, out var old))
             {
-                _known[code] = next;
+                _known[code] = next with
+                {
+                    PriorClose = implied,
+                    PriorDate = "",
+                    PriorFromFeed = implied > 0,
+                    Settled = settledNow,
+                };
                 continue;
             }
 
-            // A date REGRESSION (edge of the pre-open window) must never
-            // overwrite a newer entry — it would wreck the prev/prior chain
-            // 昨日涨幅 is built from.
-            if (string.CompareOrdinal(next.Date, old.Date) < 0) continue;
+            var rolled = old.PrevClose > 0 && next.PrevClose > 0
+                && Math.Abs(next.PrevClose - old.PrevClose) > old.PrevClose * 2e-4;
+            var date = MaxDate(next.Date, old.Date);
 
-            // Carry the outgoing previous close forward on a NEW day — that
-            // pairing is what makes yesterday's return available at all. A
-            // same-day refetch keeps the existing chain instead of collapsing
-            // prior onto itself.
-            _known[code] = old.Date != next.Date
-                ? next with { PriorClose = old.PrevClose, PriorDate = old.Date }
-                : next with { PriorClose = old.PriorClose, PriorDate = old.PriorDate };
+            if (!rolled)
+            {
+                // Same session state: adopt the fresh period baselines, keep the
+                // chain. Advancing onto a new baseline date re-arms Settled so
+                // the NEXT close gets captured too.
+                var advanced = date != old.Date;
+                _known[code] = next with
+                {
+                    Date = date,
+                    PriorClose = old.PriorClose,
+                    PriorDate = old.PriorDate,
+                    PriorFromFeed = old.PriorFromFeed,
+                    Settled = settledNow || (!advanced && old.Settled),
+                };
+                continue;
+            }
+
+            // Session boundary crossed. The idle snapshot names the exact
+            // predecessor; a stored entry that doesn't match it is NOT adjacent
+            // (an unobserved double rollover) and must not be paired.
+            var adjacent = implied > 0 && Math.Abs(old.PrevClose - implied) <= implied * 1e-3;
+            _known[code] = implied > 0 && !adjacent
+                ? next with
+                {
+                    Date = date, PriorClose = implied, PriorDate = "",
+                    PriorFromFeed = true, Settled = settledNow,
+                }
+                : next with
+                {
+                    Date = date, PriorClose = old.PrevClose, PriorDate = old.Date,
+                    PriorFromFeed = adjacent, Settled = settledNow,
+                };
         }
 
         _cache.Save(_known);
         return true;
     }
+
+    private static string MaxDate(string a, string b) =>
+        string.CompareOrdinal(a, b) >= 0 ? a : b;
 }

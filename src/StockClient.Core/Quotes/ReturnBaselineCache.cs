@@ -18,6 +18,15 @@ namespace StockClient.Core.Quotes;
 /// </summary>
 public sealed class ReturnBaselineCache
 {
+    /// <summary>
+    /// Chain-format version, carried in the day record's otherwise-unused Date
+    /// slot. v2 = value-keyed chain (prev/prior pairs verified against idle
+    /// feed snapshots). Older files predate that and may hold mispaired
+    /// entries — e.g. Friday's close stored as Friday's "previous close" —
+    /// so they are dropped wholesale and rebuilt within a session.
+    /// </summary>
+    private const string FormatVersion = "v2";
+
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = false,
@@ -42,7 +51,8 @@ public sealed class ReturnBaselineCache
             if (!File.Exists(_path)) return new(StringComparer.OrdinalIgnoreCase);
 
             var day = JsonSerializer.Deserialize<ReturnBaselineDay>(File.ReadAllText(_path), Options);
-            if (day?.Items is not { Count: > 0 }) return new(StringComparer.OrdinalIgnoreCase);
+            if (day?.Items is not { Count: > 0 } || day.Date != FormatVersion)
+                return new(StringComparer.OrdinalIgnoreCase);
 
             return day.Items
                 .Where(i => !string.IsNullOrEmpty(i.Code))
@@ -63,7 +73,7 @@ public sealed class ReturnBaselineCache
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
         var tmp = _path + ".tmp";
-        var day = new ReturnBaselineDay { Date = "", Items = items.Values.ToArray() };
+        var day = new ReturnBaselineDay { Date = FormatVersion, Items = items.Values.ToArray() };
 
         try
         {
