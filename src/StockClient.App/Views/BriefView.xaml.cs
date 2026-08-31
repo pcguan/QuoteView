@@ -1,7 +1,11 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Threading;
+using StockClient.App.Services;
 using StockClient.Core.Brief;
 
 namespace StockClient.App.Views;
@@ -39,6 +43,174 @@ public partial class BriefView : UserControl
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => _ = ReloadAsync();
+
+    // ---- 关注动态: the per-account watch feed --------------------------------
+
+    private AccountSession? _session;
+    private JsonDocument? _news;
+    private DispatcherTimer? _newsTimer;
+
+    /// <summary>Wires the account session in; the feed is per-account.</summary>
+    public void InitNews(AccountSession session)
+    {
+        _session = session;
+        _ = LoadNewsAsync();
+        _newsTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(10) };
+        _newsTimer.Tick += (_, _) => _ = LoadNewsAsync();
+        _newsTimer.Start();
+        session.Changed += () => Dispatcher.InvokeAsync(() => _ = LoadNewsAsync());
+    }
+
+    /// <summary>Server push said fresh items exist — refetch right away.</summary>
+    public void NudgeNews() => _ = LoadNewsAsync();
+
+    private async Task LoadNewsAsync()
+    {
+        if (_session is null) return;
+
+        if (!_session.IsSignedIn)
+        {
+            WatchCard.Visibility = Visibility.Visible;
+            WatchBody.Children.Clear();
+            WatchHint.Text = "登录后，服务端会按你的分组与合约聚合公告、业绩与新闻，并做多空标注。";
+            WatchHint.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var json = await _session.NewsJsonAsync();
+        if (json is null)
+        {
+            if (_news is null)
+            {
+                WatchCard.Visibility = Visibility.Visible;
+                WatchHint.Text = "关注动态暂时拉取失败，稍后自动重试。";
+                WatchHint.Visibility = Visibility.Visible;
+            }
+            return;
+        }
+
+        try
+        {
+            _news?.Dispose();
+            _news = JsonDocument.Parse(json);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        RenderNews();
+    }
+
+    private void WatchFilter_Changed(object sender, SelectionChangedEventArgs e) => RenderNews();
+
+    private void WatchRefresh_Click(object sender, RoutedEventArgs e) => _ = LoadNewsAsync();
+
+    private void RenderNews()
+    {
+        if (_news is null) return;
+
+        WatchCard.Visibility = Visibility.Visible;
+        WatchHint.Visibility = Visibility.Collapsed;
+        WatchBody.Children.Clear();
+
+        var filter = (WatchFilter.SelectedItem as ComboBoxItem)?.Content as string ?? "全部";
+        var root = _news.RootElement;
+        WatchUpdated.Text = root.TryGetProperty("updated", out var up)
+            ? "更新于 " + up.GetString() : "";
+
+        var any = false;
+        if (root.TryGetProperty("groups", out var groups))
+            foreach (var group in groups.EnumerateArray())
+            {
+                var rows = new List<JsonElement>();
+                foreach (var item in group.GetProperty("items").EnumerateArray())
+                {
+                    var tone = item.TryGetProperty("tone", out var t) ? t.GetString() : "";
+                    var kind = item.TryGetProperty("kind", out var k) ? k.GetString() : "";
+                    var keep = filter switch
+                    {
+                        "利多" => tone == "利多",
+                        "利空" => tone == "利空",
+                        "公告与业绩" => kind is "公告" or "业绩",
+                        _ => true,
+                    };
+                    if (keep) rows.Add(item);
+                }
+                if (rows.Count == 0) continue;
+
+                any = true;
+                var header = new TextBlock
+                {
+                    Text = $"{group.GetProperty("name").GetString()}（{rows.Count}）",
+                    FontSize = 13,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = Text,
+                    Margin = new Thickness(0, 8, 0, 4),
+                };
+                WatchBody.Children.Add(header);
+
+                foreach (var item in rows.Take(20))
+                    WatchBody.Children.Add(NewsRow(item));
+            }
+
+        if (!any)
+        {
+            WatchHint.Text = filter == "全部"
+                ? "暂无与你的分组相关的动态（服务端每小时轮询一批，新增会推送提醒）。"
+                : $"没有「{filter}」条目，切回「全部」查看。";
+            WatchHint.Visibility = Visibility.Visible;
+        }
+    }
+
+    private UIElement NewsRow(JsonElement item)
+    {
+        string Get(string prop) =>
+            item.TryGetProperty(prop, out var v) ? v.GetString() ?? "" : "";
+
+        var tone = Get("tone");
+        var kind = Get("kind");
+        var toneBrush = tone == "利多" ? Up : tone == "利空" ? Down : Faint;
+
+        var row = new TextBlock
+        {
+            FontSize = 12,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(6, 1, 0, 1),
+        };
+        var when = Get("time");
+        row.Inlines.Add(new Run((when.Length > 5 ? when[5..] : when).PadRight(12))
+            { Foreground = Faint, FontFamily = new FontFamily("Consolas") });
+        row.Inlines.Add(new Run($"[{tone}] ") { Foreground = toneBrush });
+        row.Inlines.Add(new Run($"[{kind}] ") { Foreground = kind == "业绩" ? Warn : Muted });
+        var who = Get("name");
+        if (who.Length > 0)
+            row.Inlines.Add(new Run(who + "：") { Foreground = Muted });
+
+        var link = new Hyperlink(new Run(Get("title")))
+        {
+            Foreground = Text,
+            TextDecorations = null,
+        };
+        var url = Get("url");
+        if (url.StartsWith("http"))
+            link.Click += (_, _) =>
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                }
+                catch
+                {
+                    // A broken registry handler must not crash the app.
+                }
+            };
+        row.Inlines.Add(link);
+        row.ToolTip = Get("title");
+        return row;
+    }
 
     /// <summary>One entry in the date picker: the raw key, and what's shown.</summary>
     private sealed record DayOption(string Key, string Label);

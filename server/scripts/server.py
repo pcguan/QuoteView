@@ -707,12 +707,194 @@ def enrich_summaries(day, codes):
     log(f"enrich {day}: summaries added to {done}/{len(todo)} snapshots")
 
 
+# ---------------------------------------------------------------- 资讯
+# Per-account watch feed: the union of every account's A-share contracts is the
+# fetch universe; each account's own GROUPS are its "关注板块" — /news assembles
+# the pool back along that structure, so no external industry mapping is needed.
+# Tone (利多/利空) is keyword-scored — deterministic and honest about being a
+# heuristic; the deep analysis stays in the daily brief.
+
+NEWS_POOL_PATH = os.path.join(DATA, "news-pool.json")
+NEWS_TTL_S = 3600          # refresh each code at most hourly
+NEWS_BATCH = 30            # codes per scheduler pass, spreads the load
+NEWS_RETAIN_S = 7 * 86400
+_news_lock = threading.Lock()
+
+TONE_GOOD = ("预增", "增持", "回购", "中标", "斩获", "突破", "增长", "上调", "扭亏",
+             "分红", "新高", "合作", "签署", "订单", "涨价", "超预期", "获批", "专利",
+             "扩产", "创新高", "大涨", "净利增", "业绩增")
+TONE_BAD = ("预减", "减持", "下调", "亏损", "立案", "调查", "诉讼", "处罚", "警示",
+            "解禁", "质押", "退市", "下滑", "违规", "终止", "减产", "召回", "缺陷",
+            "大跌", "净利降", "业绩降", "商誉减值")
+
+
+def news_tone(text):
+    good = sum(1 for w in TONE_GOOD if w in text)
+    bad = sum(1 for w in TONE_BAD if w in text)
+    return "利多" if good > bad else "利空" if bad > good else "中性"
+
+
+def load_news_pool():
+    try:
+        with open(NEWS_POOL_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_news_pool(pool):
+    tmp = NEWS_POOL_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(pool, f, ensure_ascii=False)
+    os.replace(tmp, NEWS_POOL_PATH)
+
+
+def news_universe():
+    """code -> secid for every A-share contract in ANY account's groups."""
+    out = {}
+    if not os.path.isdir(ACCOUNTS):
+        return out
+    for name in os.listdir(ACCOUNTS):
+        if not name.endswith(".json"):
+            continue
+        doc = load_account(name[:-5])
+        for g in (doc or {}).get("groups") or []:
+            for code in g.get("codes") or []:
+                code = str(code).upper()
+                if code.startswith("SH"):
+                    out[code] = "1." + code[2:]
+                elif code.startswith(("SZ", "BJ")):
+                    out[code] = "0." + code[2:]
+    return out
+
+
+def _fetch_json(url):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer)"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def fetch_announcements(code):
+    """EastMoney per-stock announcements; 业绩类 recognised from the column."""
+    code6 = code[2:]
+    doc = _fetch_json(
+        "https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=8"
+        f"&page_index=1&ann_type=A&client_source=web&stock_list={code6}")
+    items = []
+    for a in (doc.get("data") or {}).get("list") or []:
+        title = str(a.get("title") or "")[:160]
+        if not title:
+            continue
+        columns = " ".join(c.get("column_name") or "" for c in a.get("columns") or [])
+        kind = "业绩" if any(w in columns + title
+                             for w in ("业绩", "年度报告", "季度报告", "半年度报告",
+                                       "利润分配", "业绩预告", "业绩快报")) else "公告"
+        name = ""
+        for c in a.get("codes") or []:
+            if c.get("stock_code") == code6:
+                name = c.get("short_name") or ""
+        when = str(a.get("notice_date") or "")[:10]
+        items.append({
+            "id": "ann-" + str(a.get("art_code") or title)[:40],
+            "code": code, "name": name, "time": when + " 00:00",
+            "title": title, "kind": kind, "tone": news_tone(title),
+            "url": f"https://data.eastmoney.com/notices/detail/{code6}/"
+                   f"{a.get('art_code')}.html",
+        })
+    return items
+
+
+def fetch_stock_news(code, secid):
+    doc = _fetch_json(
+        "https://np-listapi.eastmoney.com/comm/wap/getListInfo?client=wap&type=1"
+        f"&mTypeAndCode={secid}&pageSize=8&pageIndex=1")
+    items = []
+    for a in (doc.get("data") or {}).get("list") or []:
+        title = str(a.get("Art_Title") or "")[:160]
+        if not title:
+            continue
+        items.append({
+            "id": "news-" + str(a.get("Art_Code") or title)[:40],
+            "code": code, "name": "", "time": str(a.get("Art_ShowTime") or "")[:16],
+            "title": title, "kind": "新闻", "tone": news_tone(title),
+            "url": str(a.get("Art_Url") or ""),
+        })
+    return items
+
+
+def ws_broadcast(obj):
+    payload = json.dumps(obj, ensure_ascii=False).encode()
+    with _ws_lock:
+        conns = list(WS_CONNS.values())
+    for conn in conns:
+        try:
+            sock = conn.get("sock")
+            if sock is not None:
+                ws_send(sock, 1, payload)
+        except Exception:
+            pass   # a dying connection cleans itself up
+
+
+def news_sweep_tick():
+    """One throttled batch over stale codes; runs from the scheduler loop."""
+    now = datetime.now(CN)
+    if not 8 <= now.hour <= 23:
+        return
+
+    universe = news_universe()
+    if not universe:
+        return
+
+    with _news_lock:
+        pool = load_news_pool()
+    ts = time.time()
+    stale = [c for c in sorted(universe)
+             if ts - (pool.get(c) or {}).get("fetched", 0) > NEWS_TTL_S][:NEWS_BATCH]
+    if not stale:
+        return
+
+    added = 0
+    for code in stale:
+        items = []
+        for fetch in (lambda: fetch_announcements(code),
+                      lambda: fetch_stock_news(code, universe[code])):
+            try:
+                items.extend(fetch())
+            except Exception:
+                pass   # per-source failure: keep what the other source gave
+            time.sleep(FETCH_GAP_S)
+
+        entry = pool.get(code) or {"items": []}
+        known = {i["id"] for i in entry["items"]}
+        fresh = [i for i in items if i["id"] not in known]
+        added += len(fresh)
+        merged = fresh + entry["items"]
+        cutoff = f"{datetime.now(CN) - timedelta(seconds=NEWS_RETAIN_S):%F %H:%M}"
+        merged = [i for i in merged if (i.get("time") or "") >= cutoff][:40]
+        pool[code] = {"fetched": ts, "items": merged}
+
+    # Contracts nobody watches any more age out of the pool with them.
+    for code in [c for c in pool if c not in universe]:
+        del pool[code]
+
+    with _news_lock:
+        save_news_pool(pool)
+    if added:
+        log(f"news sweep: {len(stale)} codes, +{added} items")
+        ws_broadcast({"news": added})
+
+
 def scheduler():
     while True:
         try:
             sweep_once()
         except Exception as e:  # noqa: BLE001 - the loop must survive anything
             log(f"sweep error: {e}")
+        try:
+            news_sweep_tick()
+        except Exception as e:  # noqa: BLE001
+            log(f"news sweep error: {e}")
         # Wake AT the archive minute: a flat 300s cadence could push the first
         # after-close pass to ~15:06, defeating the 15:01 promise.
         now = datetime.now(CN)
@@ -1428,6 +1610,24 @@ class Handler(BaseHTTPRequestHandler):
 
         if url.path == "/ws":
             return self._ws()
+
+        if url.path == "/news":
+            authed = self._auth()
+            if authed is None:
+                return
+            _, doc, _ = authed
+            with _news_lock:
+                pool = load_news_pool()
+            groups_out = []
+            for g in doc.get("groups") or []:
+                rows = []
+                for code in g.get("codes") or []:
+                    rows.extend((pool.get(str(code).upper()) or {}).get("items") or [])
+                rows.sort(key=lambda i: i.get("time") or "", reverse=True)
+                if rows:
+                    groups_out.append({"name": g.get("name") or "", "items": rows[:40]})
+            return self._json({"groups": groups_out,
+                               "updated": f"{datetime.now(CN):%F %T}"})
 
         if url.path == "/dates":
             if self._auth() is None:

@@ -53,7 +53,42 @@
     </Border>
 
     <ScrollViewer x:Name="Body" Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel x:Name="Sections" />
+      <StackPanel>
+        <!-- 关注动态: the account's OWN groups are its watch sectors — the
+             server aggregates announcements/earnings/news for exactly those
+             contracts, keyword-scored 利多/利空, refreshed hourly and pushed
+             over the presence channel. -->
+        <Border x:Name="WatchCard" Style="{StaticResource Card}" Margin="0,0,0,8"
+                Visibility="Collapsed">
+          <StackPanel>
+            <Grid Margin="0,0,0,6">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="关注动态" FontSize="15" FontWeight="SemiBold"
+                           Foreground="{StaticResource TitleGradient}" VerticalAlignment="Center" />
+                <TextBlock x:Name="WatchUpdated" FontSize="11" Margin="10,0,0,0"
+                           Foreground="{StaticResource Faint}" VerticalAlignment="Center" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ComboBox x:Name="WatchFilter" Width="110" Height="28" FontSize="12"
+                          SelectionChanged="WatchFilter_Changed">
+                  <ComboBoxItem Content="全部" IsSelected="True" />
+                  <ComboBoxItem Content="利多" />
+                  <ComboBoxItem Content="利空" />
+                  <ComboBoxItem Content="公告与业绩" />
+                </ComboBox>
+                <ui:Button Height="28" Width="32" Padding="0" Margin="8,0,0,0"
+                           Icon="{ui:SymbolIcon ArrowSync24}" Click="WatchRefresh_Click"
+                           ToolTip="立即刷新关注动态" />
+              </StackPanel>
+            </Grid>
+            <TextBlock x:Name="WatchHint" FontSize="11" Foreground="{StaticResource Faint}"
+                       TextWrapping="Wrap" Visibility="Collapsed" />
+            <StackPanel x:Name="WatchBody" />
+          </StackPanel>
+        </Border>
+
+        <StackPanel x:Name="Sections" />
+      </StackPanel>
     </ScrollViewer>
   </Grid>
 </UserControl>

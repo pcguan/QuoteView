@@ -41,6 +41,9 @@ public sealed class PresenceChannel : IAsyncDisposable
         };
     }
 
+    /// <summary>Raised when the server pushes a fresh-news notification.</summary>
+    public event Action? NewsPushed;
+
     public void Start() => _loop ??= RunAsync();
 
     private async Task RunAsync()
@@ -79,7 +82,13 @@ public sealed class PresenceChannel : IAsyncDisposable
                 {
                     var r = await ws.ReceiveAsync(buffer, linked.Token);
                     if (r.MessageType == WebSocketMessageType.Close) break;
-                    // Future server->client push lands here.
+
+                    // Server push. Today's only message: {"news": n} after a
+                    // sweep found fresh items for somebody's watched contracts.
+                    if (r.MessageType == WebSocketMessageType.Text && r.Count > 0
+                        && System.Text.Encoding.UTF8.GetString(buffer, 0, r.Count)
+                            .Contains("\"news\""))
+                        NewsPushed?.Invoke();
                 }
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested)

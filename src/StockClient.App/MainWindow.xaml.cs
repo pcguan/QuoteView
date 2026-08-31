@@ -162,6 +162,8 @@ public partial class MainWindow : FluentWindow
             if (_pullSettingsFailed) ScheduleSettingsPush();
 
             History.Init(_quotes, _trendCache, _vm.Repository, _session);
+            Brief.InitNews(_session);
+            _presence.NewsPushed += () => Dispatcher.InvokeAsync(Brief.NudgeNews);
             UpdateAccountButton();
             UpdateGates();
 

@@ -298,6 +298,10 @@ public sealed class AccountSession
         CallAsync(t => _client.DatesAsync(t, code, CancellationToken.None).ContinueWith(
             x => (x.Result.Dates, x.Result.Unauthorized)), (IReadOnlyList<DateOnly>)Array.Empty<DateOnly>());
 
+    /// <summary>The personalized watch feed for this account, or null.</summary>
+    public Task<string?> NewsJsonAsync() =>
+        CallAsync(t => _client.NewsAsync(t, CancellationToken.None), (string?)null);
+
     public Task<string?> GetSettingsAsync() =>
         CallAsync(t => _client.GetSettingsAsync(t, CancellationToken.None).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);

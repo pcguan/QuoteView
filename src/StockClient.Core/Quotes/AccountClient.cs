@@ -158,6 +158,25 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>The account's personalized watch feed (raw JSON), or null.</summary>
+    public async Task<(string? Json, bool Unauthorized)> NewsAsync(string token, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{Base}/news");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+            return (await response.Content.ReadAsStringAsync(ct), false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
     /// <summary>The account's stored settings JSON (the inner object), or null.</summary>
     public async Task<(string? Json, bool Unauthorized)> GetSettingsAsync(string token, CancellationToken ct)
     {
