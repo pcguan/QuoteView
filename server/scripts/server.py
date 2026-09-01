@@ -44,7 +44,9 @@ PORT = int(os.environ.get("QV_PORT", "8388"))
 # console is also reachable LAN-direct (http://<nas-ip>:8388/web/) when the
 # internet link — and with it the public domain — is down.
 BIND = os.environ.get("QV_BIND", "127.0.0.1")
-RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "7"))
+# 0 (the default) = keep the trend archive FOREVER. A year of the full
+# universe measures under 2GB — not worth ever losing a comparison day over.
+RETAIN_DAYS = int(os.environ.get("QV_RETAIN_DAYS", "0"))
 FETCH_GAP_S = float(os.environ.get("QV_FETCH_GAP", "1.5"))
 
 # ---- 配置修改 audit-log differ -------------------------------------------
@@ -375,6 +377,8 @@ def trend_dates(code):
 
 
 def prune(code):
+    if RETAIN_DAYS <= 0:
+        return
     for day in trend_dates(code)[RETAIN_DAYS:]:
         try:
             os.remove(trend_path(code, day))
@@ -2558,7 +2562,8 @@ def main():
     threading.Thread(target=news_scheduler, daemon=True).start()
 
     server = ThreadingHTTPServer((BIND, PORT), Handler)
-    log(f"listening on {BIND}:{PORT}, data={DATA}, retain={RETAIN_DAYS}d")
+    log(f"listening on {BIND}:{PORT}, data={DATA}, "
+        f"retain={'forever' if RETAIN_DAYS <= 0 else f'{RETAIN_DAYS}d'}")
     server.serve_forever()
 
 
