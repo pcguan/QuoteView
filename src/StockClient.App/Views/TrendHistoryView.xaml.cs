@@ -120,6 +120,15 @@ public partial class TrendHistoryView : UserControl
         DateBox.SelectedIndex = restored >= 0 ? restored : 0;
 
         RefreshCompareItems();
+
+        // The reload must NOT hinge on DateBox's SelectionChanged: A-share
+        // contracts share archive dates, so swapping to another contract's
+        // list often carries the old selection over untouched (WPF matches
+        // the equal DateOnly) — no event, and the chart stayed on the OLD
+        // contract. Reconcile explicitly against what is actually rendered.
+        if (DateBox.SelectedItem is DateOnly picked
+            && (item.Code != _pendingCode || picked != _pendingMain))
+            _ = LoadSelectedAsync();
     }
 
     private bool _refreshingCompare;
@@ -164,6 +173,15 @@ public partial class TrendHistoryView : UserControl
     // any mismatch (failure reset it to null) reloads, and a plain
     // open-and-close stays a no-op.
     private DateOnly? _pendingMain, _pendingCompare;
+    private string? _pendingCode;
+
+    private void CodeBox_DropDownClosed(object? sender, EventArgs e)
+    {
+        // Re-picking the SAME contract raises no SelectionChanged; after a
+        // failed load (_pendingCode nulled) that made retrying impossible.
+        if (CodeBox.SelectedItem is CodeItem c && c.Code != _pendingCode)
+            _ = FillDatesAsync(keepSelection: true);
+    }
 
     private void DateBox_DropDownClosed(object? sender, EventArgs e)
     {
@@ -187,6 +205,7 @@ public partial class TrendHistoryView : UserControl
 
         var request = ++_loadRequest;
         var compareDate = CompareBox.SelectedItem as DateOnly?;
+        _pendingCode = item.Code;
         _pendingMain = date;
         _pendingCompare = compareDate;
 
@@ -196,6 +215,7 @@ public partial class TrendHistoryView : UserControl
         if (series is null)
         {
             // Null the pending marks so re-picking the very same dates retries.
+            _pendingCode = null;
             _pendingMain = null;
             _pendingCompare = null;
             ShowEmpty(_session.IsSignedIn ? "该日快照获取失败(服务端不可达或缺失)" : "本地无此日快照；登录后可从服务端获取");

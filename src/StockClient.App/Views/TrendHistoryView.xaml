@@ -19,6 +19,7 @@
         <TextBlock Text="合约" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
                    Margin="18,0,8,0" />
         <ComboBox x:Name="CodeBox" Width="230"
+                  DropDownClosed="CodeBox_DropDownClosed"
                   SelectionChanged="CodeBox_SelectionChanged" />
 
         <TextBlock Text="日期" Foreground="{StaticResource Muted}" VerticalAlignment="Center"
