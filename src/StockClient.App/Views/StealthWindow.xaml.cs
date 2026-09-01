@@ -799,7 +799,20 @@ public partial class StealthWindow : Window
         _ => 0,
     };
 
-    private static string Value(StealthField field, QuoteRow r) => field switch
+    private static string Value(StealthField field, QuoteRow r)
+    {
+        var text = RawValue(field, r);
+
+        // A picked field must HOLD its column. An all-empty column has no
+        // width, so a field whose data hasn't arrived (or that this market
+        // never reports) read as "the field disappeared" — until the next
+        // settings change happened to rebuild the grid after the data landed.
+        // "-" keeps every configured column visible; GroupName stays empty by
+        // design (it is drawn once beside the block, not per row).
+        return text.Length == 0 && field != StealthField.GroupName ? "-" : text;
+    }
+
+    private static string RawValue(StealthField field, QuoteRow r) => field switch
     {
         // Not a per-row field: it is drawn once beside the whole block. Returning
         // empty keeps the grid from repeating the group name on every line.
@@ -824,16 +837,13 @@ public partial class StealthWindow : Window
         StealthField.AvgPrice => r.AvgPrice is { } a ? Price(a) : "",
         StealthField.PeTtm => Plain(r.PeTtm),
         StealthField.Pb => Plain(r.Pb),
-        // "-" rather than empty while the baseline chain is rebuilding (or KR,
-        // which never has one): an all-empty column has no width, and a picked
-        // field that silently vanishes reads as lost configuration.
-        StealthField.PrevDay => r.PrevDayPercent is { } pd ? SignedPct(pd) : "-",
-        StealthField.Return3 => r.Return3 is { } r3 ? SignedPct(r3) : "-",
-        StealthField.Return5 => r.Return5 is { } r5 ? SignedPct(r5) : "-",
-        StealthField.Return10 => r.Return10 is { } r10 ? SignedPct(r10) : "-",
-        StealthField.Return20 => r.Return20 is { } r20 ? SignedPct(r20) : "-",
-        StealthField.Return60 => r.Return60 is { } r60 ? SignedPct(r60) : "-",
-        StealthField.ReturnYtd => r.ReturnYtd is { } ry ? SignedPct(ry) : "-",
+        StealthField.PrevDay => SignedPct(r.PrevDayPercent),
+        StealthField.Return3 => SignedPct(r.Return3),
+        StealthField.Return5 => SignedPct(r.Return5),
+        StealthField.Return10 => SignedPct(r.Return10),
+        StealthField.Return20 => SignedPct(r.Return20),
+        StealthField.Return60 => SignedPct(r.Return60),
+        StealthField.ReturnYtd => SignedPct(r.ReturnYtd),
         StealthField.Speed => SignedPct(r.Speed),
         StealthField.MainInflow => Scale(r.MainInflow),
         StealthField.MainInflowPct => SignedPct(r.MainInflowPct),
