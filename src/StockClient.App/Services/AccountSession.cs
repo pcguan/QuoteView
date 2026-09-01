@@ -334,12 +334,13 @@ public sealed class AccountSession
         CallAsync(t => _client.ReportErrorAsync(t, kind, detail, CancellationToken.None).ContinueWith(
             x => (x.Result.Ok, x.Result.Unauthorized)), false);
 
-    public Task<string?> KrDailyJsonAsync(string code) =>
-        CallAsync(t => _client.KrDailyJsonAsync(t, code, CancellationToken.None).ContinueWith(
+    public Task<string?> KrDailyJsonAsync(string code, CancellationToken ct = default) =>
+        CallAsync(t => _client.KrDailyJsonAsync(t, code, ct).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);
 
-    public Task<string?> KlineJsonAsync(string secid, int klt, int fqt, int lmt) =>
-        CallAsync(t => _client.KlineJsonAsync(t, secid, klt, fqt, lmt, CancellationToken.None).ContinueWith(
+    public Task<string?> KlineJsonAsync(string secid, int klt, int fqt, int lmt,
+        CancellationToken ct = default) =>
+        CallAsync(t => _client.KlineJsonAsync(t, secid, klt, fqt, lmt, ct).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);
 
     public Task<TrendSeries?> TrendAsync(string code, DateOnly date) =>

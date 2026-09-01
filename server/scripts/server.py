@@ -23,6 +23,7 @@ Stdlib only — the container just needs python3.
 
 import base64
 import hashlib
+import ipaddress
 import json
 from collections import Counter
 import os
@@ -217,6 +218,14 @@ CLIENT_TTL_DAYS = 14
 
 CN = timezone(timedelta(hours=8))  # no DST in China
 CODE_RE = re.compile(r"^(SH|SZ)\d{6}$")
+
+
+def _valid_ip(text):
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
 KR_CODE_RE = re.compile(r"^KR\d{6}$")
 USER_RE = re.compile(r"^[A-Za-z0-9_]{3,32}$")
 TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -266,6 +275,66 @@ def hash_pw(password, salt):
 
 def account_path(user):
     return os.path.join(ACCOUNTS, user + ".json")
+
+
+# ---------------------------------------------------------- login throttling
+# 键是【账户 + 来源 IP】。只按账户会把限速本身变成一把武器：任何知道用户名的
+# 人每分钟发一次错误口令，就能把真正的用户（含管理员和管理台）永久锁在门外。
+# 按 (账户, IP) 记账后，攻击者锁住的只是自己那条来源。
+#
+# 判定与计数在同一把锁里完成（先扣额度、再校验口令）：check-then-act 会被并发
+# 整批穿透——200 条连接可以同时读到"计数 0"，把 15 分钟 10 次的预算一次用成
+# 200 次。
+#
+# 残余风险：分布式换 IP 的爆破不受本机制约束，那由 8 位口令下限和前置 CDN 兜。
+_login_fails = {}          # (user, ip) -> [连续失败次数, 解禁时刻, 最后一次时刻]
+_login_fail_lock = threading.Lock()
+LOGIN_FAIL_SOFT = 5        # 起，每次失败换来指数级增长的等待
+LOGIN_FAIL_HARD = 10       # 起，固定锁 15 分钟
+LOGIN_FAIL_RESET_S = 1800  # 这么久没再失败即清零，避免"攒了几周"式误锁
+LOGIN_FAIL_KEYS = 512      # 内存上限：来源 IP 可变，不能让它无限增长
+
+
+PASSWORD_RULE = "密码至少 8 位，且不能是纯数字或常见弱口令"
+_WEAK = {"password", "12345678", "123456789", "1234567890", "qwertyui",
+         "abcd1234", "admin123", "88888888", "11111111", "iloveyou"}
+
+
+def strong_enough(password):
+    return (len(password) >= 8 and not password.isdigit()
+            and password.lower() not in _WEAK)
+
+
+def login_attempt(user, ip):
+    """预扣一次尝试额度；返回还需等待的秒数，0 = 放行去校验口令。"""
+    key = (user, ip)
+    now = time.time()
+    with _login_fail_lock:
+        entry = _login_fails.get(key)
+        if entry and now - entry[2] > LOGIN_FAIL_RESET_S:
+            entry = None
+        if entry and entry[1] > now:
+            # 锁定期内不再累加，否则持续敲门就能无限续期
+            return int(entry[1] - now) + 1
+
+        n = (entry[0] if entry else 0) + 1
+        until = 0.0
+        if n >= LOGIN_FAIL_HARD:
+            until = now + 900
+        elif n >= LOGIN_FAIL_SOFT:
+            until = now + min(300, 2 ** (n - LOGIN_FAIL_SOFT + 1))
+        _login_fails[key] = [n, until, now]
+
+        if len(_login_fails) > LOGIN_FAIL_KEYS:
+            oldest = sorted(_login_fails, key=lambda k: _login_fails[k][2])
+            for k in oldest[:LOGIN_FAIL_KEYS // 4]:
+                _login_fails.pop(k, None)
+        return 0
+
+
+def login_ok(user, ip):
+    with _login_fail_lock:
+        _login_fails.pop((user, ip), None)
 
 
 def load_account(user):
@@ -781,6 +850,12 @@ def kr_sweep_tick():
     log(f"kr sweep: archived {added}/{len(codes)} closes")
 
 
+# 上证指数永不停牌，用它判"今天到底开没开市"。此前是拿抓取列表里第一只返回旧日期的
+# 合约下结论——一只停牌股、或源端一次串日，就把整个交易日标成节假日、放弃全部归档，
+# 数据永久丢失（违反"服务端数据永远保留"铁律）。
+HOLIDAY_PROBE = "SH000001"
+
+
 def sweep_once():
     """One throttled pass over whatever is missing for today. Returns idle time hint."""
     now = datetime.now(CN)
@@ -791,8 +866,7 @@ def sweep_once():
         return
     day = f"{now:%F}"
 
-    state = load_state()
-    if state.get("holiday") == day:
+    if load_state().get("holiday") == day:
         return
 
     all_codes = union_codes()
@@ -801,28 +875,24 @@ def sweep_once():
         enrich_summaries(day, all_codes)
         return
 
+    # 节假日判定只认指数探针的会话日期。探针拿不到就照常抓——宁可多抓一轮，
+    # 也不能因为一次网络抖动把当天判成休市。
+    probe, probe_day = fetch_trend(HOLIDAY_PROBE)
+    if probe is not None and probe_day != day:
+        with _lock:
+            st = load_state()
+            st["holiday"] = day
+            save_state(st)
+        log(f"sweep {day}: index probe reports {probe_day} -> holiday, aborting")
+        return
+    if probe is None:
+        log(f"sweep {day}: holiday probe unreachable, sweeping anyway")
+
     log(f"sweep {day}: {len(missing)} contracts to fetch")
-    done = failed = streak = 0
+    done = failed = stale = streak = 0
     for code in missing:
         series, data_day = fetch_trend(code)
-        if series is None:
-            failed += 1
-            streak += 1
-            # Both sources down N times in a row = we're being throttled.
-            # Continuing just feeds the throttle; the next 5-minute tick
-            # resumes from wherever this stopped (file existence = done).
-            if streak >= 5:
-                log(f"sweep {day}: {streak} consecutive failures, backing off "
-                    f"(done={done} failed={failed})")
-                return
-        elif data_day != day:
-            # A weekday whose data belongs to an older session: holiday. One
-            # probe settles it for the whole list.
-            state["holiday"] = day
-            save_state(state)
-            log(f"sweep {day}: stale data ({data_day}) -> holiday, aborting")
-            return
-        else:
+        if series is not None and data_day == day:
             streak = 0
             os.makedirs(trend_dir(code), exist_ok=True)
             tmp = trend_path(code, day) + ".tmp"
@@ -831,12 +901,30 @@ def sweep_once():
             os.replace(tmp, trend_path(code, day))
             prune(code)
             done += 1
+        else:
+            # 单只合约的旧日期只是这一只的问题（停牌/源端串日），不再是对
+            # 整个交易日的判决——它和抓取失败一样，等下一轮重试。
+            failed += 1
+            if series is not None:
+                stale += 1
+            streak += 1
+            # Both sources down N times in a row = we're being throttled.
+            # Continuing just feeds the throttle; the next 5-minute tick
+            # resumes from wherever this stopped (file existence = done).
+            if streak >= 5:
+                log(f"sweep {day}: {streak} consecutive failures, backing off "
+                    f"(done={done} failed={failed} stale={stale})")
+                return
         time.sleep(FETCH_GAP_S)
 
-    state["last_sweep"] = {"day": day, "done": done, "failed": failed,
-                           "at": f"{datetime.now(CN):%F %T}"}
-    save_state(state)
-    log(f"sweep {day}: done={done} failed={failed}")
+    # 锁内重读再改自有键：这里的 state 快照可能已是几分钟前的，整体回写会把
+    # 期间别的线程写入的 websessions/kr_day 一并抹掉（丢更新）。
+    with _lock:
+        st = load_state()
+        st["last_sweep"] = {"day": day, "done": done, "failed": failed, "stale": stale,
+                            "at": f"{datetime.now(CN):%F %T}"}
+        save_state(st)
+    log(f"sweep {day}: done={done} failed={failed} stale={stale}")
     enrich_summaries(day, all_codes)
 
 
@@ -1358,7 +1446,7 @@ tr.err:hover td{background:#331722}
     <div class=card>
       <h2>新增账户</h2>
       <input id=nu placeholder="用户名（3~32 位字母/数字/下划线）" style="width:240px">
-      <input id=np placeholder="初始密码（≥6 位）" type=password style="width:200px">
+      <input id=np placeholder="初始密码（≥8 位，非纯数字）" type=password style="width:200px">
       <button class=op onclick="createAccount()">创建</button>
       <span class=dim>　新账户默认为普通用户；角色由系统管理员在列表中调整</span>
     </div>
@@ -1493,22 +1581,22 @@ async function loadAccounts(){
     const canAct = ME.role === 'sysadmin' ? a.role !== 'sysadmin' : a.role === 'user';
     const canPw = a.role !== 'sysadmin' && (ME.role === 'sysadmin' || a.role === 'user');
     const roleCell = ME.role === 'sysadmin' && a.role !== 'sysadmin'
-      ? `<select onchange="act('role',{username:'${a.username}',role:this.value})">
+      ? `<select onchange="act('role',{username:'${esc(a.username)}',role:this.value})">
            <option value=user ${a.role==='user'?'selected':''}>普通用户</option>
            <option value=admin ${a.role==='admin'?'selected':''}>管理员</option></select>`
-      : `<span class="tag t-role">${ROLE[a.role]||a.role}</span>`;
+      : `<span class="tag t-role">${esc(ROLE[a.role]||a.role)}</span>`;
     return `<tr>
-      <td><b>${a.username}</b></td>
+      <td><b>${esc(a.username)}</b></td>
       <td>${roleCell}</td>
       <td>${a.disabled ? '<span class="tag t-bad">已禁用</span>' : '<span class="tag t-on">正常</span>'}</td>
       <td class=mut>${a.groups} 组 / ${a.contracts} 合约</td>
       <td class=mut>${a.has_settings ? '已同步' : '<span class=dim>无</span>'}</td>
       <td class=mut>${a.online > 0 ? `<span class="tag t-on">${a.online} 在线</span>` : '<span class=dim>—</span>'}</td>
       <td>
-        ${canPw ? `<button class=op onclick="passwd('${a.username}')">改密码</button>` : ''}
-        ${canAct ? `<button class=op onclick="act('logout',{username:'${a.username}'})">登出</button>
-        <button class=op onclick="act('disable',{username:'${a.username}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
-        <button class="op danger" onclick="del('${a.username}')">删除</button>` : ''}
+        ${canPw ? `<button class=op onclick="passwd('${esc(a.username)}')">改密码</button>` : ''}
+        ${canAct ? `<button class=op onclick="act('logout',{username:'${esc(a.username)}'})">登出</button>
+        <button class=op onclick="act('disable',{username:'${esc(a.username)}',disabled:${!a.disabled}})">${a.disabled?'启用':'禁用'}</button>
+        <button class="op danger" onclick="del('${esc(a.username)}')">删除</button>` : ''}
         ${!canAct && !canPw ? '<span class=dim>无权限</span>' : ''}
       </td></tr>`;
   }).join('');
@@ -1526,15 +1614,15 @@ async function loadSessions(){
         : '<span class="tag t-off">离线</span>';
     const rows = a.online.map(t => `<tr>
       <td>${t.active ? '<span class="tag t-on">活跃</span>' : '<span class="tag t-off">挂起</span>'}</td>
-      <td class=mono>${t.ip}</td><td class=mono>${t.ver}</td>
-      <td class=mono>${t.created}</td><td class=mono>${t.seen}</td>
-      <td class=mono>${t.duration||'-'}</td></tr>`).join('');
+      <td class=mono>${esc(t.ip)}</td><td class=mono>${esc(t.ver)}</td>
+      <td class=mono>${esc(t.created)}</td><td class=mono>${esc(t.seen)}</td>
+      <td class=mono>${esc(t.duration||'-')}</td></tr>`).join('');
     const table = a.online.length
       ? `<table><tr><th>状态</th><th>IP</th><th>客户端版本</th><th>登录时间</th><th>最近活动</th><th>登录时长</th></tr>${rows}</table>`
       : '<div class=dim style="padding:4px 12px">无在线会话</div>';
     return `<div style="margin-bottom:14px">
-      <div style="margin-bottom:4px"><b>${a.username}</b>
-        <span class="tag t-role">${ROLE[a.role]||a.role}</span> ${state}</div>${table}</div>`;
+      <div style="margin-bottom:4px"><b>${esc(a.username)}</b>
+        <span class="tag t-role">${esc(ROLE[a.role]||a.role)}</span> ${state}</div>${table}</div>`;
   }).join('');
   $('sess-list').innerHTML = blocks || '<div class=dim>无账户</div>';
 }
@@ -1546,6 +1634,13 @@ async function spinReload(btnId, loader){
 // Fixed rows + pagination for every log list: page size from a dropdown,
 // prev/next, page resets when the filter changes. The lists used to render
 // everything and just grow.
+// 一处兜住全部用户可控插值。分组名、备注、异常详情等都出自客户端，直插
+// innerHTML 曾让任意注册用户能把脚本存进管理员的页面（存储型 XSS）。
+function esc(v){
+  return String(v == null ? '' : v).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50}, fault: {page:0, size:20} };
 
 function pager(key, total){
@@ -1579,11 +1674,11 @@ function renderFaults(){
   if (!LOGS) return;
   const all = LOGS.faults || [];
   const rows = pageSlice('fault', all).map(l => `<tr class=err>
-      <td class=mono>${l.at}</td><td><b>${l.user}</b></td>
-      <td><span class="tag t-bad">${l.kind}</span></td>
+      <td class=mono>${esc(l.at)}</td><td><b>${esc(l.user)}</b></td>
+      <td><span class="tag t-bad">${esc(l.kind)}</span></td>
       <td style="max-width:640px;word-break:break-all;font-size:11px" class=mono>${
-        (l.detail||'').replace(/</g,'&lt;')}</td>
-      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+        esc(l.detail)}</td>
+      <td class=mono>${esc(l.ip||'-')}</td><td class=mono>${esc(l.ver||'-')}</td></tr>`).join('');
   $('fault-list').innerHTML = all.length
     ? `<table><tr><th>时间</th><th>用户</th><th>类型</th><th>异常详情</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
       + pager('fault', all.length)
@@ -1606,16 +1701,17 @@ async function loadLogs(){
   $('login-stats').innerHTML = `<table><tr><th>用户</th><th>登录次数</th>
     <th>独立 IP（去重）</th><th>最近登录</th></tr>` +
     Object.entries(stats).sort((a,b) => b[1].n - a[1].n).map(([u,st]) =>
-      `<tr><td><b>${u}</b></td><td>${st.n}</td>
-       <td>${st.ips.size}<div class="dim mono" style="font-size:11px">${[...st.ips].join('<br>')}</div></td>
-       <td class=mono>${st.last}</td></tr>`).join('') + '</table>';
+      `<tr><td><b>${esc(u)}</b></td><td>${st.n}</td>
+       <td>${st.ips.size}<div class="dim mono" style="font-size:11px">${
+         [...st.ips].map(esc).join('<br>')}</div></td>
+       <td class=mono>${esc(st.last)}</td></tr>`).join('') + '</table>';
 }
 function renderPw(){
   if (!LOGS) return;
   const all = LOGS.passwords || [];
   const rows = pageSlice('pw', all).map(l =>
-    `<tr><td><b>${l.user}</b></td><td class=mono>${l.at}</td>
-     <td class=mono>${l.ip||'-'}</td><td>${l.by==='self'?'本人':l.by}</td></tr>`).join('');
+    `<tr><td><b>${esc(l.user)}</b></td><td class=mono>${esc(l.at)}</td>
+     <td class=mono>${esc(l.ip||'-')}</td><td>${l.by==='self'?'本人':esc(l.by)}</td></tr>`).join('');
   $('pw-list').innerHTML = all.length
     ? `<table><tr><th>用户</th><th>时间</th><th>IP</th><th>操作者</th></tr>${rows}</table>`
       + pager('pw', all.length)
@@ -1630,10 +1726,10 @@ function renderChanges(){
     (!f || l.user.toLowerCase().includes(f) || l.ip.includes(f) || l.at.includes(f)
         || (l.detail||'').toLowerCase().includes(f)));
   const rows = pageSlice('chg', all).map(l => `<tr>
-      <td class=mono>${l.at}</td><td><b>${l.user}</b></td>
-      <td><span class="tag t-role">${l.kind}</span></td>
-      <td style="max-width:520px;word-break:break-all">${l.detail}</td>
-      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+      <td class=mono>${esc(l.at)}</td><td><b>${esc(l.user)}</b></td>
+      <td><span class="tag t-role">${esc(l.kind)}</span></td>
+      <td style="max-width:520px;word-break:break-all">${esc(l.detail)}</td>
+      <td class=mono>${esc(l.ip||'-')}</td><td class=mono>${esc(l.ver||'-')}</td></tr>`).join('');
   $('chg-list').innerHTML = all.length
     ? `<table><tr><th>时间</th><th>用户</th><th>类型</th><th>变更内容</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
       + pager('chg', all.length)
@@ -1650,10 +1746,10 @@ function renderLogs(){
   const rows = pageSlice('login', all).map(l => {
       const level = l.level || 'info';
       return `<tr${level === 'error' ? ' class=err' : ''}>
-        <td><span class="lv lv-${level}">${level.toUpperCase()}</span></td>
-        <td><b>${l.user}</b></td><td>${l.event||'登录成功'}</td>
-        <td class=mono>${l.at}</td><td class=mono>${l.ip||'-'}</td>
-        <td class=mono>${l.ver||'-'}</td></tr>`;
+        <td><span class="lv lv-${esc(level)}">${esc(level.toUpperCase())}</span></td>
+        <td><b>${esc(l.user)}</b></td><td>${esc(l.event||'登录成功')}</td>
+        <td class=mono>${esc(l.at)}</td><td class=mono>${esc(l.ip||'-')}</td>
+        <td class=mono>${esc(l.ver||'-')}</td></tr>`;
     }).join('');
   $('login-list').innerHTML = all.length
     ? `<table><tr><th>级别</th><th>用户</th><th>事件</th><th>时间</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
@@ -1700,13 +1796,22 @@ class Handler(BaseHTTPRequestHandler):
     def _ip(self):
         # Behind EdgeOne + the nginx SNI stream layer, the socket peer and even
         # X-Real-IP are loopback; the visitor's address arrives in the CDN's
-        # X-Forwarded-For (first hop).
+        # X-Forwarded-For (first hop). Forwarding headers are only believed when
+        # the SOCKET PEER is that loopback proxy — a direct connection to
+        # 0.0.0.0:8388 can set any header it likes, and audit rows (and the
+        # admin page they render into) must not be forgeable. Every candidate
+        # is parsed as a real IP, which also closes the injection path into the
+        # console's HTML.
+        peer = self.client_address[0]
+        if peer not in ("127.0.0.1", "::1"):
+            return peer
+
         forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        real = self.headers.get("X-Real-IP") or ""
+        real = (self.headers.get("X-Real-IP") or "").strip()
         for candidate in (forwarded, real):
-            if candidate and candidate != "127.0.0.1":
+            if candidate and candidate not in ("127.0.0.1", "::1") and _valid_ip(candidate):
                 return candidate
-        return real or self.client_address[0]
+        return peer
 
     def _ver(self):
         raw = (self.headers.get("X-QV-Version") or "")[:32]
@@ -1764,6 +1869,15 @@ class Handler(BaseHTTPRequestHandler):
             body = ADMIN_PAGE.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            # 纵深防御：即使某天漏了一处转义，CSP 也不让注入的脚本跑起来。
+            # 页面自带内联 <style>/<script>，故 script/style 允许 'unsafe-inline'
+            # 但不允许任何外部源，且禁止内联事件之外的外链与对象。
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'none'; script-src 'unsafe-inline'; "
+                "style-src 'unsafe-inline'; img-src data:; connect-src 'self'; "
+                "form-action 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -2126,12 +2240,20 @@ class Handler(BaseHTTPRequestHandler):
             user = str(doc.get("username") or "")
             password = str(doc.get("password") or "")
             account = load_account(user) if USER_RE.match(user) else None
+            ip = self._ip()
+            if account is not None:
+                blocked = login_attempt(user, ip)
+                if blocked:
+                    log(f"web login throttled {user} from {ip} ({blocked}s left)")
+                    return self._bad(f"尝试过于频繁，请 {blocked} 秒后重试", 429)
             if account is None or account.get("disabled") \
                     or role_of(account) not in ("admin", "sysadmin") \
                     or not verify_password(account, password):
-                self._log_login(user, "error", "管理台登录失败") if account is not None else None
+                if account is not None:
+                    self._log_login(user, "error", "管理台登录失败")
                 return self._bad("用户名或密码错误，或无管理权限", 401)
-            token = web_session_create(user, role_of(account), self._ip())
+            login_ok(user, ip)
+            token = web_session_create(user, role_of(account), ip)
             self._log_login(user, "info", "管理台登录")
             log(f"web login {user} from {self._ip()}")
             return self._json({"token": token, "username": user, "role": role_of(account)})
@@ -2179,8 +2301,8 @@ class Handler(BaseHTTPRequestHandler):
             password = str(doc.get("password") or "")
             if not USER_RE.match(user):
                 return self._bad("用户名需为 3~32 位字母/数字/下划线")
-            if len(password) < 6:
-                return self._bad("密码至少 6 位")
+            if not strong_enough(password):
+                return self._bad(PASSWORD_RULE)
             with _lock:
                 if os.path.exists(account_path(user)):
                     return self._bad("用户名已存在", 409)
@@ -2212,12 +2334,20 @@ class Handler(BaseHTTPRequestHandler):
             account = load_account(user) if USER_RE.match(user) else None
             if account is None:
                 return self._bad("用户名或密码错误", 401)
+            # 限速只对存在的账户计数：不存在的用户名枚举不到任何信息，也就
+            # 不给攻击者一条撑爆内存的路。
+            ip = self._ip()
+            blocked = login_attempt(user, ip)
+            if blocked:
+                log(f"login throttled {user} from {ip} ({blocked}s left)")
+                return self._bad(f"尝试过于频繁，请 {blocked} 秒后重试", 429)
             if account.get("disabled"):
                 self._log_login(user, "error", "登录失败：账户已禁用")
                 return self._bad("账户已禁用", 403)
             if not verify_password(account, password):
                 self._log_login(user, "error", "登录失败：密码错误")
                 return self._bad("用户名或密码错误", 401)
+            login_ok(user, ip)
             token = self._mint()
             with _lock:
                 account = load_account(user) or account
@@ -2359,8 +2489,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._bad("bad json")
             old_pw = str(doc.get("old") or "")
             new_pw = str(doc.get("new") or "")
-            if len(new_pw) < 6:
-                return self._bad("新密码至少 6 位")
+            if not strong_enough(new_pw):
+                return self._bad(PASSWORD_RULE)
             with _lock:
                 account = load_account(user)
                 if account is None:
@@ -2379,6 +2509,7 @@ class Handler(BaseHTTPRequestHandler):
                     "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                     "by": "self", "ver": self._ver(),
                 }], 50)
+                login_ok(user, self._ip())   # 改密成功即清掉本机失败计数
                 save_account(user, account)
             _token_cache.clear()
             log(f"password self-change {user} from {self._ip()}")
@@ -2475,8 +2606,8 @@ class Handler(BaseHTTPRequestHandler):
             password = str(doc.get("password") or "")
             if not USER_RE.match(user):
                 return self._bad("用户名需为 3~32 位字母/数字/下划线")
-            if len(password) < 6:
-                return self._bad("密码至少 6 位")
+            if not strong_enough(password):
+                return self._bad(PASSWORD_RULE)
             with _lock:
                 if os.path.exists(account_path(user)):
                     return self._bad("用户名已存在", 409)
@@ -2512,6 +2643,7 @@ class Handler(BaseHTTPRequestHandler):
             if role not in ("user", "admin"):
                 return self._bad("角色只能是 user 或 admin")
             with _lock:
+                account = load_account(user) or account
                 account["role"] = role
                 save_account(user, account)
             log(f"admin[{actor_name}]: role {user} -> {role}")
@@ -2529,6 +2661,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "disable":
             with _lock:
+                # 锁外读来的快照可能已过期，锁内重读只改自有键——否则会把
+                # 并发写入的分组/设置/日志一起回滚。
+                account = load_account(user) or account
+                normalize_tokens(account)
                 account["disabled"] = bool(doc.get("disabled"))
                 if account["disabled"]:
                     account["tokens"] = []   # 禁用即踢下线
@@ -2565,9 +2701,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if action == "password":
             password = str(doc.get("password") or "")
-            if len(password) < 6:
-                return self._bad("密码至少 6 位")
+            if not strong_enough(password):
+                return self._bad(PASSWORD_RULE)
             with _lock:
+                account = load_account(user) or account
                 salt = secrets.token_hex(16)
                 account["auth"] = {"salt": salt, "hash": hash_pw(password, salt),
                                    "iters": PBKDF2_ITERS}

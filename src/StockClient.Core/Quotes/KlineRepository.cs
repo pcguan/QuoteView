@@ -61,11 +61,13 @@ public sealed class KlineRepository
     public async Task<(KlineSeries Series, string Source)> GetAsync(
         Contract contract, KlinePeriod period, KlineAdjust adjust, int count, CancellationToken cancellationToken)
     {
-        var date = _clock.TradingDate(contract.Market);
-        var settled = _clock.IsAfterClose(contract.Market, _now());
+        // Weekend-aware: Saturday and Sunday resolve back to Friday's settled
+        // session, so a whole weekend reads the cache instead of re-pulling
+        // history that cannot change (see IMarketClock.KlineDay).
+        var (date, settled) = _clock.KlineDay(contract.Market);
 
         var cached = _cache.TryLoad(contract.Code, period, adjust, date);
-        if (cached is not null && IsFresh(cached, contract.Market, settled))
+        if (cached is not null && IsFresh(cached, contract.Market, date, settled))
             return (cached, Label(cached));
 
         // Server first: one upstream hit serves every client.
@@ -109,9 +111,15 @@ public sealed class KlineRepository
     /// day — except for the one transition that matters: taken during the session,
     /// read after the close, where today's candle is now available and missing
     /// from it.
+    ///
+    /// The test is calendar-aware on purpose. Comparing times of day alone was
+    /// right only while the judged date was always today; once a weekend
+    /// resolves back to Friday, a Saturday-morning fetch would keep reading as
+    /// "before the close" and every chart open re-pulled the full history all
+    /// weekend — the exact opposite of what the rollback is for.
     /// </summary>
-    private bool IsFresh(KlineSeries cached, Market market, bool settled) =>
-        !settled || _clock.IsAfterClose(market, cached.FetchedAt);
+    private bool IsFresh(KlineSeries cached, Market market, DateOnly date, bool settled) =>
+        !settled || _clock.IsAfterClose(market, date, cached.FetchedAt);
 
     private (KlineSeries, string) Store(KlineSeries series, DateOnly date, bool settled)
     {

@@ -181,7 +181,7 @@ public partial class MainWindow : FluentWindow
                     if (contract.Market == Market.KR)
                     {
                         if (!_session.IsSignedIn) return null;
-                        var body = await _session.KrDailyJsonAsync(contract.Code);
+                        var body = await _session.KrDailyJsonAsync(contract.Code, ct);
                         if (body is null) return null;
 
                         using var doc = System.Text.Json.JsonDocument.Parse(body);
@@ -221,7 +221,7 @@ public partial class MainWindow : FluentWindow
                                     contract.EastMoneySecId,
                                     EastMoneyKlineClient.PeriodCode(KlinePeriod.Day),
                                     EastMoneyKlineClient.AdjustCode(KlineAdjust.Qfq),
-                                    count);
+                                    count, ct);
                                 if (json is not null)
                                 {
                                     var fromServer = EastMoneyKlineClient.ParseSeries(
@@ -229,7 +229,7 @@ public partial class MainWindow : FluentWindow
                                     if (fromServer.Candles.Count > 0) return fromServer;
                                 }
                             }
-                            catch (Exception)
+                            catch (Exception) when (!ct.IsCancellationRequested)
                             {
                                 // Fall through to the direct fetch.
                             }
@@ -241,10 +241,16 @@ public partial class MainWindow : FluentWindow
                                 contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
                             if (east.Candles.Count > 0) return east;
                         }
-                        catch (Exception)
+                        catch (Exception) when (!ct.IsCancellationRequested)
                         {
                             // Routine throttling (connection resets); trip below.
                         }
+
+                        // A cancelled fetch says nothing about the host. Counting
+                        // it tripped the breaker on every group switch made
+                        // mid-crawl, and BJ/US (no Tencent history) were then
+                        // left with no daily source at all for five minutes.
+                        if (ct.IsCancellationRequested) return null;
 
                         eastKlineDownUntil = DateTimeOffset.Now + TimeSpan.FromMinutes(5);
                         return null;
@@ -262,10 +268,11 @@ public partial class MainWindow : FluentWindow
                                 contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
                             if (t.Candles.Count > 0) return Trim(t);
                         }
-                        catch (Exception)
+                        catch (Exception) when (!ct.IsCancellationRequested)
                         {
                             // Fall through to EastMoney.
                         }
+                        if (ct.IsCancellationRequested) return null;
                         return await East();
                     }
 

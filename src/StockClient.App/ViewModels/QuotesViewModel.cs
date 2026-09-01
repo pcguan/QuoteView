@@ -928,6 +928,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private bool _dailyRefreshing;
     private int _dailyGen;
+    private CancellationTokenSource _dailyCts = new();
 
     private async Task RefreshDailyAsync()
     {
@@ -936,6 +937,13 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         // Bumping the generation makes a still-running crawl bail at its next
         // step — a group switch mid-crawl used to leave the NEW group waiting
         // behind the old one's slow fetches (minutes, with EastMoney down).
+        // Cancelling the token aborts the request ALREADY in flight too;
+        // without it the bail-out still had to wait out that one's timeout.
+        var previous = _dailyCts;
+        _dailyCts = new CancellationTokenSource();
+        previous.Cancel();
+        previous.Dispose();
+
         var gen = ++_dailyGen;
         if (_dailyRefreshing) return;   // the running loop restarts on the bump
 
@@ -986,21 +994,23 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
         foreach (var contract in contracts)
         {
-            var stamp = _marketClock.TradingDate(contract.Market);
-            var settled = _marketClock.IsAfterClose(contract.Market, DateTimeOffset.Now);
+            var (stamp, settled) = _marketClock.KlineDay(contract.Market);
             if (_dailyMeta.TryGetValue(contract.Code, out var meta)
                 && meta.Stamp == stamp && (meta.Settled || !settled))
                 continue;
 
             KlineSeries? series;
+            var token = _dailyCts.Token;
             try
             {
-                series = await _fetchDaily(contract, CancellationToken.None);
+                series = await _fetchDaily(contract, token);
             }
             catch (Exception)
             {
                 series = null;
             }
+
+            if (token.IsCancellationRequested) return;   // superseded mid-flight
 
             if (series is { Candles.Count: > 0 })
             {
@@ -1025,7 +1035,14 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             // Fetched data is group-independent and already stored — bail only
             // AFTER keeping it, then let the fresh crawl take over.
             if (gen != _dailyGen) return;
-            await Task.Delay(150);
+            try
+            {
+                await Task.Delay(150, token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
             if (gen != _dailyGen) return;
         }
     }
@@ -1240,6 +1257,15 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             foreach (var quote in tick.Quotes)
             {
                 if (!_rows.TryGetValue(quote.Code, out var row)) continue;
+
+                // Tencent's batch answer occasionally drops a row, which parses
+                // as Missing. Letting that overwrite a resolved row flashed the
+                // name to "无效代码", zeroed the price, and blanked every period
+                // return for that tick (they key off 昨收). A row that resolved
+                // once keeps its last good quote; a code that NEVER resolved
+                // still shows 无效代码.
+                if (quote.IsMissing && !row.IsMissing) continue;
+
                 row.Update(quote);
 
                 // Self-heal: a market whose contract list failed at startup then

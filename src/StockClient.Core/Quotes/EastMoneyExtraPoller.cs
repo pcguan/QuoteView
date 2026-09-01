@@ -1,3 +1,5 @@
+using StockClient.Core.Contracts;
+
 namespace StockClient.Core.Quotes;
 
 /// <summary>
@@ -8,13 +10,21 @@ namespace StockClient.Core.Quotes;
 /// Slow (5s) and on-demand: started only while the relevant columns are on and the
 /// group has A-shares. Adaptive backoff doubles the delay (to 30s) on repeated
 /// failure and snaps back on success, so a throttled endpoint isn't hammered.
+///
+/// OUTSIDE the A-share session it drops to one poll every 10 minutes: fund flow
+/// is a running daily total that stops moving at the bell, so the 5s cadence
+/// spent all night re-fetching a settled number from the one upstream that
+/// throttles hardest. The value stays on screen either way — the client caches
+/// the last set to disk.
 /// </summary>
 public sealed class EastMoneyExtraPoller : IAsyncDisposable
 {
     private static readonly TimeSpan Base = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan Idle = TimeSpan.FromMinutes(10);
 
     private readonly EastMoneyQuoteClient _client;
+    private readonly IMarketClock _clock = new MarketClock();
     private readonly object _gate = new();
 
     private CancellationTokenSource? _cts;
@@ -30,9 +40,22 @@ public sealed class EastMoneyExtraPoller : IAsyncDisposable
     {
         lock (_gate)
         {
+            var changed = !targets.Select(t => t.Code).SequenceEqual(
+                _targets.Select(t => t.Code), StringComparer.OrdinalIgnoreCase);
             _targets = targets;
-            if (targets.Count == 0) StopLoop();
-            else StartLoop();
+
+            if (targets.Count == 0)
+            {
+                StopLoop();
+                return;
+            }
+
+            // A CHANGED target polls at once rather than waiting out the delay
+            // in flight — up to 10 minutes of it outside the session, which
+            // would leave a newly added contract's columns blank. Restarting
+            // cancels that delay; an unchanged target leaves the loop alone.
+            if (changed) StopLoop();
+            StartLoop();
         }
     }
 
@@ -75,7 +98,9 @@ public sealed class EastMoneyExtraPoller : IAsyncDisposable
                     ? Base
                     : TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, delay.TotalSeconds * 2));
 
-                await Task.Delay(delay, cancellationToken);
+                // Targets are filtered to SH/SZ/BJ by the caller and those three
+                // share a session, so one market answers for the whole batch.
+                await Task.Delay(_clock.IsLive(Market.SH) ? delay : Idle, cancellationToken);
             }
         }
         catch (OperationCanceledException)

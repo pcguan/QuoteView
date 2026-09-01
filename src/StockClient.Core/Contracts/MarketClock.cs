@@ -33,6 +33,39 @@ public interface IMarketClock
 
     /// <summary>Current wall-clock time in the exchange's own timezone.</summary>
     TimeOnly LocalTime(Market market);
+
+    /// <summary>
+    /// True when <paramref name="instant"/> lands after a SPECIFIC trading
+    /// date's close (plus settle margin) — the calendar-aware form of the
+    /// overload above, which compares times of day only.
+    ///
+    /// The difference matters wherever the judged date isn't today: a fetch at
+    /// Saturday 09:00 IS after Friday's close, even though 09:00 is not "after
+    /// close" on any clock face.
+    /// </summary>
+    bool IsAfterClose(Market market, DateOnly date, DateTimeOffset instant);
+
+    /// <summary>
+    /// True when this market could be trading right now: a weekday inside
+    /// [08:30 local, close + 30min]. All six covered markets open 09:00-09:30
+    /// local, so one early edge covers every pre-open auction without needing
+    /// per-market open times. Pollers use it to stop asking closed markets for
+    /// data that cannot move.
+    /// </summary>
+    bool IsLive(Market market);
+
+    /// <summary>
+    /// The trading date a daily-K fetch should be keyed and judged by, plus
+    /// whether that date's candle is final.
+    ///
+    /// On a weekday it is today, settled once the close (plus settle margin)
+    /// has passed — the long-standing rule that lets an intraday fetch be
+    /// replaced once after the bell. On a WEEKEND it rolls back to Friday and
+    /// reports settled: no session happens on Saturday or Sunday, so keying by
+    /// the calendar date only re-fetched, every weekend day and twice per day,
+    /// history that could not have changed.
+    /// </summary>
+    (DateOnly Date, bool Settled) KlineDay(Market market);
 }
 
 public sealed class MarketClock : IMarketClock
@@ -65,6 +98,40 @@ public sealed class MarketClock : IMarketClock
         var info = MarketInfo.Of(market);
         var local = TimeZoneInfo.ConvertTime(_utcNow(), ResolveZone(info.TimeZoneId));
         return TimeOnly.FromDateTime(local.DateTime);
+    }
+
+    public bool IsLive(Market market)
+    {
+        if (TradingDate(market).DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+
+        var now = LocalTime(market);
+        return now >= SessionOpenEdge && now <= MarketInfo.Of(market).Close.Add(SettleMargin);
+    }
+
+    private static readonly TimeOnly SessionOpenEdge = new(8, 30);
+
+    public (DateOnly Date, bool Settled) KlineDay(Market market)
+    {
+        var date = TradingDate(market);
+        if (date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            return (date, IsAfterClose(market, _utcNow()));
+
+        // Weekend: the last session ended before it began, so its candle is
+        // final by construction — no time-of-day test can say so, because
+        // IsAfterClose only looks at the clock, not the calendar.
+        while (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            date = date.AddDays(-1);
+        return (date, true);
+    }
+
+    public bool IsAfterClose(Market market, DateOnly date, DateTimeOffset instant)
+    {
+        var info = MarketInfo.Of(market);
+        var local = TimeZoneInfo.ConvertTime(instant, ResolveZone(info.TimeZoneId));
+        var localDate = DateOnly.FromDateTime(local.DateTime);
+
+        if (localDate != date) return localDate > date;
+        return TimeOnly.FromDateTime(local.DateTime) >= info.Close.Add(SettleMargin);
     }
 
     public bool IsAfterClose(Market market, DateTimeOffset instant)
