@@ -32,15 +32,21 @@ public sealed class DomesticReleaseClient
 
         if (!Version.TryParse(dto.Version.TrimStart('v', 'V'), out var version)) return null;
 
+        var force = dto.Force ?? false;
+
         return new ReleaseInfo
         {
             Version = version,
             DownloadUrl = dto.Url!,
-            DisplayName = "v" + version,
+            // A forced version is usually LOWER than what the client runs, and
+            // the prompt says 「发现新版本 …」 — say so in the name, or the user
+            // reads a downgrade as an upgrade.
+            DisplayName = force ? $"v{version}（版本回退）" : "v" + version,
             Notes = dto.Notes ?? "",
             Source = "国内源", // internal only; the UI deliberately doesn't show it
             Size = dto.Size ?? 0,
             Sha256 = dto.Sha256 ?? "",
+            Force = force,
         };
     }
 
@@ -51,5 +57,8 @@ public sealed class DomesticReleaseClient
         [JsonPropertyName("notes")] public string? Notes { get; init; }
         [JsonPropertyName("size")] public long? Size { get; init; }
         [JsonPropertyName("sha256")] public string? Sha256 { get; init; }
+
+        /// <summary>Set only by a rollback publish (tools/release.sh --rollback).</summary>
+        [JsonPropertyName("force")] public bool? Force { get; init; }
     }
 }

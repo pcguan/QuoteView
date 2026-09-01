@@ -482,7 +482,10 @@ public sealed class GroupConfig
     /// appearing in 半导体 and 自选 must show the same note; storing it on the group
     /// would silently fork into two copies the moment a contract is in two groups.
     ///
-    /// Local only: it lives in groups.json and goes nowhere else.
+    /// Account-scoped since v1.0.x: notes ride the settings payload
+    /// (SettingsPayload.From) so the same holding carries the same note on
+    /// every machine you sign in from — unlike the panel/column preferences,
+    /// which stay local by design.
     /// </summary>
     [JsonPropertyName("notes")]
     public Dictionary<string, string> Notes { get; set; } = new(StringComparer.OrdinalIgnoreCase);

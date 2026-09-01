@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using StockClient.App.ViewModels;
 using StockClient.Core.Quotes;
 
@@ -58,6 +59,69 @@ public partial class KlineWindow : Window
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Chart.ResetView();
+
+    /// <summary>
+    /// Window-level shortcuts. Handled in the PREVIEW pass so the arrow keys never
+    /// reach the period/adjust toggles, where WPF would spend them on directional
+    /// focus navigation instead of panning the chart. Chart keys are inert in
+    /// intraday mode, which has no pan or zoom — only Esc and the period digits.
+    /// </summary>
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        base.OnPreviewKeyDown(e);
+
+        // Shift is deliberately allowed through: on a US layout "+" IS Shift+OemPlus,
+        // so gating on "no modifier at all" would leave the zoom-in key dead.
+        const ModifierKeys blocked = ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Windows;
+        if (e.Handled || (Keyboard.Modifiers & blocked) != ModifierKeys.None) return;
+
+        switch (e.Key)
+        {
+            case Key.Escape:
+                Close();
+                break;
+            case Key.D1 or Key.NumPad1:
+                _vm.ShowTrend();
+                break;
+            case Key.D2 or Key.NumPad2:
+                _vm.ShowKline(KlinePeriod.Day);
+                break;
+            case Key.D3 or Key.NumPad3:
+                _vm.ShowKline(KlinePeriod.Week);
+                break;
+            case Key.D4 or Key.NumPad4:
+                _vm.ShowKline(KlinePeriod.Month);
+                break;
+            case Key.Left when !_vm.IsTrend:
+                Chart.Pan(-1);
+                break;
+            case Key.Right when !_vm.IsTrend:
+                Chart.Pan(1);
+                break;
+            case Key.PageUp when !_vm.IsTrend:
+                Chart.PanPages(-1);
+                break;
+            case Key.PageDown when !_vm.IsTrend:
+                Chart.PanPages(1);
+                break;
+            case Key.Home when !_vm.IsTrend:
+                Chart.JumpToStart();
+                break;
+            case Key.End when !_vm.IsTrend:
+                Chart.JumpToEnd();
+                break;
+            case (Key.OemPlus or Key.Add) when !_vm.IsTrend:
+                Chart.Zoom(1);
+                break;
+            case (Key.OemMinus or Key.Subtract) when !_vm.IsTrend:
+                Chart.Zoom(-1);
+                break;
+            default:
+                return;
+        }
+
+        e.Handled = true;
+    }
 
     private void OnKlineLoaded() => Dispatcher.Invoke(() =>
     {

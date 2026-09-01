@@ -153,134 +153,17 @@ public partial class MainWindow : FluentWindow
 
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
-            // The daily-kline fetch behind ALL the period returns (昨日/3日/…/
-            // 年初, see PeriodReturns) mirrors _klineRepo's server-first
-            // routing, but with a bounded lmt and NO shared-cache write —
-            // storing a truncated series there would become what the chart
-            // draws for the rest of the day. 270 candles cover 60日 and a full
-            // year of sessions for 年初至今.
-            var dailyEast = new EastMoneyKlineClient(_klineHttp);
-            var dailyTencent = new TencentKlineClient(_klineHttp);
-            // Circuit breaker for the EastMoney kline host: it throttles with
-            // connection resets, and each dead call burns its full timeout —
-            // with a whole group crawled sequentially that added up to minutes
-            // of blank 昨日涨幅. One failure skips the host for a while.
-            var eastKlineDownUntil = DateTimeOffset.MinValue;
+            // The daily source behind ALL the period returns is its own chain,
+            // NOT _klineRepo's: bounded lmt, no shared-cache write, and Tencent
+            // first for SH/SZ/HK — see DailyKlineSource for why each differs.
+            var dailySource = new DailyKlineSource(
+                new EastMoneyKlineClient(_klineHttp),
+                new TencentKlineClient(_klineHttp),
+                () => _session.IsSignedIn,
+                _session.KlineJsonAsync,
+                _session.KrDailyJsonAsync);
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
-                fetchDaily: async (contract, ct) =>
-                {
-                    const int count = 270;
-                    static KlineSeries Trim(KlineSeries s) =>
-                        s.Candles.Count <= count ? s
-                            : s with { Candles = s.Candles.TakeLast(count).ToArray() };
-
-                    // Korea has no queryable daily history upstream (EastMoney's
-                    // period fields are broken there, Tencent klines carry only
-                    // the current day) — the SERVER archives each session's
-                    // close itself and serves the pairs back.
-                    if (contract.Market == Market.KR)
-                    {
-                        if (!_session.IsSignedIn) return null;
-                        var body = await _session.KrDailyJsonAsync(contract.Code, ct);
-                        if (body is null) return null;
-
-                        using var doc = System.Text.Json.JsonDocument.Parse(body);
-                        if (!doc.RootElement.TryGetProperty("candles", out var arr)
-                            || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
-                            return null;
-
-                        var candles = new List<Kline>();
-                        foreach (var c in arr.EnumerateArray())
-                        {
-                            var close = c.TryGetProperty("close", out var cl) ? cl.GetDouble() : 0;
-                            if (close <= 0) continue;
-                            var date = c.TryGetProperty("date", out var d) ? d.GetString() ?? "" : "";
-                            candles.Add(new Kline
-                            {
-                                Date = date, Open = close, Close = close,
-                                High = close, Low = close,
-                            });
-                        }
-                        return candles.Count == 0 ? null : new KlineSeries
-                        {
-                            Code = contract.Code, Name = contract.Name,
-                            Period = KlinePeriod.Day, Adjust = KlineAdjust.None,
-                            Candles = candles,
-                        };
-                    }
-
-                    async Task<KlineSeries?> East()
-                    {
-                        if (DateTimeOffset.Now < eastKlineDownUntil) return null;
-
-                        if (_session.IsSignedIn)
-                        {
-                            try
-                            {
-                                var json = await _session.KlineJsonAsync(
-                                    contract.EastMoneySecId,
-                                    EastMoneyKlineClient.PeriodCode(KlinePeriod.Day),
-                                    EastMoneyKlineClient.AdjustCode(KlineAdjust.Qfq),
-                                    count, ct);
-                                if (json is not null)
-                                {
-                                    var fromServer = EastMoneyKlineClient.ParseSeries(
-                                        json, contract, KlinePeriod.Day, KlineAdjust.Qfq);
-                                    if (fromServer.Candles.Count > 0) return fromServer;
-                                }
-                            }
-                            catch (Exception) when (!ct.IsCancellationRequested)
-                            {
-                                // Fall through to the direct fetch.
-                            }
-                        }
-
-                        try
-                        {
-                            var east = await dailyEast.FetchAsync(
-                                contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
-                            if (east.Candles.Count > 0) return east;
-                        }
-                        catch (Exception) when (!ct.IsCancellationRequested)
-                        {
-                            // Routine throttling (connection resets); trip below.
-                        }
-
-                        // A cancelled fetch says nothing about the host. Counting
-                        // it tripped the breaker on every group switch made
-                        // mid-crawl, and BJ/US (no Tencent history) were then
-                        // left with no daily source at all for five minutes.
-                        if (ct.IsCancellationRequested) return null;
-
-                        eastKlineDownUntil = DateTimeOffset.Now + TimeSpan.FromMinutes(5);
-                        return null;
-                    }
-
-                    // SH/SZ/HK: Tencent FIRST — full history, same vendor as the
-                    // quote poll (so 昨收 matches to the tick), and immune to the
-                    // EastMoney kline host's routine outages; EastMoney only as
-                    // its backup.
-                    if (contract.Market is Market.SH or Market.SZ or Market.HK)
-                    {
-                        try
-                        {
-                            var t = await dailyTencent.FetchAsync(
-                                contract, KlinePeriod.Day, KlineAdjust.Qfq, count, ct);
-                            if (t.Candles.Count > 0) return Trim(t);
-                        }
-                        catch (Exception) when (!ct.IsCancellationRequested)
-                        {
-                            // Fall through to EastMoney.
-                        }
-                        if (ct.IsCancellationRequested) return null;
-                        return await East();
-                    }
-
-                    // BJ/US: EastMoney only — Tencent serves a single same-day
-                    // candle there, and caching that as "fresh" would stop the
-                    // retries; null keeps the 10-minute sweep trying instead.
-                    return await East();
-                });
+                fetchDaily: dailySource.FetchAsync);
             Quotes.DataContext = _quotes;
 
             // Every later config save pushes the preference slice back up,

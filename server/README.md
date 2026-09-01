@@ -17,14 +17,19 @@ NAS 容器，为所有 QuoteView 客户端统一抓取并归档沪深合约的�
   log/server.log         # 应用日志（10MB 自轮转一份 .1）
 ```
 
-仓库 `server/` 与之一一对应（少 data/ 与 log/）。发布改动：
+仓库 `server/` 与之一一对应（少 data/ 与 log/）。发布改动走脚本，别手敲 scp：
 
 ```bash
-scp server/docker-compose.yml nas:/vol3/1000/HDD2/tool/docker/quoteview-server/
-scp server/cfg/server.env    nas:/vol3/1000/HDD2/tool/docker/quoteview-server/cfg/
-scp server/scripts/server.py nas:/vol3/1000/HDD2/tool/docker/quoteview-server/scripts/
-ssh nas 'cd /vol3/1000/HDD2/tool/docker/quoteview-server && docker compose up -d --force-recreate'
+tools/deploy_server.sh            # 同步 → 逐文件哈希核对 → 容器内 py_compile → 重建 → 健康检查
+tools/deploy_server.sh --env      # 连 cfg/server.env 一起推（会覆盖 NAS 上的真实口令，慎用）
 ```
+
+脚本每一步失败即中止，回滚办法是 `git checkout` 上一版 `server.py` 再跑一次。
+截断的传输或语法错误的脚本再也进不了容器——此前是裸 scp 直接 force-recreate，
+一个半截文件就能让全体客户端的接口当场挂掉。
+
+`docker restart` **不会重读 env-file**：改了 `cfg/server.env` 必须重建容器
+（脚本走的就是 `compose up -d --force-recreate`）。
 
 nginx（`cfg/nginx.conf`，nas.pcguan.cn server 块）已加：
 
@@ -45,13 +50,13 @@ nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quo
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| POST | /register | - | `{"username","password"}` → `{"token"}`（注册即登录；账户数上限 10） |
+| POST | /register | - | 自助注册**默认关闭**（403），建号走管理台；`QV_OPEN_REGISTER=1` 才放开（账户数上限 10） |
 | POST | /login | - | 同上；密码 PBKDF2-SHA256(10万次) 存储，令牌每账户保留最近 10 个 |
 | POST | /sync | Bearer | `{"groups":[{"name","codes":[]}]}`，登录后种子一次+改动即推，按账户存 |
 | GET | /dates?code=SH600519 | Bearer | 该合约已归档的日期 |
 | GET | /trend?code=…&date=YYYY-MM-DD | Bearer | 单日分时（客户端 TrendSeries 同构 JSON） |
 | GET/POST | /settings | Bearer | 账户级设置=模板库+合约备注（登录拉取、变更上推）；列显隐/排序、轮换、当前模板、亮度等为客户端本地，不同步 |
-| GET | /status | - | 账户数/合约并集/上次扫描 |
+| GET | /status | - | 健康探针，只回 `{"ok","last_sweep"}`；账户数/合约并集等业务数据只在管理台看 |
 | GET | /groups | Bearer | 账户的分组（切换用户时客户端恢复用） |
 | GET | /kline | Bearer | K 线代理（secid/klt/fqt/lmt 白名单校验，5 分钟缓存，空响应不缓存） |
 | GET | /admin | Basic(账户密码) | Web 管理台，仅 admin/sysadmin 角色可进 |
@@ -69,6 +74,8 @@ nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quo
 
 - 工作日北京时间 **15:01**（收盘后 1 分钟）开始扫描当日缺失的合约并归档（调度器精准对准该分钟醒来，之后每 5 分钟补漏）；并集来自 14 天内活跃的客户端。
 - 严格串行，每只间隔 `QV_FETCH_GAP`（默认 1.5s）；东财 trends2 直连（NAS 无需代理）。
+- 单账户带进抓取宇宙（归档并集 + 资讯）的合约数上限 `QV_MAX_ACCOUNT_CODES`（默认 1000，按代码序截断），
+  上限之外的合约照存在账户分组里，只是服务端不替它外连抓取；自助注册开关 `QV_OPEN_REGISTER`（默认关）。
 - 节假日探测：数据点自带日期，拉到旧交易日数据即整批停止并标记当日。
 - 每合约保留 `QV_RETAIN_DAYS`（默认 7）天。
 

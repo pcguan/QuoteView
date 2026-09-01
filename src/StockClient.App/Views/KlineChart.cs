@@ -33,17 +33,26 @@ public sealed class KlineChart : FrameworkElement
     private static readonly Brush UpBrush = Frozen("#EF5350");
     private static readonly Brush DownBrush = Frozen("#26A69A");
 
+    // Candle outlines: only two, and a repaint draws one per bar (up to ~600 when
+    // zoomed out). Frozen and shared, because an unfrozen Pen forces WPF to rebuild
+    // its render resource on every frame.
+    private static readonly Pen UpPen = FrozenPen(UpBrush, 1);
+    private static readonly Pen DownPen = FrozenPen(DownBrush, 1);
+
     private static readonly Pen GridPen = FrozenPen("#222A38", 1);
     private static readonly Pen CrosshairPen = FrozenPen("#8B93A3", 1, dashed: true);
     private static readonly Brush AxisText = Frozen("#8B93A3");
     private static readonly Brush ReadoutBg = Frozen("#111722");
     private static readonly Brush ReadoutBorder = Frozen("#33405C");
+    private static readonly Pen ReadoutBorderPen = FrozenPen(ReadoutBorder, 1);
 
     // MA5/10/20/60, in KlineViewModel.MaWindows order. Validated categorical set.
     private static readonly Brush[] MaBrushes =
     {
         Frozen("#3987e5"), Frozen("#c98500"), Frozen("#d55181"), Frozen("#9085e9"),
     };
+
+    private static readonly Pen[] MaPens = MaBrushes.Select(b => FrozenPen(b, 1.4)).ToArray();
 
     /// <summary>Dimmed legend colour for a hidden MA, so its toggle is still visible.</summary>
     private static readonly Brush LegendOff = Frozen("#4A5160");
@@ -115,6 +124,12 @@ public sealed class KlineChart : FrameworkElement
     private bool _dragging;
     private double _dragStartX;
     private int _dragStartView;
+
+    // Refreshed once per repaint instead of once per label: a readout frame builds
+    // ~20 FormattedText, and each GetDpi walks up the visual tree. Re-read every
+    // frame rather than cached for good, so dragging the window to a monitor with
+    // a different scale still lays text out correctly.
+    private double _pixelsPerDip = 1;
 
     // Per-MA visibility, toggled by clicking its legend entry; and each entry's
     // clickable rect, filled in while the legend is drawn.
@@ -201,6 +216,62 @@ public sealed class KlineChart : FrameworkElement
         _viewCount = Math.Min(DefaultView, _candles.Count);
         _viewStart = Math.Max(0, _candles.Count - _viewCount);
     }
+
+    /// <summary>
+    /// Keyboard pan, in original-candle units like a drag. Positive moves toward
+    /// the newest candle. The crosshair is dropped because its index points into
+    /// the bar list that is about to be rebuilt.
+    /// </summary>
+    public void Pan(int candles)
+    {
+        if (_candles.Count == 0 || candles == 0) return;
+
+        var start = Math.Clamp(
+            _viewStart + candles, 0, Math.Max(0, _candles.Count - _viewCount));
+        if (start == _viewStart) return;
+
+        _viewStart = start;
+        _hoverIndex = -1;
+        InvalidateVisual();
+    }
+
+    /// <summary>Pan by whole screens.</summary>
+    public void PanPages(int pages) => Pan(pages * Math.Max(1, _viewCount));
+
+    /// <summary>
+    /// Keyboard zoom, same step as the wheel but anchored on the middle of the
+    /// window — there is no cursor position to anchor on.
+    /// </summary>
+    public void Zoom(int direction)
+    {
+        if (_candles.Count == 0 || direction == 0) return;
+
+        var anchor = _viewStart + _viewCount / 2.0;
+        var factor = direction > 0 ? 0.85 : 1 / 0.85;
+        var newCount = ClampView(_viewCount * factor);
+        if (newCount == _viewCount) return;
+
+        _viewCount = newCount;
+        _viewStart = Math.Clamp(
+            (int)Math.Round(anchor - newCount / 2.0), 0, Math.Max(0, _candles.Count - newCount));
+        _hoverIndex = -1;
+        InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Visible-candle count, clamped to something the series can actually
+    /// satisfy. The floor has to yield to a SHORT series: a recent listing's
+    /// week/month line can hold fewer than <see cref="MinView"/> candles, and
+    /// Math.Clamp throws outright when its min exceeds its max.
+    /// </summary>
+    private int ClampView(double count) =>
+        Math.Clamp((int)Math.Round(count), Math.Min(MinView, _candles.Count), _candles.Count);
+
+    /// <summary>Jump to the oldest candles, keeping the current zoom.</summary>
+    public void JumpToStart() => Pan(-_candles.Count);
+
+    /// <summary>Jump back to the newest candles, keeping the current zoom.</summary>
+    public void JumpToEnd() => Pan(_candles.Count);
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
@@ -294,8 +365,7 @@ public sealed class KlineChart : FrameworkElement
         var anchor = _viewStart + frac * _viewCount;
 
         var factor = e.Delta > 0 ? 0.85 : 1 / 0.85;
-        var newCount = Math.Clamp(
-            (int)Math.Round(_viewCount * factor), MinView, _candles.Count);
+        var newCount = ClampView(_viewCount * factor);
 
         _viewCount = newCount;
         _viewStart = Math.Clamp(
@@ -327,6 +397,8 @@ public sealed class KlineChart : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
+        _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+
         dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
 
         if (_viewCount == 0 || ActualWidth <= PadLeft + PadRight || ActualHeight <= PadTop + PadBottom)
@@ -490,7 +562,7 @@ public sealed class KlineChart : FrameworkElement
             var bar = _bars[i];
             var cx = BarX(i, slot);
             var brush = bar.IsUp ? UpBrush : DownBrush;
-            var pen = new Pen(brush, 1);
+            var pen = bar.IsUp ? UpPen : DownPen;
 
             dc.DrawLine(pen, new Point(cx, priceToY(bar.High)), new Point(cx, priceToY(bar.Low)));
 
@@ -517,7 +589,7 @@ public sealed class KlineChart : FrameworkElement
         {
             if (!_maVisible[w]) continue;
 
-            var pen = new Pen(MaBrushes[w], 1.4);
+            var pen = MaPens[w];
             Point? previous = null;
 
             for (var i = 0; i < _bars.Count; i++)
@@ -643,7 +715,7 @@ public sealed class KlineChart : FrameworkElement
         var boxHeight = rowHeight * texts.Length + 10;
 
         var box = new Rect(PadLeft + 6, PadTop + 6, boxWidth, boxHeight);
-        dc.DrawRectangle(ReadoutBg, new Pen(ReadoutBorder, 1), box);
+        dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
 
         var y = box.Top + 5;
         foreach (var (key, val) in texts)
@@ -678,7 +750,7 @@ public sealed class KlineChart : FrameworkElement
 
     private FormattedText Label(string text, Brush brush) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 11, brush,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            _pixelsPerDip);
 
     private static Brush Frozen(string hex)
     {
@@ -691,6 +763,13 @@ public sealed class KlineChart : FrameworkElement
     {
         var pen = new Pen(Frozen(hex), thickness);
         if (dashed) pen.DashStyle = new DashStyle(new double[] { 3, 3 }, 0);
+        pen.Freeze();
+        return pen;
+    }
+
+    private static Pen FrozenPen(Brush brush, double thickness)
+    {
+        var pen = new Pen(brush, thickness);
         pen.Freeze();
         return pen;
     }

@@ -359,13 +359,12 @@ public partial class QuotesView : UserControl
     }
 
     // On-demand: the EastMoney fund-flow poll runs only while one of its columns
-    // is actually visible — no one looking, no extra request.
-    private static readonly HashSet<string> FundFlowHeaders =
-        new() { "涨速", "主力净流入", "主力占比", "超大单", "大单", "中单", "小单" };
-
+    // is actually visible — no one looking, no extra request. Which columns those
+    // are is declared on the columns themselves (QuoteColumns.IsFundFlow in the
+    // XAML), so editing a header caption stays a caption edit.
     private void UpdateFundFlowActive() =>
         Vm?.SetFundFlowActive(QuoteGrid.Columns.Any(c =>
-            FundFlowHeaders.Contains(c.Header as string ?? "") && c.Visibility == Visibility.Visible));
+            QuoteColumns.GetIsFundFlow(c) && c.Visibility == Visibility.Visible));
 
     private void QuoteGrid_Loaded(object sender, RoutedEventArgs e)
     {
@@ -386,8 +385,7 @@ public partial class QuotesView : UserControl
             ColumnMenu.Attach(grid, menu);
             AttachRowMenu(grid);
 
-            foreach (var col in grid.Columns.Where(c =>
-                FundFlowHeaders.Contains(c.Header as string ?? "")))
+            foreach (var col in grid.Columns.Where(c => QuoteColumns.GetIsFundFlow(c)))
                 System.ComponentModel.DependencyPropertyDescriptor
                     .FromProperty(DataGridColumn.VisibilityProperty, typeof(DataGridColumn))
                     ?.AddValueChanged(col, (_, _) => UpdateFundFlowActive());
@@ -395,13 +393,17 @@ public partial class QuotesView : UserControl
             UpdateFundFlowActive();
 
             // The remove rail follows the rows: vertical scroll moves them,
-            // items changing replaces them, resize changes how many fit.
+            // items changing replaces them, resize changes how many fit. A purely
+            // horizontal scroll moves none of them.
             grid.AddHandler(ScrollViewer.ScrollChangedEvent,
-                new ScrollChangedEventHandler((_, _) => SyncRemoveRail()));
-            grid.ItemContainerGenerator.ItemsChanged += (_, _) =>
-                Dispatcher.BeginInvoke(new Action(SyncRemoveRail), DispatcherPriority.Loaded);
-            grid.SizeChanged += (_, _) => SyncRemoveRail();
-            Dispatcher.BeginInvoke(new Action(SyncRemoveRail), DispatcherPriority.Loaded);
+                new ScrollChangedEventHandler((_, scroll) =>
+                {
+                    if (scroll.VerticalChange != 0 || scroll.ViewportHeightChange != 0)
+                        QueueRemoveRail();
+                }));
+            grid.ItemContainerGenerator.ItemsChanged += (_, _) => QueueRemoveRail();
+            grid.SizeChanged += (_, _) => QueueRemoveRail();
+            QueueRemoveRail();
         }
 
         TryAttachColumnPersistence();
@@ -572,19 +574,38 @@ public partial class QuotesView : UserControl
     // content, pinned to the viewport's right edge (same idea as the header
     // gear), repositioned per visible row whenever scroll/rows/size change.
 
+    private bool _railQueued;
+    private System.Windows.Controls.Primitives.DataGridColumnHeadersPresenter? _headers;
+    private System.Windows.Controls.Primitives.DataGridRowsPresenter? _rowsPanel;
+
+    /// <summary>
+    /// Collapses the triggers to one sync per frame: a wheel scroll raises
+    /// ScrollChanged dozens of times a second and each sync walks every visible
+    /// row. Queued at Loaded rather than Render priority because the ItemsChanged
+    /// path needs the row containers to exist before it can measure them.
+    /// </summary>
+    private void QueueRemoveRail()
+    {
+        if (_railQueued) return;
+        _railQueued = true;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _railQueued = false;
+            SyncRemoveRail();
+        }), DispatcherPriority.Loaded);
+    }
+
     private void SyncRemoveRail()
     {
         if (Vm is null || !QuoteGrid.IsLoaded) return;
 
-        RemoveRail.Children.Clear();
-        var headerBottom = FindDescendant<
-            System.Windows.Controls.Primitives.DataGridColumnHeadersPresenter>(QuoteGrid)
-            ?.ActualHeight ?? 0;
+        var headerBottom = TemplatePart(ref _headers)?.ActualHeight ?? 0;
+        var used = 0;
 
-        foreach (var item in QuoteGrid.Items)
+        foreach (var row in CandidateRows())
         {
-            if (QuoteGrid.ItemContainerGenerator.ContainerFromItem(item)
-                is not DataGridRow row || !row.IsVisible) continue;   // virtualized away
+            if (!row.IsVisible) continue;
 
             double y;
             try { y = row.TranslatePoint(default, QuoteGrid).Y; }
@@ -593,20 +614,67 @@ public partial class QuotesView : UserControl
             if (y < headerBottom - 1 || y + row.ActualHeight > QuoteGrid.ActualHeight + 1)
                 continue;   // scrolled (partially) out of the viewport
 
-            var button = new Wpf.Ui.Controls.Button
+            // Pooled, not rebuilt: a Wpf.Ui Button applies its template on
+            // construction, and doing that for every visible row on every scroll
+            // event is what made big groups drop frames.
+            if (used == RemoveRail.Children.Count)
             {
-                Height = 24,
-                Width = 28,
-                Padding = new Thickness(0),
-                Icon = new SymbolIcon { Symbol = SymbolRegular.Delete24 },
-                ToolTip = "从分组移除",
-                DataContext = row.DataContext,   // RemoveCode_Click reads the row here
-            };
-            button.Click += RemoveCode_Click;
-            Canvas.SetLeft(button, 3);
+                var created = new Wpf.Ui.Controls.Button
+                {
+                    Height = 24,
+                    Width = 28,
+                    Padding = new Thickness(0),
+                    Icon = new SymbolIcon { Symbol = SymbolRegular.Delete24 },
+                    ToolTip = "从分组移除",
+                };
+                created.Click += RemoveCode_Click;
+                Canvas.SetLeft(created, 3);
+                RemoveRail.Children.Add(created);
+            }
+
+            var button = (Wpf.Ui.Controls.Button)RemoveRail.Children[used++];
+            button.DataContext = row.DataContext;   // RemoveCode_Click reads the row here
             Canvas.SetTop(button, y + (row.ActualHeight - 24) / 2);
-            RemoveRail.Children.Add(button);
         }
+
+        while (RemoveRail.Children.Count > used)
+            RemoveRail.Children.RemoveAt(RemoveRail.Children.Count - 1);
+    }
+
+    /// <summary>
+    /// The rows worth measuring. The virtualizing panel holds exactly the realized
+    /// containers, so the walk stays proportional to what is on screen; asking the
+    /// generator for every item was O(rows-in-group) on each scroll event. The
+    /// generator walk stays as the fallback for a template without that panel —
+    /// slow beats a rail that never appears.
+    /// </summary>
+    private IEnumerable<DataGridRow> CandidateRows() =>
+        TemplatePart(ref _rowsPanel) is { } panel
+            ? panel.Children.OfType<DataGridRow>()
+            : QuoteGrid.Items.Cast<object>()
+                .Select(QuoteGrid.ItemContainerGenerator.ContainerFromItem)
+                .OfType<DataGridRow>();
+
+    /// <summary>
+    /// Cached lookup of a grid template part. Re-found when the cached one is no
+    /// longer under the grid — re-applying the template (a theme switch does that)
+    /// leaves the old part orphaned, and a permanently cached one would then
+    /// report a stale header height forever.
+    /// </summary>
+    private T? TemplatePart<T>(ref T? cached) where T : DependencyObject
+    {
+        if (cached is not null && IsUnder(cached, QuoteGrid)) return cached;
+
+        cached = FindDescendant<T>(QuoteGrid);
+        return cached;
+    }
+
+    private static bool IsUnder(DependencyObject node, DependencyObject root)
+    {
+        for (DependencyObject? n = node; n is not null; n = VisualTreeHelper.GetParent(n))
+            if (ReferenceEquals(n, root)) return true;
+
+        return false;
     }
 
     private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject

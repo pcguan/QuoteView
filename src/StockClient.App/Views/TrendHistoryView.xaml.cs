@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using StockClient.App.ViewModels;
+using StockClient.Core;
 using StockClient.Core.Contracts;
 using StockClient.App.Services;
 using StockClient.Core.Quotes;
@@ -62,9 +63,10 @@ public partial class TrendHistoryView : UserControl
             return;
         }
 
+        // 沪深 only, and deliberately NOT 含北交所的 A 股判定: the snapshot the
+        // server archives covers exactly these two exchanges (server.py CODE_RE).
         var items = group.Model.Codes
-            .Where(c => c.StartsWith("SH", StringComparison.OrdinalIgnoreCase)
-                        || c.StartsWith("SZ", StringComparison.OrdinalIgnoreCase))
+            .Where(c => CodeMapper.MarketOf(c) is "SH" or "SZ")
             .Select(c => c.ToUpperInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(c => new CodeItem(c, _contracts.Find(c)?.Name ?? ""))

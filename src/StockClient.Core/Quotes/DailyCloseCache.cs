@@ -51,10 +51,30 @@ public sealed class DailyCloseCache
 
     private readonly string _path;
 
-    public DailyCloseCache(string? path = null) =>
+    // Saving runs off the UI thread (fire-and-forget), so two crawls finishing
+    // close together would otherwise race on the same .tmp file.
+    private readonly object _writeGate = new();
+
+    public DailyCloseCache(string? path = null)
+    {
         _path = path ?? System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "StockClient", "returns", "daily.json");
+
+        // v1.1.0 removed the ReturnBaseline chain, but its baselines.json sits
+        // in this same folder on every upgraded machine with nothing left to
+        // read it. Best effort; drop this sweep once 1.1.x is long past.
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(_path);
+            if (!string.IsNullOrEmpty(dir))
+                File.Delete(System.IO.Path.Combine(dir, "baselines.json"));
+        }
+        catch (Exception)
+        {
+            // Nothing to recover: the orphan just stays another version.
+        }
+    }
 
     public Dictionary<string, DailyCloseEntry> Load()
     {
@@ -84,9 +104,13 @@ public sealed class DailyCloseCache
             var dir = System.IO.Path.GetDirectoryName(_path);
             if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
 
-            var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(items.Values.ToList(), Options));
-            File.Move(tmp, _path, overwrite: true);
+            var payload = JsonSerializer.Serialize(items.Values.ToList(), Options);
+            lock (_writeGate)
+            {
+                var tmp = _path + ".tmp";
+                File.WriteAllText(tmp, payload);
+                File.Move(tmp, _path, overwrite: true);
+            }
         }
         catch (Exception)
         {

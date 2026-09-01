@@ -30,4 +30,12 @@ public sealed record ReleaseInfo
     /// empty. The updater refuses a download whose hash disagrees — the guard
     /// that size alone cannot give against truncated-yet-consistent manifests.</summary>
     public string Sha256 { get; init; } = "";
+
+    /// <summary>
+    /// The manifest is pulling every client onto exactly this version, downgrade
+    /// included — the only way to take a bad release back once 30s polling has
+    /// spread it. Normal releases never carry it, so the next good publish (which
+    /// rewrites the manifest without the flag) ends the pull by itself.
+    /// </summary>
+    public bool Force { get; init; }
 }

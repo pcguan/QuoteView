@@ -31,6 +31,7 @@ public sealed class TrendChart : FrameworkElement
     private static readonly Brush AxisText = Frozen("#8B93A3");
     private static readonly Brush ReadoutBg = Frozen("#111722");
     private static readonly Brush ReadoutBorder = Frozen("#33405C");
+    private static readonly Pen ReadoutBorderPen = FrozenPen(ReadoutBorder, 1);
 
     private const double PadLeft = 8;
     private const double PadRight = 62;
@@ -45,6 +46,23 @@ public sealed class TrendChart : FrameworkElement
     private TrendSeries? _series;
     private TrendSeries? _compare;
     private int _hoverIndex = -1;
+
+    // Refreshed once per repaint instead of once per label; re-read every frame so
+    // dragging the window to a monitor with a different scale still lays out text
+    // correctly.
+    private double _pixelsPerDip = 1;
+
+    // Everything except the crosshair — grid, volume, both price lines, axis,
+    // legend — baked into one frozen drawing. Moving the crosshair one slot used to
+    // rebuild both PathGeometries (a LineSegment per minute, ~241–391 of them) on
+    // every mouse move. A TrendSeries is immutable and replaced wholesale by each
+    // poll, so reference identity plus the plot size is a complete cache key.
+    private DrawingGroup? _layer;
+    private TrendSeries? _layerSeries;
+    private TrendSeries? _layerCompare;
+    private double _layerWidth;
+    private double _layerHeight;
+    private double _layerDip;
 
     private static readonly Pen ComparePen = FrozenPen("#4C8DFF", 1.4);
     private static readonly Brush CompareText = Frozen("#4C8DFF");
@@ -117,6 +135,8 @@ public sealed class TrendChart : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
+        _pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+
         dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
 
         var points = Points;
@@ -162,37 +182,58 @@ public sealed class TrendChart : FrameworkElement
         var slots = ExpectedSlots(points);
         var step = PlotWidth / slots;
 
-        DrawGrid(dc, priceMin, priceMax, pre, plotTop, priceBottom, PriceToY);
-
-        if (cmpPoints is null)
+        var layer = _layer;
+        if (layer is null
+            || !ReferenceEquals(_layerSeries, _series) || !ReferenceEquals(_layerCompare, _compare)
+            || _layerWidth != ActualWidth || _layerHeight != ActualHeight
+            || _layerDip != _pixelsPerDip)
         {
-            double VolumeToY(double v) =>
-                volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * (plotBottom - volumeTop);
-            DrawVolume(dc, step, VolumeToY, volumeTop, plotBottom, volumeMax, pre, points, null);
-        }
-        else
-        {
-            // Compare mode: the volume band splits into two lanes — the picked
-            // day on top, the compare day beneath — each tagged at its left
-            // edge with the day's legend colour.
-            const double laneGap = 3;
-            var laneHeight = Math.Max(1, (plotBottom - volumeTop - laneGap) / 2);
-            var laneOneBottom = volumeTop + laneHeight;
-            var laneTwoTop = laneOneBottom + laneGap;
+            layer = new DrawingGroup();
+            using (var lc = layer.Open())
+            {
+                DrawGrid(lc, priceMin, priceMax, pre, plotTop, priceBottom, PriceToY);
 
-            double LaneOneY(double v) =>
-                volumeMax <= 0 ? laneOneBottom : laneOneBottom - v / volumeMax * laneHeight;
-            double LaneTwoY(double v) =>
-                volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * laneHeight;
+                if (cmpPoints is null)
+                {
+                    double VolumeToY(double v) =>
+                        volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * (plotBottom - volumeTop);
+                    DrawVolume(lc, step, VolumeToY, volumeTop, plotBottom, volumeMax, pre, points, null);
+                }
+                else
+                {
+                    // Compare mode: the volume band splits into two lanes — the picked
+                    // day on top, the compare day beneath — each tagged at its left
+                    // edge with the day's legend colour.
+                    const double laneGap = 3;
+                    var laneHeight = Math.Max(1, (plotBottom - volumeTop - laneGap) / 2);
+                    var laneOneBottom = volumeTop + laneHeight;
+                    var laneTwoTop = laneOneBottom + laneGap;
 
-            DrawVolume(dc, step, LaneOneY, volumeTop, laneOneBottom, volumeMax, pre, points, MainTag);
-            DrawVolume(dc, step, LaneTwoY, laneTwoTop, plotBottom, volumeMax,
-                _compare!.PreClose, cmpPoints, CompareTag);
+                    double LaneOneY(double v) =>
+                        volumeMax <= 0 ? laneOneBottom : laneOneBottom - v / volumeMax * laneHeight;
+                    double LaneTwoY(double v) =>
+                        volumeMax <= 0 ? plotBottom : plotBottom - v / volumeMax * laneHeight;
+
+                    DrawVolume(lc, step, LaneOneY, volumeTop, laneOneBottom, volumeMax, pre, points, MainTag);
+                    DrawVolume(lc, step, LaneTwoY, laneTwoTop, plotBottom, volumeMax,
+                        _compare!.PreClose, cmpPoints, CompareTag);
+                }
+                DrawCompare(lc, step, PriceToY, pre);
+                DrawLines(lc, step, PriceToY, points);
+                DrawTimeAxis(lc, step, plotBottom, points);
+                DrawLegend(lc);
+            }
+
+            if (layer.CanFreeze) layer.Freeze();
+            _layer = layer;
+            _layerSeries = _series;
+            _layerCompare = _compare;
+            _layerWidth = ActualWidth;
+            _layerHeight = ActualHeight;
+            _layerDip = _pixelsPerDip;
         }
-        DrawCompare(dc, step, PriceToY, pre);
-        DrawLines(dc, step, PriceToY, points);
-        DrawTimeAxis(dc, step, plotBottom, points);
-        DrawLegend(dc);
+
+        dc.DrawDrawing(layer);
         DrawCrosshair(dc, step, plotTop, plotBottom, PriceToY, points);
     }
 
@@ -377,7 +418,7 @@ public sealed class TrendChart : FrameworkElement
         var kw = main.Max(t => t.Key.Width);
         var vw = main.Max(t => t.Val.Width);
         var box = new Rect(PadLeft + 6, PadTop + 6, kw + vw + 22, rowHeight * main.Length + 10);
-        dc.DrawRectangle(ReadoutBg, new Pen(ReadoutBorder, 1), box);
+        dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
 
         var yy = box.Top + 5;
         foreach (var (key, val) in main)
@@ -410,7 +451,7 @@ public sealed class TrendChart : FrameworkElement
     {
         var rowHeight = rows[0].Key.Height + 3;
         var box = new Rect(x, PadTop + 6, width, rowHeight * (rows.Length + 1) + 12);
-        dc.DrawRectangle(ReadoutBg, new Pen(ReadoutBorder, 1), box);
+        dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
 
         dc.DrawText(header, new Point(box.Left + 8, box.Top + 5));
         var yy = box.Top + 7 + rowHeight;
@@ -470,7 +511,7 @@ public sealed class TrendChart : FrameworkElement
 
     private FormattedText Label(string text, Brush brush) =>
         new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 11, brush,
-            VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            _pixelsPerDip);
 
     private static Brush Frozen(string hex)
     {
@@ -483,6 +524,13 @@ public sealed class TrendChart : FrameworkElement
     {
         var pen = new Pen(Frozen(hex), thickness);
         if (dashed) pen.DashStyle = new DashStyle(new double[] { 3, 3 }, 0);
+        pen.Freeze();
+        return pen;
+    }
+
+    private static Pen FrozenPen(Brush brush, double thickness)
+    {
+        var pen = new Pen(brush, thickness);
         pen.Freeze();
         return pen;
     }

@@ -10,11 +10,43 @@ tools/release.sh <版本> <发布说明> [提交信息]
 任一步失败即中止。GitHub 令牌读 `git config qv.ghtoken`（不入库）。以下手工步骤仅供
 脚本失效时排障参考。
 
+脚本里三处"看不见就出事"的闸，改动时别顺手拆掉：
+- **编译只认退出码**，且 publish 前先删 corp-win 的 `dist\`——同版本号的陈旧产物是
+  `check_release` 唯一拦不住的一类错版发布。
+- **NAS 上的 exe 要单独核**（服务端 sha256 + 公网 Content-Length）：`latest.json` 正常而
+  exe 是残件时，整条链看上去全绿，客户端却只会在 sha 校验处一直失败。
+- **GitHub 那一步可重跑**：release 已存在就沿用并覆盖资产/正文（不再死在 422），
+  核验含"资产 QuoteView.exe 存在"——无资产的 release 等于兜底源整段失效。
+
+### 撤回一个坏版本（回退）
+
+```bash
+tools/release.sh --rollback <回退到的版本> <坏版本> [说明]
+```
+
+把 NAS 的 `latest.json` 指回旧版并写上 `"force": true`（客户端只在 force 时才接受版本号
+变小的更新，更新条也会显示「版本回退」），同时删掉坏版本的 GitHub release + tag，
+免得 NAS 不通时兜底源又把坏版本装回去。回退目标必须是**已经发布过、NAS 上还在的** exe，
+size/sha256 直接取自 NAS 上的实际字节。`force` 是一次性状态：下一次正常发版重写
+`latest.json` 时不带该字段，不需要手工清理。
+
+### 服务端（NAS 容器）发布
+
+```bash
+tools/deploy_server.sh          # 推 server.py + docker-compose.yml
+tools/deploy_server.sh --env    # 连 cfg/server.env 一起推（会覆盖 NAS 上的管理台口令）
+```
+
+scp → 逐文件哈希比对 → 容器内 `py_compile` 语法门 → `compose up -d --force-recreate` →
+`/status` 健康检查；任一步失败即停在重启之前或给出回滚路径（仓库就是部署源，
+`git checkout <上一提交> -- server/` 后重跑）。默认不推 `cfg/server.env`：NAS 上那份带真实
+`QV_ADMIN_PASSWORD`，仓库里是占位。
+
 QuoteView 每次改动的**标准流程**。日常代码改动走 **1–4**;要发一版给用户自动更新，再走 **5–6**。
 
 **前置约定**
 - 编译只在 **corp-win**（开发机无 .NET SDK；SSH host `corp-win`，产物在 `C:\work\stock`）。
-- **git 必须走代理**（`http.proxy=192.168.33.9:7890`），否则 `push` 卡死。
+- **git 必须走代理**（`git config http.proxy <内网代理:端口>`，真实地址见私有 memory，不入公开仓库），否则 `push` 卡死。
 - 更新源：**国内 NAS 为主**（`https://nas.pcguan.cn/quoteview/`）、**GitHub 兜底**；发版**两个源都要更新**。
 - 令牌不写进任何被跟踪文件（仓库公开）；只在运行时环境 / `.git/config` / 私有 memory 里。
 

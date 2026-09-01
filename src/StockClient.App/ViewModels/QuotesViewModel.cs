@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Net.Http;
 using System.Windows.Threading;
 using StockClient.Core;
@@ -356,6 +357,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly Dictionary<string, IReadOnlyList<Kline>> _daily = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (DateOnly Stamp, bool Settled)> _dailyMeta = new(StringComparer.OrdinalIgnoreCase);
     private readonly DailyCloseCache _dailyCache = new();
+
+    /// <summary>A cached contract survives this long without a refresh before
+    /// the file drops it — long enough to cover holidays and a machine left
+    /// off for a while, short enough that removed contracts do age out.</summary>
+    private const int StaleDailyDays = 30;
     private bool _dailyDirty;
 
     // Last-known fund-flow extras, persisted: after the close they ARE the
@@ -964,19 +970,41 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             if (_dailyDirty)
             {
                 _dailyDirty = false;
-                _dailyCache.Save(_daily.ToDictionary(
-                    kv => kv.Key,
-                    kv => new DailyCloseEntry
-                    {
-                        Code = kv.Key,
-                        Stamp = _dailyMeta.TryGetValue(kv.Key, out var m)
-                            ? m.Stamp.ToString("yyyy-MM-dd") : "",
-                        Settled = _dailyMeta.TryGetValue(kv.Key, out var m2) && m2.Settled,
-                        Candles = kv.Value
-                            .Select(c => new DailyClose { Date = c.Date, Close = c.Close })
-                            .ToArray(),
-                    },
-                    StringComparer.OrdinalIgnoreCase));
+
+                // Age out by staleness, NOT by "is it in a group right now".
+                // daily.json is a single machine-wide file while the groups
+                // belong to ONE identity (per-account profile / offline /
+                // legacy), so filtering by the live group set would wipe every
+                // other identity's candles the first time this ran after a
+                // sign-in — and they'd all be re-crawled from scratch. A code
+                // no group holds any more simply stops being refreshed, and
+                // drops out once its stamp goes stale.
+                var cutoff = DateTime.Today.AddDays(-StaleDailyDays)
+                    .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+                // Project here (_daily is only ever touched on this thread), then
+                // let the serialize+write run off it — both used to land on the UI
+                // thread at the end of every crawl, which is felt once a group is
+                // large. The snapshot is immutable, so the write sees no tearing.
+                var snapshot = _daily
+                    .Where(kv => !_dailyMeta.TryGetValue(kv.Key, out var m)
+                                 || string.CompareOrdinal(
+                                        m.Stamp.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                                        cutoff) >= 0)
+                    .ToDictionary(
+                        kv => kv.Key,
+                        kv => new DailyCloseEntry
+                        {
+                            Code = kv.Key,
+                            Stamp = _dailyMeta.TryGetValue(kv.Key, out var m)
+                                ? m.Stamp.ToString("yyyy-MM-dd") : "",
+                            Settled = _dailyMeta.TryGetValue(kv.Key, out var m2) && m2.Settled,
+                            Candles = kv.Value
+                                .Select(c => new DailyClose { Date = c.Date, Close = c.Close })
+                                .ToArray(),
+                        },
+                        StringComparer.OrdinalIgnoreCase);
+                _ = Task.Run(() => _dailyCache.Save(snapshot));
             }
         }
     }
@@ -1213,7 +1241,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             // A-shares only (SH/SZ/BJ). HK trades a different session and US/KR
             // quotes carry ANOTHER day's move entirely — mixing them into an
             // intraday basket produces a number that means nothing.
-            if (!IsAShare(code)) continue;
+            if (!CodeMapper.IsAShare(code)) continue;
             if (!_agg.TryGetValue(code, out var q)) continue;
             pcts.Add(q.Pct);
             caps.Add(q.FloatCap > 0 ? q.FloatCap / (1 + q.Pct / 100) : 0);
@@ -1236,11 +1264,6 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
         return den > 0 ? num / den : null;
     }
-
-    private static bool IsAShare(string code) =>
-        code.StartsWith("SH", StringComparison.OrdinalIgnoreCase)
-        || code.StartsWith("SZ", StringComparison.OrdinalIgnoreCase)
-        || code.StartsWith("BJ", StringComparison.OrdinalIgnoreCase);
 
     private void RecomputeGroupIndices()
     {

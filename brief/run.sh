@@ -21,7 +21,11 @@ echo "$(date '+%F %T %Z')  run.sh $*"
 
 # cron has no environment: the proxy is required for every source, and its
 # absence is the single most likely reason an unattended run fetches nothing.
-export HTTP_PROXY="${HTTP_PROXY:-http://192.168.33.9:7890}"
+# The address itself is not in the repo (this one is public) — it lives in the
+# untracked .env.local, and a run without it must stop loudly rather than fetch
+# nothing for an hour.
+[ -f "$BASE/.env.local" ] && . "$BASE/.env.local"
+export HTTP_PROXY="${HTTP_PROXY:?未设置代理：按 brief/.env.local.example 建 brief/.env.local，或在环境里给出 HTTP_PROXY}"
 export HTTPS_PROXY="${HTTPS_PROXY:-$HTTP_PROXY}"
 export PATH="/root/.nvm/versions/node/v26.1.0/bin:/usr/local/bin:/usr/bin:/bin"
 

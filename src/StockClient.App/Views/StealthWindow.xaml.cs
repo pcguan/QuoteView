@@ -265,11 +265,24 @@ public partial class StealthWindow : Window
     /// further and further behind the input, which is what "gets less responsive
     /// the longer you scroll" actually was. Intermediate frames are worth nothing
     /// here: only the newest rows are ever drawn.
+    ///
+    /// At shade 0 nothing is drawn at all. That state is fully invisible and is
+    /// meant to be left running for hours (double-click blackout, Win+Alt+Down),
+    /// so rebuilding the grid every second — and with it the 20s trend fetch
+    /// UpdateTrend kicks off — is work nobody can see. The ticks keep landing in
+    /// _pendingRows; ApplyShade replays the newest one the moment the panel is
+    /// brought back, whichever way it is brought back.
     /// </summary>
     private void OnTick(IReadOnlyList<QuoteRow> rows)
     {
         _pendingRows = rows;
+        if (_config.Shade <= 0) return;
 
+        QueueRender();
+    }
+
+    private void QueueRender()
+    {
         if (_renderQueued) return;
         _renderQueued = true;
 
@@ -432,6 +445,15 @@ public partial class StealthWindow : Window
     private readonly Dictionary<StealthField, double> _columnFloor = new();
     private string _columnFloorGroup = "";
 
+    // What each cell said on the previous frame, keyed by (field, row) with -1 for
+    // the header line. A floor only ever grows, so a text already folded into it
+    // stays folded in and needs no second measurement — and on a normal tick most
+    // of the panel (codes, names, header, anything the market didn't move) says
+    // exactly what it said a second ago. Dropped alongside the floors on a group
+    // switch, and on a font-size change: the same text is a different width then.
+    private readonly Dictionary<(StealthField Field, int Row), string> _measuredText = new();
+    private double _measuredFontSize;
+
     /// <summary>
     /// The quote block as ONE grid — a muted header line naming each column,
     /// then one row per contract — so values align vertically across rows
@@ -464,6 +486,7 @@ public partial class StealthWindow : Window
         {
             _columnFloorGroup = group;
             _columnFloor.Clear();
+            _measuredText.Clear();
         }
 
         var grid = new Grid();
@@ -484,7 +507,13 @@ public partial class StealthWindow : Window
         var yahei = new FontFamily("Microsoft YaHei");
         var consolas = new FontFamily("Consolas");
 
-        TextBlock Cell(string text, int gridCol, int col, bool header, Brush brush,
+        if (_measuredFontSize != fontSize)
+        {
+            _measuredFontSize = fontSize;
+            _measuredText.Clear();
+        }
+
+        TextBlock Cell(string text, int gridCol, int col, int rowIndex, bool header, Brush brush,
             FontWeight weight, double size, double topMargin)
         {
             var mono = fields[col].Field is not (StealthField.Code or StealthField.Name);
@@ -504,11 +533,15 @@ public partial class StealthWindow : Window
             Grid.SetColumn(block, gridCol);
             grid.Children.Add(block);
 
+            var key = fields[col].Field;
+            var slot = (key, rowIndex);
+            if (_measuredText.TryGetValue(slot, out var before) && before == text) return block;
+            _measuredText[slot] = text;
+
             var measured = new FormattedText(text,
                 System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
                 new Typeface(family, FontStyles.Normal, weight, FontStretches.Normal),
                 size, brush, dpi).Width;
-            var key = fields[col].Field;
             if (!_columnFloor.TryGetValue(key, out var known) || measured > known)
                 _columnFloor[key] = measured;
             return block;
@@ -519,7 +552,7 @@ public partial class StealthWindow : Window
             var headerBrush = Brush(_config.HeaderColor);
             for (var i = 0; i < used.Count; i++)
             {
-                var cell = Cell(Label(fields[used[i]].Field), i, used[i], header: true,
+                var cell = Cell(Label(fields[used[i]].Field), i, used[i], -1, header: true,
                     headerBrush, FontWeights.Normal, fontSize, 0);
                 Grid.SetRow(cell, 0);
             }
@@ -547,7 +580,7 @@ public partial class StealthWindow : Window
             {
                 var c = used[i];
                 var f = fields[c];
-                var cell = Cell(values[r][c] ?? "", i, c, header: false,
+                var cell = Cell(values[r][c] ?? "", i, c, r, header: false,
                     Brush(ColorFor(f, row)),
                     f.Field == StealthField.Name ? FontWeights.SemiBold : FontWeights.Normal,
                     fontSize, top);
@@ -905,16 +938,32 @@ public partial class StealthWindow : Window
         : v >= 10000 ? v.ToString("N0", CultureInfo.InvariantCulture)
         : v.ToString(v < 10 ? "0.000" : "0.00", CultureInfo.InvariantCulture);
 
+    // Every colour on the panel comes from one of a handful of configured hex
+    // strings, and each of them is handed to every cell again on every 1s tick.
+    // Minting a SolidColorBrush per cell per tick is a few hundred short-lived,
+    // dispatcher-affine objects a second; cached and frozen, it is none, and a
+    // frozen brush is the cheaper one for WPF to draw with as well.
+    private static readonly Dictionary<string, Brush> BrushCache = new(StringComparer.Ordinal);
+
     private static Brush Brush(string hex)
     {
+        if (string.IsNullOrEmpty(hex)) return Brushes.White;
+        if (BrushCache.TryGetValue(hex, out var cached)) return cached;
+
+        Brush made;
         try
         {
-            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            var solid = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+            solid.Freeze();
+            made = solid;
         }
         catch
         {
-            return Brushes.White;
+            made = Brushes.White;   // already frozen
         }
+
+        BrushCache[hex] = made;
+        return made;
     }
 
     /// <summary>
@@ -940,9 +989,14 @@ public partial class StealthWindow : Window
         _save();
     }
 
+    /// <summary>The shade already applied, to catch the 0 → visible transition;
+    /// -1 until the first ApplyShade, so starting up at 0 is not a transition.</summary>
+    private int _appliedShade = -1;
+
     private void ApplyShade()
     {
-        var t = Math.Clamp(_config.Shade, 0, MaxShade) / (double)MaxShade;
+        var shade = Math.Clamp(_config.Shade, 0, MaxShade);
+        var t = shade / (double)MaxShade;
 
         Opacity = 1;
         if (Root.Child is UIElement body) body.Opacity = t;
@@ -955,6 +1009,16 @@ public partial class StealthWindow : Window
         // back to whatever is beneath; the double-click restore is unaffected
         // because the mouse HOOK watches the screen region, not the window.
         SetClickThrough(t <= 0);
+
+        // Coming back from invisible: while shade was 0 the ticks only reached
+        // _pendingRows, so without this the panel reappears showing the quotes it
+        // went dark on. Caught here rather than at each caller because every way
+        // up — Win+Alt+Up, Shift+wheel, the ghost double-click, the settings
+        // slider — passes through ApplyShade. Queued, never called inline: Render
+        // calls back into this method.
+        var was = _appliedShade;
+        _appliedShade = shade;
+        if (was == 0 && shade > 0) QueueRender();
     }
 
     private void SetClickThrough(bool on)
@@ -1143,7 +1207,11 @@ public partial class StealthWindow : Window
     /// </summary>
     public void ApplySettings()
     {
+        // Also refresh the pending snapshot, not just _rows: leaving a stale
+        // one behind meant the render ApplyShade queues on a 0→N restore
+        // replayed the OLD row count right over the settings just applied.
         _rows = _vm.StealthRows();   // row count may have changed
+        _pendingRows = _rows;
         Render();                    // fields/colour + ApplyShade
     }
 

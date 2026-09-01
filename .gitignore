@@ -13,6 +13,9 @@ dist/
 # Local diagnostics
 panel.log
 
+# Local secrets / intranet addresses (public repo) — template is .env.local.example
+brief/.env.local
+
 # Release mirror staging (versioned exe + manifest; served by NAS nginx, synced there)
 release/
 tools/Preview/bin/

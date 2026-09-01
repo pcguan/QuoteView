@@ -22,7 +22,8 @@
                      VerticalAlignment="Center" />
         </Border>
         <TextBlock x:Name="HintText" Text="滚轮缩放 · 拖动平移" FontSize="11" Foreground="#5F6672"
-                   VerticalAlignment="Center" Margin="12,0,0,0" />
+                   VerticalAlignment="Center" Margin="12,0,0,0"
+                   ToolTip="快捷键：Esc 关闭 · 1/2/3/4 分时·日K·周K·月K · ←→ 逐根平移 · PgUp/PgDn 翻页 · +/- 缩放 · Home/End 跳到最早/最新" />
       </StackPanel>
 
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">

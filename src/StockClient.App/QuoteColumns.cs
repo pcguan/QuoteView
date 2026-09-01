@@ -14,9 +14,28 @@ namespace StockClient.App;
 ///
 /// Columns are keyed by header text. The header-less delete column is neither
 /// stored nor moved, so it stays pinned on the right.
+///
+/// Also carries the per-column metadata the grid needs at runtime — see
+/// <see cref="IsFundFlowProperty"/>.
 /// </summary>
 public static class QuoteColumns
 {
+    /// <summary>
+    /// Marks a column as fed by the EastMoney fund-flow poll, which only runs
+    /// while one of them is visible. Declared on the column in XAML rather than
+    /// matched against header text: editing a header caption is a caption edit,
+    /// and must not silently unhook the column from the poll.
+    /// </summary>
+    public static readonly DependencyProperty IsFundFlowProperty =
+        DependencyProperty.RegisterAttached(
+            "IsFundFlow", typeof(bool), typeof(QuoteColumns), new PropertyMetadata(false));
+
+    public static void SetIsFundFlow(DependencyObject element, bool value) =>
+        element.SetValue(IsFundFlowProperty, value);
+
+    public static bool GetIsFundFlow(DependencyObject element) =>
+        (bool)element.GetValue(IsFundFlowProperty);
+
     /// <param name="saved">Accessor, not a list: the config object is swapped
     /// wholesale on a user switch, and a captured list would leave every later
     /// snapshot writing into the orphaned copy.</param>

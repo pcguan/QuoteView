@@ -236,6 +236,17 @@ STATE = os.path.join(DATA, "state.json")
 
 MAX_ACCOUNTS = 10          # personal server; also caps drive-by registrations
 
+# 公网自助注册默认关闭：任何人都能占满账户槽位，更实的是注册后 /sync 的合约会
+# 进入 union_codes/news_universe——服务端替他去东财/腾讯抓取，抓取预算被耗光
+# 还会连累正常归档（连续失败退避）。建号走管理台（/web/api/act/create）。
+# QV_OPEN_REGISTER=1 可临时放开一段时间。
+OPEN_REGISTER = os.environ.get("QV_OPEN_REGISTER", "") == "1"
+
+# 单账户能带进抓取宇宙的合约数上限。/sync 本身允许 200 组×2000 码，那是客户端
+# 自己的数据，照存；但服务端的外连预算不能按那个量级放开。超出部分按代码序截断
+# （只影响服务端归档/资讯，不动账户存的分组）。
+MAX_ACCOUNT_CODES = int(os.environ.get("QV_MAX_ACCOUNT_CODES", "1000"))
+
 # Accounts invisible to the web console (test/probe accounts). They work
 # normally over the API; they just never appear in accounts/sessions/logs.
 HIDDEN_ACCOUNTS = set(filter(None, os.environ.get("QV_HIDDEN_ACCOUNTS", "qa_probe").split(",")))
@@ -253,6 +264,9 @@ WS_CONNS = {}
 _ws_lock = threading.Lock()
 
 
+_log_lock = threading.Lock()
+
+
 def log(msg):
     line = f"{datetime.now(CN):%F %T} {msg}"
     print(line, flush=True)
@@ -260,10 +274,14 @@ def log(msg):
         return
     try:
         # Size-capped by simple rotation: server.log -> server.log.1 at 10MB.
-        if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 10 * 1024 * 1024:
-            os.replace(LOG_FILE, LOG_FILE + ".1")
-        with open(LOG_FILE, "a") as f:
-            f.write(line + "\n")
+        # 检查+轮转+写入必须在同一把锁里：每请求一线程，两个线程同时越过大小
+        # 检查时，后一个 replace 会把前一个刚建的空文件盖到 .1 上，刚归档的
+        # 10MB 历史整体消失；抢输的那条日志还会被下面的 except 静默吞掉。
+        with _log_lock:
+            if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 10 * 1024 * 1024:
+                os.replace(LOG_FILE, LOG_FILE + ".1")
+            with open(LOG_FILE, "a") as f:
+                f.write(line + "\n")
     except OSError:
         pass
 
@@ -385,18 +403,55 @@ def normalize_tokens(doc):
     ]
 
 
+# ---------------------------------------------------------- token 活跃度落盘
+# seen 只是活跃度：每个认证请求都全量重写账户 JSON（还要抢全局 _lock，把互不
+# 相关的账户和端点串起来），多客户端 30s 轮询下每分钟几十次落盘。改为 60s 节流
+# ——ip/ver 是身份信息，一变就立刻落盘。内存里始终保留最新 seen，管理台视图用
+# touch_seen 覆盖磁盘上的旧值，否则在线判定会滞后一个节流周期。
+TOUCH_FLUSH_S = 60
+TOUCH_KEYS = 256           # 令牌会随登录轮换，内存表不能无限增长
+_touch_lock = threading.Lock()
+_touch_seen = {}           # token -> {"seen": 时刻串, "at": 上次落盘, "ip", "ver"}
+
+
+def touch_seen(token):
+    """内存里该令牌的最新 seen（可能比磁盘新），没有则 None。"""
+    with _touch_lock:
+        entry = _touch_seen.get(token)
+        return entry["seen"] if entry else None
+
+
 def touch_token(user, token, ip, ver):
     """Records activity on a token: last-seen, ip and client version.
+    Returns True when the account file was actually rewritten.
 
     Reloads inside the lock on purpose: the doc the auth check read is a
     snapshot from before the lock, and saving that snapshot would silently
     undo any write (a settings PUT, a sync) that landed in between — the
     classic lost update, and exactly how the first /settings write vanished."""
     stamp = f"{datetime.now(CN):%F %T}"
+    now = time.time()
+    with _touch_lock:
+        entry = _touch_seen.get(token)
+        if (entry is not None and now - entry["at"] < TOUCH_FLUSH_S
+                and (not ip or ip == entry["ip"])
+                and (not ver or ver == entry["ver"])):
+            entry["seen"] = stamp
+            return False
+        _touch_seen[token] = {
+            "seen": stamp, "at": now,
+            "ip": ip or (entry or {}).get("ip") or "",
+            "ver": ver or (entry or {}).get("ver") or "",
+        }
+        if len(_touch_seen) > TOUCH_KEYS:
+            oldest = sorted(_touch_seen, key=lambda k: _touch_seen[k]["at"])
+            for k in oldest[:TOUCH_KEYS // 4]:
+                _touch_seen.pop(k, None)
+
     with _lock:
         doc = load_account(user)
         if doc is None:
-            return
+            return False
         normalize_tokens(doc)
         for t in doc["tokens"]:
             if t["t"] == token:
@@ -407,6 +462,7 @@ def touch_token(user, token, ip, ver):
                     t["ver"] = ver
                 break
         save_account(user, doc)
+    return True
 
 
 # ---------------------------------------------------------------- storage
@@ -499,11 +555,16 @@ def union_codes():
                 doc = json.load(f)
         except Exception:
             continue
+        mine = set()
         for group in doc.get("groups", []):
             for code in group.get("codes", []):
                 code = str(code).upper()
                 if CODE_RE.match(code):
-                    seen.add(code)
+                    mine.add(code)
+        quota = sorted(mine)[:MAX_ACCOUNT_CODES]
+        if len(quota) < len(mine):
+            log(f"union: {name[:-5]} 超配额，只取 {len(quota)}/{len(mine)} 个合约")
+        seen.update(quota)
     return sorted(seen)
 
 
@@ -548,6 +609,7 @@ def fetch_eastmoney(code):
         "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
         "Referer": "https://quote.eastmoney.com/",
     })
+    last = None
     for _ in range(2):
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
@@ -575,8 +637,12 @@ def fetch_eastmoney(code):
                 "Points": points,
             }
             return series, points[-1]["Time"][:10]
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # 异常对象出了 except 块就被清掉，重试循环里必须自己留一份：没有
+            # 类型和合约的日志，事后分不清限流(ConnectionReset/空响应)和网络故障。
+            last = e
             time.sleep(2)
+    log(f"fetch eastmoney {code} failed: {type(last).__name__}: {last}")
     return None, None
 
 
@@ -596,6 +662,7 @@ def fetch_tencent(code):
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
     })
+    last = None
     for _ in range(2):
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
@@ -636,8 +703,10 @@ def fetch_tencent(code):
                 "PreClose": pre_close,
                 "Points": points,
             }, day
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            last = e
             time.sleep(2)
+    log(f"fetch tencent {code} failed: {type(last).__name__}: {last}")
     return None, None
 
 
@@ -679,6 +748,7 @@ def kline_body(secid, klt, fqt, lmt):
         "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
         "Referer": "https://quote.eastmoney.com/",
     })
+    last = None
     for _ in range(3):
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
@@ -696,7 +766,10 @@ def kline_body(secid, klt, fqt, lmt):
                     json.dump({"at": time.time(), "body": body}, f)
                 os.replace(tmp, path)
             return body
-        except Exception:
+        except Exception as e:
+            # 留住末次异常：ValueError("empty klines") 是限流，
+            # ConnectionReset/timeout 是网络故障，日志里得能分开。
+            last = e
             time.sleep(1.5)
 
     # EastMoney exhausted: Tencent fallback, converted to the EastMoney shape
@@ -707,6 +780,8 @@ def kline_body(secid, klt, fqt, lmt):
     if body is not None:
         return body
 
+    log(f"kline {secid} klt={klt} fqt={fqt} both sources failed: "
+        f"{type(last).__name__}: {last}" + (" (serving stale)" if meta else ""))
     return meta["body"] if meta else None
 
 
@@ -749,7 +824,8 @@ def kline_tencent(secid, klt, fqt, lmt):
             return None
         log(f"kline fallback tencent {api} {span} rows={len(klines)}")
         return json.dumps({"data": {"code": symbol, "klines": klines}})
-    except Exception:
+    except Exception as e:
+        log(f"kline tencent {api} {span} failed: {type(e).__name__}: {e}")
         return None
 
 
@@ -1054,13 +1130,17 @@ def news_universe():
         if not name.endswith(".json"):
             continue
         doc = load_account(name[:-5])
+        mine = {}
         for g in (doc or {}).get("groups") or []:
             for code in g.get("codes") or []:
                 code = str(code).upper()
                 if code.startswith("SH"):
-                    out[code] = "1." + code[2:]
+                    mine[code] = "1." + code[2:]
                 elif code.startswith(("SZ", "BJ")):
-                    out[code] = "0." + code[2:]
+                    mine[code] = "0." + code[2:]
+        # 同 union_codes：单账户的抓取配额（超出的截断只影响资讯，不动分组本身）
+        for code in sorted(mine)[:MAX_ACCOUNT_CODES]:
+            out[code] = mine[code]
     return out
 
 
@@ -1122,14 +1202,23 @@ def fetch_stock_news(code, secid):
 def ws_broadcast(obj):
     payload = json.dumps(obj, ensure_ascii=False).encode()
     with _ws_lock:
-        conns = list(WS_CONNS.values())
-    for conn in conns:
+        conns = list(WS_CONNS.items())
+    for token, conn in conns:
         try:
-            sock = conn.get("sock")
-            if sock is not None:
-                ws_send(sock, 1, payload)
+            ws_send_conn(conn, 1, payload)
         except Exception:
-            pass   # a dying connection cleans itself up
+            # 半死的对端（缓冲满不收包）会一路吃满 socket 的 20s 超时，把 news
+            # 调度线程按连接串行拖住。就地摘掉并关 socket：handler 线程的读随即
+            # 报错走它自己的 finally，重复 pop 无害。
+            with _ws_lock:
+                if WS_CONNS.get(token) is conn:
+                    WS_CONNS.pop(token, None)
+            try:
+                sock = conn.get("sock")
+                if sock is not None:
+                    sock.close()
+            except Exception:
+                pass
 
 
 def news_sweep_tick():
@@ -1236,10 +1325,6 @@ def news_scheduler():
 # ---------------------------------------------------------------- http
 
 WEB_SESSION_IDLE_H = 12
-
-
-def web_sessions():
-    return load_state().get("websessions") or {}
 
 
 def web_session_check(token):
@@ -1362,6 +1447,18 @@ def ws_send(sock, opcode, payload=b""):
     else:
         hdr += bytes([127]) + struct.pack(">Q", n)
     sock.sendall(hdr + payload)
+
+
+def ws_send_conn(conn, opcode, payload=b""):
+    """Same frame, serialized per connection: the news thread broadcasts while
+    the connection's own handler thread answers pings, and two sendall calls on
+    one socket can interleave their bytes on a partial write — which corrupts
+    that client's whole stream, not just the frame."""
+    sock = conn.get("sock")
+    if sock is None:
+        return
+    with conn["lock"]:
+        ws_send(sock, opcode, payload)
 
 
 ADMIN_PAGE = """<!doctype html><html lang=zh><meta charset=utf-8>
@@ -1835,9 +1932,12 @@ class Handler(BaseHTTPRequestHandler):
         if entry is not None and entry.get("kicked"):
             self._bad("kicked", 401)
             return None
-        touch_token(user, token, self._ip(), self._ver())
-        # Re-read after the touch so callers see the freshest doc.
-        return user, load_account(user) or doc, token
+        if touch_token(user, token, self._ip(), self._ver()):
+            # Re-read only when the touch actually wrote: that write merged in
+            # whatever landed since our snapshot. A throttled touch changes
+            # nothing on disk, so the snapshot is still the freshest copy.
+            doc = load_account(user) or doc
+        return user, doc, token
 
     def _admin(self):
         """Web-console auth: the X-Admin-Token header must name a live admin
@@ -1926,15 +2026,18 @@ class Handler(BaseHTTPRequestHandler):
                     # 3-minute heartbeat window only covers older clients that
                     # don't hold one yet.
                     active = t["t"] in WS_CONNS
+                    # 磁盘上的 seen 最多滞后一个落盘节流周期（TOUCH_FLUSH_S），
+                    # 内存里的才是最新的。
+                    seen = touch_seen(t["t"]) or t.get("seen") or ""
                     if not active:
                         try:
-                            seen_dt = datetime.strptime(t.get("seen") or "",
+                            seen_dt = datetime.strptime(seen,
                                                         "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN)
                             active = (now - seen_dt) <= timedelta(minutes=3)
                         except Exception:
                             pass
                     sessions.append({"ip": ip, "ver": t.get("ver") or "-",
-                                     "created": created, "seen": t.get("seen") or "-",
+                                     "created": created, "seen": seen or "-",
                                      "duration": duration, "active": active})
                 out.append({"username": name[:-5], "role": role_of(doc),
                             "disabled": bool(doc.get("disabled")), "online": sessions})
@@ -2092,15 +2195,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"settings": settings, "updated": doc.get("settings_updated")})
 
         if url.path == "/status":
-            state = load_state()
-            accounts = (len([n for n in os.listdir(ACCOUNTS) if n.endswith(".json")])
-                        if os.path.isdir(ACCOUNTS) else 0)
-            return self._json({
-                "accounts": accounts,
-                "union": len(union_codes()),
-                "last_sweep": state.get("last_sweep"),
-                "holiday": state.get("holiday"),
-            })
+            # 无鉴权端点，只回一条健康信号（归档调度还在不在跑）。账户数、合约
+            # 并集这些业务数据在有鉴权的管理台看，不从公网裸奔。
+            return self._json({"ok": True,
+                               "last_sweep": load_state().get("last_sweep")})
 
         self._bad("not found", 404)
 
@@ -2150,24 +2248,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             ip = self._ip()
+            # 每个连接自带一把发送锁：广播（news 线程）与这里的 ok/pong 会并发
+            # 写同一个 socket，无锁时部分写会让两个帧的字节交错。
+            conn = {"user": user, "ip": ip, "ver": ver,
+                    "since": f"{datetime.now(CN):%F %T}", "sock": sock,
+                    "lock": threading.Lock()}
             with _ws_lock:
-                WS_CONNS[token] = {"user": user, "ip": ip, "ver": ver,
-                                   "since": f"{datetime.now(CN):%F %T}", "sock": sock}
+                WS_CONNS[token] = conn
             touch_token(user, token, ip, ver)
-            ws_send(sock, 1, b'{"ok":true}')
+            ws_send_conn(conn, 1, b'{"ok":true}')
             log(f"ws connect {user} from {ip} ver={ver or '-'}")
 
-            last_touch = time.time()
             while True:
                 opcode, payload = ws_read_frame(sock)
                 if opcode is None or opcode == 8:
                     break
                 if opcode == 9:                    # ping -> pong (echo payload)
-                    ws_send(sock, 10, payload)
-                # any traffic proves liveness; persist it once a minute
-                if time.time() - last_touch > 60:
-                    touch_token(user, token, self._ip(), None)
-                    last_touch = time.time()
+                    ws_send_conn(conn, 10, payload)
+                # any traffic proves liveness; touch_token throttles the write
+                touch_token(user, token, ip, None)
         except Exception:
             pass   # timeouts and resets all mean the same thing: gone
         finally:
@@ -2209,7 +2308,10 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 online += 1 if is_online else 0
                 tokens.append({"online": is_online, "ip": t.get("ip"), "ver": t.get("ver"),
-                               "created": t.get("created"), "seen": t.get("seen"), "duration": duration})
+                               "created": t.get("created"),
+                               # 内存里的 seen 比磁盘新（落盘按 TOUCH_FLUSH_S 节流）
+                               "seen": touch_seen(t["t"]) or t.get("seen"),
+                               "duration": duration})
             groups = doc.get("groups") or []
             out.append({
                 "username": user,
@@ -2293,6 +2395,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._admin_post(self.path[13:], raw)
 
         if self.path == "/register":
+            if not OPEN_REGISTER:
+                log(f"register refused (closed) from {self._ip()}")
+                return self._bad("自助注册已关闭，请联系管理员开通账户", 403)
             try:
                 doc = json.loads(raw)
             except Exception:

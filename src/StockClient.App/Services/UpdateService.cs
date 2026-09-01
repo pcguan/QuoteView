@@ -15,8 +15,13 @@ public sealed record UpdateCheck
     /// <summary>The resolved release from whichever source answered, or null.</summary>
     public ReleaseInfo? Release { get; init; }
 
-    /// <summary>True when a newer release with a download URL exists.</summary>
-    public bool HasUpdate => Release is not null && Release.Version > Current;
+    /// <summary>
+    /// True when a newer release with a download URL exists — or when the
+    /// manifest is forcing a specific version (a rollback), in which case any
+    /// difference from the running version counts, downgrades included.
+    /// </summary>
+    public bool HasUpdate => Release is not null
+        && (Release.Force ? Release.Version != Current : Release.Version > Current);
 }
 
 /// <summary>
@@ -106,13 +111,13 @@ public sealed class UpdateService
         // leftover (often held briefly by the antivirus scanning it) made every
         // following attempt die within seconds on "file in use".
         var newPath = $"{exe}.{DateTime.Now:yyyyMMddHHmmssfff}.new";
+        var old = $"{exe}.{DateTime.Now:yyyyMMddHHmmss}.old";
 
         try
         {
             await DownloadAsync(release.DownloadUrl, newPath, progress, cancellationToken);
             Verify(newPath, release);
 
-            var old = $"{exe}.{DateTime.Now:yyyyMMddHHmmss}.old";
             File.Move(exe, old);
             try
             {
@@ -132,46 +137,55 @@ public sealed class UpdateService
             throw;
         }
 
-        // --updated: we're still alive for a beat after Process.Start, and the
-        // single-instance mutex would make the new copy yield to us and exit.
-        // The flag tells it to wait for the mutex instead.
-        var args = background ? "--updated --background" : "--updated";
-        Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true });
+        // Past this point the swap has already happened: a failure here is not
+        // "the download failed", the new exe IS the installed program. A freshly
+        // written unsigned exe being blocked or quarantined by antivirus is
+        // routine, and without the restore below the original path can be left
+        // with no runnable program at all.
+        try
+        {
+            // --updated: we're still alive for a beat after Process.Start, and the
+            // single-instance mutex would make the new copy yield to us and exit.
+            // The flag tells it to wait for the mutex instead.
+            var args = background ? "--updated --background" : "--updated";
+            Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            var restored = false;
+            try
+            {
+                // Only when the new exe is gone (quarantined): if it survived,
+                // it is the newer program and must stay.
+                if (!File.Exists(exe) && File.Exists(old))
+                {
+                    File.Move(old, exe);
+                    restored = true;
+                }
+            }
+            catch
+            {
+                // Nothing left to try — the message below tells the user the truth.
+            }
+
+            throw new InvalidOperationException(
+                "新版本已写入磁盘，但启动被拦截（多半是杀毒软件）"
+                + (restored ? "，已恢复到原版本；" : "；")
+                + "请手动重新打开程序，或把 QuoteView 加入杀软白名单。", ex);
+        }
+
         Application.Current.Shutdown();
     }
 
     /// <summary>
-    /// The downloaded bytes must actually be our program: a truncated transfer
-    /// or a CDN challenge/error page must fail HERE with a message naming the
-    /// cause — never get installed as the exe.
+    /// Thin wrapper over the Core verifier: opens the downloaded file and lets
+    /// the byte-level checks decide. Failure here means the file never becomes
+    /// the exe.
     /// </summary>
     private static void Verify(string path, ReleaseInfo release)
     {
-        var length = new FileInfo(path).Length;
-        if (release.Size > 0 && length != release.Size)
-            throw new InvalidOperationException(
-                $"下载不完整：应为 {release.Size} 字节，实际 {length} 字节"
-                + "（网络中断或被中间缓存截断），稍后会自动重试");
-
-        using (var fs = File.OpenRead(path))
-        {
-            var head = new byte[2];
-            if (fs.Read(head, 0, 2) != 2 || head[0] != (byte)'M' || head[1] != (byte)'Z')
-                throw new InvalidOperationException(
-                    "下载内容不是有效的程序文件（可能被网络设备重定向或拦截），稍后会自动重试");
-        }
-
-        // The strong check: byte length can be forged by a manifest generated
-        // from the same truncated file — the hash cannot.
-        if (!string.IsNullOrEmpty(release.Sha256))
-        {
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            using var stream = File.OpenRead(path);
-            var hash = Convert.ToHexString(sha.ComputeHash(stream));
-            if (!hash.Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
-                    "下载文件 SHA-256 校验失败（内容与发布清单不符），已丢弃；稍后会自动重试");
-        }
+        using var fs = File.OpenRead(path);
+        UpdateVerifier.Verify(fs, release.Size, release.Sha256);
     }
 
     private async Task DownloadAsync(

@@ -37,4 +37,13 @@ public static class CodeMapper
     }
 
     public static bool IsValid(string code) => TryParse(code, out _, out _);
+
+    /// <summary>The market prefix alone, "" when the code isn't a normalized one.</summary>
+    public static string MarketOf(string code) => TryParse(code, out var market, out _) ? market : "";
+
+    /// <summary>
+    /// A股 = 沪/深/北. The one place the string form of that judgement lives —
+    /// code that already holds a parsed Contract should test its Market instead.
+    /// </summary>
+    public static bool IsAShare(string code) => MarketOf(code) is "SH" or "SZ" or "BJ";
 }
