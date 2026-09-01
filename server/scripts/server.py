@@ -376,6 +376,35 @@ def trend_dates(code):
     return sorted(out, reverse=True)
 
 
+# ---------------------------------------------------------- retention principle
+# 服务端数据永远保留（2026-09-01 定的原则）：客户端可以不保留，但用户要数据时必须
+# 能从服务端拿到。工作集列表照旧截断保证读写快；被截掉的条目一律先落入只追加的
+# 归档文件（data/archive/<kind>.jsonl，一行一条 JSON），永不删除。
+
+ARCHIVE_DIR = os.path.join(DATA, "archive")
+
+
+def archive_overflow(kind, entries):
+    if not entries:
+        return
+    try:
+        os.makedirs(ARCHIVE_DIR, exist_ok=True)
+        with open(os.path.join(ARCHIVE_DIR, f"{kind}.jsonl"), "a") as f:
+            for e in entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001 — archiving must never break the write path
+        log(f"archive {kind} failed: {e}")
+
+
+def cap_log(kind, owner, entries, keep):
+    """Trim a per-account log list to its working-set size, archiving what
+    falls off the end (tagged with the owner) instead of discarding it."""
+    if len(entries) > keep:
+        archive_overflow(kind, [{**e, "user": owner} for e in entries[:-keep]])
+        return entries[-keep:]
+    return entries
+
+
 def prune(code):
     if RETAIN_DAYS <= 0:
         return
@@ -658,7 +687,6 @@ def kline_tencent(secid, klt, fqt, lmt):
 # ------------------------------------------------------------- KR daily closes
 
 KR_DAILY = os.path.join(DATA, "kr-daily.json")
-KR_KEEP = 300
 
 
 def kr_load():
@@ -738,7 +766,7 @@ def kr_sweep_tick():
         records = [r for r in doc.get(code, []) if r.get("date") != day]
         records.append({"date": day, "close": close, "prev": prev, "pct": pct})
         records.sort(key=lambda r: r["date"])
-        doc[code] = records[-KR_KEEP:]
+        doc[code] = records   # 永久保留（服务端数据不丢原则）
         added += 1
 
     if added:
@@ -1051,11 +1079,16 @@ def news_sweep_tick():
         added += len(fresh)
         merged = fresh + entry["items"]
         cutoff = f"{datetime.now(CN) - timedelta(seconds=NEWS_RETAIN_S):%F %H:%M}"
-        merged = [i for i in merged if (i.get("time") or "") >= cutoff][:40]
-        pool[code] = {"fetched": ts, "items": merged}
+        kept = [i for i in merged if (i.get("time") or "") >= cutoff][:40]
+        archive_overflow("news", [{**i, "code": code}
+                                  for i in merged if i not in kept])
+        pool[code] = {"fetched": ts, "items": kept}
 
-    # Contracts nobody watches any more age out of the pool with them.
+    # Contracts nobody watches any more age out of the pool — their items go
+    # to the archive first (the retention principle).
     for code in [c for c in pool if c not in universe]:
+        archive_overflow("news", [{**i, "code": code}
+                                  for i in (pool[code].get("items") or [])])
         del pool[code]
 
     with _news_lock:
@@ -2121,7 +2154,7 @@ class Handler(BaseHTTPRequestHandler):
                 faults = doc.get("faultlogs") or []
                 faults.append({"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                                "ver": self._ver(), "kind": kind, "detail": detail})
-                doc["faultlogs"] = faults[-100:]
+                doc["faultlogs"] = cap_log("faults", user, faults, 100)
                 save_account(user, doc)
             log(f"client fault {user} {kind}: {detail[:120]}")
             return self._json({"ok": True})
@@ -2197,7 +2230,7 @@ class Handler(BaseHTTPRequestHandler):
                                               and (t.get("kickedAt") or "") < kick_cutoff)]
                 account["tokens"] = account["tokens"][-(MAX_TOKENS - 1):] + [token]
                 logins = account.get("logins") or []
-                account["logins"] = (logins + [self._login_entry()])[-100:]
+                account["logins"] = cap_log("logins", user, logins + [self._login_entry()], 100)
                 save_account(user, account)
             _token_cache[token["t"]] = user
             log(f"login {user} from {self._ip()} ver={self._ver() or '-'}")
@@ -2284,11 +2317,11 @@ class Handler(BaseHTTPRequestHandler):
                 account["synced"] = f"{datetime.now(CN):%F %T}"
                 if parts:
                     cfg = account.get("cfglogs") or []
-                    account["cfglogs"] = (cfg + [{
+                    account["cfglogs"] = cap_log("cfglogs", user, cfg + [{
                         "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                         "ver": self._ver() or "", "kind": "分组",
                         "detail": " ".join(parts),
-                    }])[-300:]
+                    }], 300)
                 save_account(user, account)
             total = sum(len(g["codes"]) for g in clean)
             log(f"groups push {user} from {self._ip()} ver={self._ver() or '-'} "
@@ -2342,10 +2375,10 @@ class Handler(BaseHTTPRequestHandler):
                 normalize_tokens(account)
                 account["tokens"] = [t for t in account["tokens"] if t["t"] == token]
                 pwlogs = account.get("pwlogs") or []
-                account["pwlogs"] = (pwlogs + [{
+                account["pwlogs"] = cap_log("pwlogs", user, pwlogs + [{
                     "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                     "by": "self", "ver": self._ver(),
-                }])[-50:]
+                }], 50)
                 save_account(user, account)
             _token_cache.clear()
             log(f"password self-change {user} from {self._ip()}")
@@ -2388,11 +2421,11 @@ class Handler(BaseHTTPRequestHandler):
                 account["settings_updated"] = f"{datetime.now(CN):%F %T}"
                 if detail:
                     cfg = account.get("cfglogs") or []
-                    account["cfglogs"] = (cfg + [{
+                    account["cfglogs"] = cap_log("cfglogs", user, cfg + [{
                         "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                         "ver": self._ver() or "", "kind": "设置",
                         "detail": detail,
-                    }])[-300:]
+                    }], 300)
                 save_account(user, account)
             # Ops trail: settings pushes are whole-blob overwrites, so WHO/WHEN/
             # from WHERE matters the moment two machines disagree about "nobody
@@ -2418,10 +2451,10 @@ class Handler(BaseHTTPRequestHandler):
             if account is None:
                 return
             logins = account.get("logins") or []
-            account["logins"] = (logins + [{
+            account["logins"] = cap_log("logins", user, logins + [{
                 "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                 "ver": self._ver(), "level": level, "event": event,
-            }])[-100:]
+            }], 100)
             save_account(user, account)
 
     def _admin_post(self, action, raw):
@@ -2541,10 +2574,10 @@ class Handler(BaseHTTPRequestHandler):
                 if doc.get("logout"):
                     account["tokens"] = []
                 pwlogs = account.get("pwlogs") or []
-                account["pwlogs"] = (pwlogs + [{
+                account["pwlogs"] = cap_log("pwlogs", user, pwlogs + [{
                     "at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
                     "by": f"admin:{actor_name}",
-                }])[-50:]
+                }], 50)
                 save_account(user, account)
             _token_cache.clear()
             log(f"admin[{actor_name}]: password {user} (logout={bool(doc.get('logout'))})")
