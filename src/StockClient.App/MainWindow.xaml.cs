@@ -1029,7 +1029,8 @@ public partial class MainWindow : FluentWindow
     {
         if (_quotes is null || _stealth is not null) return;
 
-        _stealth = new Views.StealthWindow(_quotes, _quotes.Stealth, _quotes.SaveConfig, _trendRepo);
+        _stealth = new Views.StealthWindow(_quotes, _quotes.Stealth, _quotes.SaveConfig, _trendRepo,
+            openKline: OpenKlineByCode);
         _stealth.RestoreRequested += () => RestoreFromStealth("panel context menu 还原主窗口");
         _stealth.SettingsRequested += () => OpenSettings(Views.SystemSettingsWindow.TabPanel);
         _stealth.Closed += (_, _) => _stealth = null;

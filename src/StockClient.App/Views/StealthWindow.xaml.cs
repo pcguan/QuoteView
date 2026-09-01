@@ -182,7 +182,12 @@ public partial class StealthWindow : Window
     /// <summary>Raised when the panel's "设置…" is chosen; the host opens the (single) settings window.</summary>
     public event Action? SettingsRequested;
 
-    public StealthWindow(QuotesViewModel vm, StealthConfig config, Action save, TrendRepository trends)
+    /// <summary>Opens the full K-line window for a code — supplied by the main
+    /// window, which owns the chart plumbing. Null = the menu item is hidden.</summary>
+    private readonly Action<string>? _openKline;
+
+    public StealthWindow(QuotesViewModel vm, StealthConfig config, Action save, TrendRepository trends,
+        Action<string>? openKline = null)
     {
         InitializeComponent();
 
@@ -190,6 +195,7 @@ public partial class StealthWindow : Window
         _config = config;
         _save = save;
         _trends = trends;
+        _openKline = openKline;
         _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
@@ -979,6 +985,26 @@ public partial class StealthWindow : Window
 
         // Fields, colours, row count and shade now live in a dedicated settings
         // window; the menu just opens it and keeps the quick navigation actions.
+        if (_openKline is { } openKline)
+        {
+            // Full K-line for the contract the panel currently points at (the
+            // top row — the one the plain wheel walks). The header names it on
+            // every open so there is no guessing which contract you'd get.
+            var kline = new MenuItem { Header = "打开K线图" };
+            menu.Opened += (_, _) =>
+            {
+                var row = _rows.Count > 0 ? _rows[0] : null;
+                kline.Header = row is null ? "打开K线图" : $"打开K线图（{row.Name}）";
+                kline.IsEnabled = row is not null;
+            };
+            kline.Click += (_, _) =>
+            {
+                if (_rows.Count > 0) openKline(_rows[0].Code);
+            };
+            menu.Items.Add(kline);
+            menu.Items.Add(new Separator());
+        }
+
         var settings = new MenuItem { Header = "设置…" };
         settings.Click += (_, _) => SettingsRequested?.Invoke();
         menu.Items.Add(settings);
