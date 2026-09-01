@@ -288,6 +288,31 @@ public sealed class AccountClient
 
     /// <summary>The server's /kline proxy body (EastMoney-shaped JSON), or null.
     /// lmt=0 asks for the full listed history, matching the chart's own shape.</summary>
+    /// <summary>Best-effort client fault report; errors are swallowed — the
+    /// reporter must never become a second failure.</summary>
+    public async Task<(bool Ok, bool Unauthorized)> ReportErrorAsync(
+        string token, string kind, string detail, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{Base}/clientlog")
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { kind, detail }),
+                    System.Text.Encoding.UTF8, "application/json"),
+            };
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (false, true);
+            return (response.IsSuccessStatusCode, false);
+        }
+        catch (Exception)
+        {
+            return (false, false);
+        }
+    }
+
     /// <summary>The server-archived KR daily closes (Korea has no queryable
     /// daily history upstream; the server archives each session itself).</summary>
     public async Task<(string? Json, bool Unauthorized)> KrDailyJsonAsync(

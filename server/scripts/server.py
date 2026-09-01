@@ -597,13 +597,64 @@ def kline_body(secid, klt, fqt, lmt):
         except Exception:
             time.sleep(1.5)
 
+    # EastMoney exhausted: Tencent fallback, converted to the EastMoney shape
+    # the clients parse (the same chain every client carries itself — but the
+    # proxy answering means one upstream hit still serves everyone). Tencent
+    # covers SH/SZ/HK with history; BJ/US/KR come back same-day only there.
+    body = kline_tencent(secid, klt, fqt, lmt)
+    if body is not None:
+        return body
+
     return meta["body"] if meta else None
+
+
+def kline_tencent(secid, klt, fqt, lmt):
+    """Tencent fqkline as an EastMoney-shaped kline body, or None. qfq daily/
+    weekly/monthly only — the shapes the app actually requests."""
+    span = {"101": "day", "102": "week", "103": "month"}.get(klt)
+    if span is None or fqt != "1":
+        return None
+
+    market, _, symbol = secid.partition(".")
+    if market == "1":
+        api = "sh" + symbol
+    elif market == "0":
+        # EastMoney folds Beijing into market 0; BSE symbols start 4/8/9.
+        api = ("bj" if symbol[:1] in ("4", "8", "9") else "sz") + symbol
+    elif market == "116":
+        api = "hk" + symbol
+    elif market in ("105", "106", "107"):
+        api = "us" + symbol
+    else:
+        return None
+
+    url = ("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+           f"?param={api.lower()},{span},,,{max(1, int(lmt))},qfq")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+        "Referer": "https://gu.qq.com/",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            doc = json.loads(r.read().decode("utf-8"))
+        node = (doc.get("data") or {}).get(api.lower()) or {}
+        rows = node.get("qfq" + span) or node.get(span) or []
+        # Tencent rows: [date, open, close, high, low, volume]; EastMoney kline
+        # strings: "date,open,close,high,low,volume,amount".
+        klines = [",".join([str(x) for x in row[:6]] + ["0"])
+                  for row in rows if isinstance(row, list) and len(row) >= 6]
+        if not klines:
+            return None
+        log(f"kline fallback tencent {api} {span} rows={len(klines)}")
+        return json.dumps({"data": {"code": symbol, "klines": klines}})
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------- KR daily closes
 
 KR_DAILY = os.path.join(DATA, "kr-daily.json")
-KR_KEEP = 40
+KR_KEEP = 300
 
 
 def kr_load():
@@ -1010,20 +1061,33 @@ def news_sweep_tick():
         ws_broadcast({"news": added})
 
 
+SCHED_BEAT = {}
+
+
+def _beat(name):
+    """Watchdog trail: each engine stamps its last completed pass. A stamp
+    older than an hour means that engine is HUNG (not merely erroring — errors
+    still stamp), which is otherwise invisible from outside the process."""
+    SCHED_BEAT[name] = time.time()
+    for other, at in SCHED_BEAT.items():
+        if other != name and time.time() - at > 3600:
+            log(f"WATCHDOG: engine '{other}' silent for {int(time.time() - at)}s")
+
+
 def scheduler():
+    """Trend archiving + KR closes. News runs on ITS OWN thread (see
+    news_scheduler): an hour-long news crawl or a hung fetch there must never
+    delay the 15:01 archive promise — the engines only share the log."""
     while True:
         try:
             sweep_once()
         except Exception as e:  # noqa: BLE001 - the loop must survive anything
             log(f"sweep error: {e}")
         try:
-            news_sweep_tick()
-        except Exception as e:  # noqa: BLE001
-            log(f"news sweep error: {e}")
-        try:
             kr_sweep_tick()
         except Exception as e:  # noqa: BLE001
             log(f"kr sweep error: {e}")
+        _beat("archive")
         # Wake AT the archive minute: a flat 300s cadence could push the first
         # after-close pass to ~15:06, defeating the 15:01 promise.
         now = datetime.now(CN)
@@ -1032,6 +1096,16 @@ def scheduler():
             time.sleep(min(300, max(1, (target - now).total_seconds())))
         else:
             time.sleep(300)
+
+
+def news_scheduler():
+    while True:
+        try:
+            news_sweep_tick()
+        except Exception as e:  # noqa: BLE001
+            log(f"news sweep error: {e}")
+        _beat("news")
+        time.sleep(300)
 
 
 # ---------------------------------------------------------------- http
@@ -1304,6 +1378,9 @@ tr.err:hover td{background:#331722}
     </div>
     <div class=grid2>
       <div class=card><h2>登录统计（按用户汇总）</h2><div id=login-stats></div></div>
+      <div class=card><h2>客户端异常
+        <span class=dim style="font-size:12px;font-weight:normal">（客户端未处理异常自动上报，同类 10 分钟内只报一次）</span></h2>
+        <div id=fault-list></div></div>
       <div class=card><h2>密码修改日志</h2><div id=pw-list></div></div>
     </div>
   </section>
@@ -1432,7 +1509,7 @@ async function spinReload(btnId, loader){
 // Fixed rows + pagination for every log list: page size from a dropdown,
 // prev/next, page resets when the filter changes. The lists used to render
 // everything and just grow.
-const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50} };
+const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50}, fault: {page:0, size:20} };
 
 function pager(key, total){
   const st = PAGES[key];
@@ -1458,7 +1535,22 @@ function setPageSize(key, n){ PAGES[key].size = +n; PAGES[key].page = 0; rerende
 function rerenderLog(key){
   if (key === 'login') renderLogs();
   else if (key === 'chg') renderChanges();
+  else if (key === 'fault') renderFaults();
   else renderPw();
+}
+function renderFaults(){
+  if (!LOGS) return;
+  const all = LOGS.faults || [];
+  const rows = pageSlice('fault', all).map(l => `<tr class=err>
+      <td class=mono>${l.at}</td><td><b>${l.user}</b></td>
+      <td><span class="tag t-bad">${l.kind}</span></td>
+      <td style="max-width:640px;word-break:break-all;font-size:11px" class=mono>${
+        (l.detail||'').replace(/</g,'&lt;')}</td>
+      <td class=mono>${l.ip||'-'}</td><td class=mono>${l.ver||'-'}</td></tr>`).join('');
+  $('fault-list').innerHTML = all.length
+    ? `<table><tr><th>时间</th><th>用户</th><th>类型</th><th>异常详情</th><th>IP</th><th>客户端版本</th></tr>${rows}</table>`
+      + pager('fault', all.length)
+    : '<div class=dim>无异常上报——两台机器都健康</div>';
 }
 function filterChanged(key){ PAGES[key].page = 0; rerenderLog(key); }
 
@@ -1467,6 +1559,7 @@ async function loadLogs(){
   renderLogs();
   renderChanges();
   renderPw();
+  renderFaults();
   const stats = {};
   for (const l of LOGS.logins){
     if ((l.level || 'info') !== 'info') continue;   // stats = successful logins
@@ -1699,7 +1792,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/web/api/logs":
             if self._admin() is None:
                 return
-            logins, passwords, changes = [], [], []
+            logins, passwords, changes, faults = [], [], [], []
             for name in sorted(os.listdir(ACCOUNTS)) if os.path.isdir(ACCOUNTS) else []:
                 if not name.endswith(".json"):
                     continue
@@ -1722,13 +1815,19 @@ class Handler(BaseHTTPRequestHandler):
                                     "ip": entry.get("ip") or "", "ver": entry.get("ver") or "",
                                     "kind": entry.get("kind") or "",
                                     "detail": entry.get("detail") or ""})
+                for entry in doc.get("faultlogs") or []:
+                    faults.append({"user": user, "at": entry.get("at") or "",
+                                   "ip": entry.get("ip") or "", "ver": entry.get("ver") or "",
+                                   "kind": entry.get("kind") or "",
+                                   "detail": entry.get("detail") or ""})
             logins.sort(key=lambda x: x["at"], reverse=True)
+            faults.sort(key=lambda x: x["at"], reverse=True)
             passwords.sort(key=lambda x: x["at"], reverse=True)
             changes.sort(key=lambda x: x["at"], reverse=True)
             # Pagination lives client-side now, so the merged caps are only a
             # payload guard, not a display limit.
             return self._json({"logins": logins[:1000], "passwords": passwords[:500],
-                               "changes": changes[:1000]})
+                               "changes": changes[:1000], "faults": faults[:500]})
 
         if url.path == "/web/api/accounts":
             actor = self._admin()
@@ -1821,7 +1920,7 @@ class Handler(BaseHTTPRequestHandler):
                 candles.append({"date": "", "close": records[0]["prev"]})
             for r in records:
                 candles.append({"date": r.get("date", ""), "close": r.get("close", 0)})
-            return self._json({"candles": candles[-12:]})
+            return self._json({"candles": candles[-270:]})
 
         if url.path == "/groups":
             authed = self._auth()
@@ -1999,6 +2098,29 @@ class Handler(BaseHTTPRequestHandler):
             self._log_login(user, "info", "管理台登录")
             log(f"web login {user} from {self._ip()}")
             return self._json({"token": token, "username": user, "role": role_of(account)})
+
+        if self.path == "/clientlog":
+            authed = self._auth()
+            if authed is None:
+                return
+            user, doc, _ = authed
+            try:
+                body = json.loads(raw)
+            except Exception:
+                return self._bad("bad json")
+            kind = str(body.get("kind") or "")[:32]
+            detail = str(body.get("detail") or "")[:4000]
+            if not kind or not detail:
+                return self._bad("bad fault")
+            with _lock:
+                doc = load_account(user) or doc
+                faults = doc.get("faultlogs") or []
+                faults.append({"at": f"{datetime.now(CN):%F %T}", "ip": self._ip(),
+                               "ver": self._ver(), "kind": kind, "detail": detail})
+                doc["faultlogs"] = faults[-100:]
+                save_account(user, doc)
+            log(f"client fault {user} {kind}: {detail[:120]}")
+            return self._json({"ok": True})
 
         if self.path == "/web/api/logout":
             token = self.headers.get("X-Admin-Token") or ""
@@ -2433,6 +2555,7 @@ def main():
     os.makedirs(TRENDS, exist_ok=True)
 
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=news_scheduler, daemon=True).start()
 
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     log(f"listening on {BIND}:{PORT}, data={DATA}, retain={RETAIN_DAYS}d")

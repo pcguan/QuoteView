@@ -1,20 +1,34 @@
 using System.Diagnostics;
+using StockClient.Core.Contracts;
 
 namespace StockClient.Core.Quotes;
 
 /// <summary>
-/// Polls the active group once per second.
+/// Polls the watched codes once per second — but only the markets that can
+/// actually be trading.
 ///
-/// Exactly one group is polled — the active one. Every tick is a single batched
-/// request covering all of its codes; issuing one request per code would be ~20x
-/// the traffic and is what gets a client rate-limited.
+/// Every tick is a single batched request; issuing one request per code would
+/// be ~20x the traffic and is what gets a client rate-limited. Since v1.1.0
+/// the tick only carries codes whose market is in (or near) its session —
+/// local [08:30, close+30min] on a weekday; every 30th tick polls EVERYTHING
+/// so closed markets still refresh their settled values twice a minute and a
+/// fresh start fills the whole table. Overnight with all six markets closed
+/// that is one request per 30s instead of one per second, for data that
+/// cannot move.
 /// </summary>
 public sealed class QuotePoller : IAsyncDisposable
 {
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
+    /// <summary>Every Nth tick includes closed markets' codes too.</summary>
+    private const int FullSweepEvery = 30;
+
+    private static readonly TimeSpan SessionMargin = TimeSpan.FromMinutes(30);
+
     private readonly TencentQuoteClient _client;
+    private readonly IMarketClock _clock = new MarketClock();
     private readonly object _gate = new();
+    private int _tick;
 
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -93,6 +107,19 @@ public sealed class QuotePoller : IAsyncDisposable
         }
     }
 
+    /// <summary>Weekday and inside [08:30 local, close + 30min] — all six
+    /// covered markets open 09:00-09:30 local, so a fixed early edge covers
+    /// the pre-open auction without needing per-market open times.</summary>
+    private bool MarketLive(Market market)
+    {
+        var date = _clock.TradingDate(market);
+        if (date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) return false;
+
+        var now = _clock.LocalTime(market);
+        var close = MarketInfo.Of(market).Close;
+        return now >= new TimeOnly(8, 30) && now <= close.Add(SessionMargin);
+    }
+
     private async Task PollOnceAsync(CancellationToken cancellationToken)
     {
         string groupId;
@@ -103,6 +130,25 @@ public sealed class QuotePoller : IAsyncDisposable
             if (_groupId is null || _codes.Length == 0) return;
             groupId = _groupId;
             codes = _codes;
+        }
+
+        // Closed markets only ride the periodic full sweep (and the first tick,
+        // _tick == 0, so a fresh start fills everything at once).
+        if (_tick++ % FullSweepEvery != 0)
+        {
+            var liveByMarket = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            codes = codes.Where(code =>
+            {
+                if (!CodeMapper.TryParse(code, out var prefix, out _)) return true;
+                if (!liveByMarket.TryGetValue(prefix, out var live))
+                {
+                    live = !Enum.TryParse<Market>(prefix, out var market) || MarketLive(market);
+                    liveByMarket[prefix] = live;
+                }
+                return live;
+            }).ToArray();
+
+            if (codes.Length == 0) return;   // everything closed — wait for the sweep
         }
 
         var sw = Stopwatch.StartNew();

@@ -330,6 +330,10 @@ public sealed class AccountSession
         CallAsync(t => _client.PingAsync(t, CancellationToken.None).ContinueWith(
             x => (x.Result.Ok, x.Result.Unauthorized)), false);
 
+    public Task<bool> ReportErrorAsync(string kind, string detail) =>
+        CallAsync(t => _client.ReportErrorAsync(t, kind, detail, CancellationToken.None).ContinueWith(
+            x => (x.Result.Ok, x.Result.Unauthorized)), false);
+
     public Task<string?> KrDailyJsonAsync(string code) =>
         CallAsync(t => _client.KrDailyJsonAsync(t, code, CancellationToken.None).ContinueWith(
             x => (x.Result.Json, x.Result.Unauthorized)), (string?)null);

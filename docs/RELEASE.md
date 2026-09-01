@@ -1,5 +1,15 @@
 # 发布与更新流程
 
+**日常发版一条命令**（v1.1.0 起）：抬好 csproj 版本、写好 CHANGELOG 后——
+
+```bash
+tools/release.sh <版本> <发布说明> [提交信息]
+```
+
+测试→corp-win 编译→构建清单→回传→check_release→commit+push→NAS+GitHub 双源→公网核验，
+任一步失败即中止。GitHub 令牌读 `git config qv.ghtoken`（不入库）。以下手工步骤仅供
+脚本失效时排障参考。
+
 QuoteView 每次改动的**标准流程**。日常代码改动走 **1–4**;要发一版给用户自动更新，再走 **5–6**。
 
 **前置约定**

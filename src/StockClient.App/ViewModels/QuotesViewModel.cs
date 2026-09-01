@@ -109,60 +109,20 @@ public sealed class QuoteRow : ObservableObject
     public double? OuterVolume => _quote.OuterVolume;
     public double? InnerVolume => _quote.InnerVolume;
 
-    // Baselines for the period returns, refreshed once per trading day. The
-    // percentages themselves are derived here against the live price, so they move
-    // with the quote instead of with the fetch.
-    private ReturnBaselines? _baselines;
-
-    // Final daily candles (newest last), the authoritative source for 昨日涨幅:
-    // settled history can't suffer the snapshot feed's rollover races. Matching
-    // the quote's OWN previous close against a candle close picks the session
-    // the feed is calling "yesterday" right now, so the value flips exactly
-    // when the quote itself rolls over — no clock guessing.
+    // Final daily candles (newest last): the single source for EVERY period
+    // return since v1.1.0 — 昨日/3日/5日/…/年初 are all "现价 ÷ 某根收盘"
+    // over the same anchored history (see PeriodReturns). The EastMoney ulist
+    // baseline machinery this replaces was a running source of rollover bugs
+    // and a second throttling-prone dependency.
     private IReadOnlyList<Kline>? _daily;
+
+    // For 年初至今 "today's year" must come from the exchange calendar — in
+    // early January the anchor candle still belongs to the OLD year.
+    private static readonly MarketClock ReturnsClock = new();
 
     public void SetDaily(IReadOnlyList<Kline>? candles)
     {
         _daily = candles;
-        OnPropertyChanged(nameof(PrevDayPercent));
-    }
-
-    public double? PrevDayPercent
-    {
-        get
-        {
-            var y = _quote.Yesterday;
-            if (y > 0 && _daily is { Count: > 1 } candles)
-            {
-                var tolerance = Math.Max(y * 1e-3, 0.005);
-                for (var i = candles.Count - 1; i >= 1; i--)
-                {
-                    if (Math.Abs(candles[i].Close - y) > tolerance) continue;
-                    return candles[i - 1].Close > 0
-                        ? (candles[i].Close / candles[i - 1].Close - 1) * 100
-                        : null;
-                }
-            }
-
-            // Snapshot-built chain: covers a failed kline fetch and nothing else.
-            return _baselines?.PrevDayPercent;
-        }
-    }
-    public double? Return3 => Ret(_baselines?.Day3);
-    public double? Return5 => Ret(_baselines?.Day5);
-    public double? Return10 => Ret(_baselines?.Day10);
-    public double? Return20 => Ret(_baselines?.Day20);
-    public double? Return60 => Ret(_baselines?.Day60);
-    public double? ReturnYtd => Ret(_baselines?.YearStart);
-
-    private double? Ret(double? baseline) =>
-        baseline is { } b ? ReturnBaselines.Percent(Now, b) : null;
-
-    /// <summary>Attaches (or replaces) the day's baselines for this contract.</summary>
-    public void SetBaselines(ReturnBaselines? baselines)
-    {
-        _baselines = baselines;
-
         foreach (var name in new[]
                  {
                      nameof(PrevDayPercent), nameof(Return3), nameof(Return5),
@@ -172,6 +132,38 @@ public sealed class QuoteRow : ObservableObject
             OnPropertyChanged(name);
         }
     }
+
+    private int YesterdayIndex =>
+        _daily is { } candles ? PeriodReturns.YesterdayIndex(candles, _quote.Yesterday) : -1;
+
+    public double? PrevDayPercent =>
+        _daily is { } c ? PeriodReturns.PrevDayPercent(c, YesterdayIndex) : null;
+
+    public double? Return3 => Ret(3);
+    public double? Return5 => Ret(5);
+    public double? Return10 => Ret(10);
+    public double? Return20 => Ret(20);
+    public double? Return60 => Ret(60);
+
+    public double? ReturnYtd
+    {
+        get
+        {
+            if (_daily is not { } candles) return null;
+            if (!CodeMapper.TryParse(Code, out var prefix, out _)
+                || !Enum.TryParse<Market>(prefix, out var market))
+                return null;
+
+            var baseline = PeriodReturns.YearStartBaseline(
+                candles, YesterdayIndex, ReturnsClock.TradingDate(market).Year);
+            return PeriodReturns.Percent(Now, baseline);
+        }
+    }
+
+    private double? Ret(int daysAgo) =>
+        _daily is { } candles
+            ? PeriodReturns.Percent(Now, PeriodReturns.Baseline(candles, YesterdayIndex, daysAgo))
+            : null;
 
     // From the secondary EastMoney poll (A-shares only), null until it runs.
     private QuoteExtra? _extra;
@@ -344,7 +336,6 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private GroupConfig _config;
     private readonly QuotePoller _poller;
     private readonly EastMoneyExtraPoller _extraPoller;
-    private readonly ReturnBaselineRepository _returns;
     private readonly ContractRepository _contracts;
     private readonly DispatcherTimer _flashTimer;
     private readonly DispatcherTimer _baselineTimer;
@@ -403,6 +394,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _poller.Failed += OnFailed;
 
         _extraPoller = new EastMoneyExtraPoller(new EastMoneyQuoteClient(_http));
+        _extraPoller.Tick += OnExtraTick;
         _extrasKnown = _extraCache.Load();
 
         foreach (var (code, entry) in _dailyCache.Load())
@@ -419,12 +411,6 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             _dailyMeta[code] = (stamp, entry.Settled);
         }
 
-        // Period-return baselines: one batch request per trading day, then the
-        // percentages are computed locally against each tick's price.
-        _returns = new ReturnBaselineRepository(
-            new ReturnBaselineClient(_http), new ReturnBaselineCache(), new MarketClock());
-        _extraPoller.Tick += OnExtraTick;
-
         Groups = new ObservableCollection<GroupRow>(_config.Groups.Select(g => new GroupRow(g)));
 
         // Catches session rollovers without waiting for a group switch: the
@@ -434,11 +420,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         {
             Interval = TimeSpan.FromMinutes(10),
         };
-        _baselineTimer.Tick += (_, _) =>
-        {
-            _ = RefreshBaselinesAsync();
-            _ = RefreshDailyAsync();
-        };
+        _baselineTimer.Tick += (_, _) => _ = RefreshDailyAsync();
         _baselineTimer.Start();
 
         _flashTimer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
@@ -926,22 +908,15 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         StealthTick?.Invoke(StealthRows());
         RefreshPollTarget();
         RefreshExtraPolling();
-        ApplyBaselines();
-        _ = RefreshBaselinesAsync();
+        ApplyDaily();
         _ = RefreshDailyAsync();
     }
 
-    /// <summary>
-    /// Hands each row whatever baselines are already known — instant, no request.
-    /// </summary>
-    private void ApplyBaselines()
+    /// <summary>Hands each row whatever daily history is already cached — instant.</summary>
+    private void ApplyDaily()
     {
-        var known = _returns.Current;
         foreach (var (code, row) in _rows)
-        {
-            row.SetBaselines(known.TryGetValue(code, out var b) ? b : null);
             row.SetDaily(_daily.TryGetValue(code, out var d) ? d : null);
-        }
     }
 
     /// <summary>
@@ -1053,28 +1028,6 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             await Task.Delay(150);
             if (gen != _dailyGen) return;
         }
-    }
-
-    /// <summary>
-    /// Tops up the baselines for contracts whose own market has rolled over. Costs
-    /// one batch request, at most once per contract per trading day; silent on
-    /// failure, since the columns simply stay blank.
-    /// </summary>
-    private async Task RefreshBaselinesAsync()
-    {
-        if (_activeGroup is null) return;
-
-        var contracts = _activeGroup.Model.Codes
-            .Where(CodeMapper.IsValid)
-            .Select(c => _contracts.Find(c.ToUpperInvariant()))
-            .Where(c => c is not null)
-            .Select(c => c!)
-            .ToArray();
-
-        if (contracts.Length == 0) return;
-
-        var changed = await _returns.RefreshAsync(contracts, CancellationToken.None);
-        if (changed) _dispatcher.InvokeAsync(ApplyBaselines);
     }
 
     /// <summary>

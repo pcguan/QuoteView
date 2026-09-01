@@ -83,6 +83,7 @@ public partial class MainWindow : FluentWindow
         var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version?.ToString(3) ?? "";
         _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
+        ErrorReporter.Init(_session);
         _presence = new PresenceChannel(_session, appVersion);
         _presence.Start();
         _session.Changed += () => Dispatcher.InvokeAsync(() =>
@@ -152,10 +153,12 @@ public partial class MainWindow : FluentWindow
 
             // The quotes view reuses the loaded contract lists so "add contract"
             // can search by name without a second data source.
-            // The daily-kline fetch behind 昨日涨幅 mirrors _klineRepo's
-            // server-first routing, but with a tiny lmt and NO shared-cache
-            // write — storing a 12-candle series there would become what the
-            // chart draws for the rest of the day.
+            // The daily-kline fetch behind ALL the period returns (昨日/3日/…/
+            // 年初, see PeriodReturns) mirrors _klineRepo's server-first
+            // routing, but with a bounded lmt and NO shared-cache write —
+            // storing a truncated series there would become what the chart
+            // draws for the rest of the day. 270 candles cover 60日 and a full
+            // year of sessions for 年初至今.
             var dailyEast = new EastMoneyKlineClient(_klineHttp);
             var dailyTencent = new TencentKlineClient(_klineHttp);
             // Circuit breaker for the EastMoney kline host: it throttles with
@@ -166,7 +169,7 @@ public partial class MainWindow : FluentWindow
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
                 fetchDaily: async (contract, ct) =>
                 {
-                    const int count = 12;
+                    const int count = 270;
                     static KlineSeries Trim(KlineSeries s) =>
                         s.Candles.Count <= count ? s
                             : s with { Candles = s.Candles.TakeLast(count).ToArray() };

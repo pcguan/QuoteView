@@ -102,11 +102,15 @@ public partial class App : Application
     private void HookDiagnostics()
     {
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
             Probe.Log($"!!! UNHANDLED {(args.IsTerminating ? "TERMINATING" : "non-fatal")}: {args.ExceptionObject}");
+            Services.ErrorReporter.Report("unhandled", $"{args.ExceptionObject}");
+        };
 
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
             Probe.Log($"!!! UNOBSERVED TASK: {args.Exception}");
+            Services.ErrorReporter.Report("unobserved-task", $"{args.Exception}");
             args.SetObserved();
         };
 
@@ -145,6 +149,7 @@ public partial class App : Application
         object sender, DispatcherUnhandledExceptionEventArgs e)
     {
         Probe.Log($"!!! DISPATCHER UNHANDLED: {e.Exception}");
+        Services.ErrorReporter.Report("dispatcher", $"{e.Exception}");
 
         // Wpf.Ui's dialog, not the Win32 MessageBox — same reason as everywhere else.
         _ = new Wpf.Ui.Controls.MessageBox
