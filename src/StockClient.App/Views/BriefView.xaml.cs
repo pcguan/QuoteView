@@ -24,9 +24,9 @@ namespace StockClient.App.Views;
 /// </summary>
 public partial class BriefView : UserControl
 {
-    private static readonly Brush Up = Frozen("#EF5350");
-    private static readonly Brush Down = Frozen("#26A69A");
-    private static readonly Brush Muted = Frozen("#8B93A3");
+    private static readonly Brush Up = Frozen(Tones.UpHex);
+    private static readonly Brush Down = Frozen(Tones.DownHex);
+    private static readonly Brush Muted = Frozen(Tones.FlatHex);
     private static readonly Brush Faint = Frozen("#5F6672");
     private static readonly Brush Text = Frozen("#EDF1F7");
     private static readonly Brush Warn = Frozen("#FFC107");

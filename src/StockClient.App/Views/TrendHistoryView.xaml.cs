@@ -278,8 +278,8 @@ public partial class TrendHistoryView : UserControl
     private static readonly Brush CompareAccent = Frozen("#4C8DFF");
     private static readonly Brush LabelBrush = Frozen("#5F6672");
     private static readonly Brush Flat = Frozen("#DCE4EE");
-    private static readonly Brush Up = Frozen("#EF5350");
-    private static readonly Brush Down = Frozen("#26A69A");
+    private static readonly Brush Up = Frozen(Tones.UpHex);
+    private static readonly Brush Down = Frozen(Tones.DownHex);
 
     /// <summary>
     /// The day's closing stats as a boxed grid — 收盘/涨跌/振幅, 今开/最高/最低/

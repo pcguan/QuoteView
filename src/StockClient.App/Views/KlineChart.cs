@@ -30,8 +30,8 @@ public sealed class KlineChart : FrameworkElement
 {
     // Chinese market convention: red = up, green = down — the opposite of the
     // West. Verified as a colourblind-safe pair (deutan ΔE 11.6).
-    private static readonly Brush UpBrush = Frozen("#EF5350");
-    private static readonly Brush DownBrush = Frozen("#26A69A");
+    private static readonly Brush UpBrush = Frozen(Tones.UpHex);
+    private static readonly Brush DownBrush = Frozen(Tones.DownHex);
 
     // Candle outlines: only two, and a repaint draws one per bar (up to ~600 when
     // zoomed out). Frozen and shared, because an unfrozen Pen forces WPF to rebuild

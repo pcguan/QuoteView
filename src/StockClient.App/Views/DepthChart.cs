@@ -21,10 +21,10 @@ namespace StockClient.App.Views;
 /// </summary>
 public sealed class DepthChart : FrameworkElement
 {
-    private static readonly Brush AskBar = Frozen("#3326A69A");
-    private static readonly Brush BidBar = Frozen("#33EF5350");
-    private static readonly Brush AskText = Frozen("#26A69A");
-    private static readonly Brush BidText = Frozen("#EF5350");
+    private static readonly Brush AskBar = Frozen(Tones.AlphaHex(Tones.DownHex, "33"));
+    private static readonly Brush BidBar = Frozen(Tones.AlphaHex(Tones.UpHex, "33"));
+    private static readonly Brush AskText = Frozen(Tones.DownHex);
+    private static readonly Brush BidText = Frozen(Tones.UpHex);
     private static readonly Brush Label = Frozen("#8B93A3");
     private static readonly Brush Size = Frozen("#C7CEDB");
     private static readonly Pen Split = FrozenPen("#3F4756", 0.6);

@@ -13,10 +13,10 @@ namespace StockClient.App.Views;
 /// </summary>
 public sealed class PanelSparkline : FrameworkElement
 {
-    private static readonly Brush Up = Frozen("#EF5350");
-    private static readonly Brush Down = Frozen("#26A69A");
-    private static readonly Brush UpFill = Frozen("#59EF5350");
-    private static readonly Brush DownFill = Frozen("#5926A69A");
+    private static readonly Brush Up = Frozen(Tones.UpHex);
+    private static readonly Brush Down = Frozen(Tones.DownHex);
+    private static readonly Brush UpFill = Frozen(Tones.AlphaHex(Tones.UpHex, "59"));
+    private static readonly Brush DownFill = Frozen(Tones.AlphaHex(Tones.DownHex, "59"));
     private static readonly Pen BaselinePen = FrozenPen("#5F6672", 0.6, dashed: true);
 
     private TrendSeries? _series;

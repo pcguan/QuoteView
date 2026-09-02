@@ -30,6 +30,17 @@ public partial class ColumnSettingsWindow : Window
     private static readonly string[] DefaultVisible =
         { "代码", "名称", "最新价", "涨跌幅", "涨跌", "行业" };
 
+    // Market presets: an A-share group shows the A-share-only fields (概念/行业/
+    // 涨跌停/量比/换手…); an overseas group hides those (HK/US/KR quotes don't
+    // carry them, so the columns just sat empty) and shows what overseas DOES
+    // report (52 周高低, 昨日/区间涨幅). One click instead of toggling a dozen chips.
+    private static readonly string[] AShareVisible =
+        { "代码", "名称", "最新价", "涨跌幅", "涨跌", "成交量", "成交额", "换手率",
+          "量比", "总市值", "行业", "概念" };
+    private static readonly string[] OverseasVisible =
+        { "代码", "名称", "最新价", "涨跌幅", "涨跌", "成交量", "成交额", "昨日涨幅",
+          "总市值", "52周最高", "52周最低" };
+
     private readonly DataGrid _grid;
     private readonly ObservableCollection<Chip> _chips = new();
 
@@ -75,6 +86,16 @@ public partial class ColumnSettingsWindow : Window
     private void Default_Click(object sender, RoutedEventArgs e)
     {
         foreach (var chip in _chips) chip.Visible = DefaultVisible.Contains(chip.Header);
+    }
+
+    private void AShare_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var chip in _chips) chip.Visible = AShareVisible.Contains(chip.Header);
+    }
+
+    private void Overseas_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var chip in _chips) chip.Visible = OverseasVisible.Contains(chip.Header);
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();

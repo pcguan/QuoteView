@@ -44,6 +44,16 @@ public sealed class ConceptsToTagsConverter : IValueConverter
 /// <summary>A-share convention: red for up, green for down.</summary>
 public static class Tones
 {
+    // 涨跌语义色的单一真相源。字面 hex 曾散在十余个图表文件里；集中到这里，
+    // 将来做「美股/韩股按当地惯例翻转红绿」或色盲模式时只改这三行。
+    // 派生的半透明填充色由各处用 AlphaHex(基色, "33") 拼出，仍指向同一基色。
+    public const string UpHex = "#EF5350";
+    public const string DownHex = "#26A69A";
+    public const string FlatHex = "#8B93A3";
+
+    /// <summary>把两位 alpha 前缀拼到一个 #RRGGBB 基色前，得到 #AARRGGBB。</summary>
+    public static string AlphaHex(string baseHex, string alpha) => "#" + alpha + baseHex.TrimStart('#');
+
     public static readonly Brush Up = Freeze(Color.FromRgb(0xEF, 0x53, 0x50));
     public static readonly Brush Down = Freeze(Color.FromRgb(0x26, 0xA6, 0x9A));
     public static readonly Brush Flat = Freeze(Color.FromRgb(0x8B, 0x93, 0xA3));

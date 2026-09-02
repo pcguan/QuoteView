@@ -33,6 +33,10 @@
       <StackPanel Orientation="Horizontal">
         <ui:Button Content="全选" Height="28" Padding="14,0" FontSize="12" Click="All_Click" />
         <ui:Button Content="全清" Height="28" Padding="14,0" Margin="8,0,0,0" FontSize="12" Click="None_Click" />
+        <ui:Button Content="A股" Height="28" Padding="14,0" Margin="8,0,0,0" FontSize="12" Click="AShare_Click"
+                   ToolTip="A股分组预设：显示概念/行业/换手/量比等 A 股专有列" />
+        <ui:Button Content="海外" Height="28" Padding="14,0" Margin="8,0,0,0" FontSize="12" Click="Overseas_Click"
+                   ToolTip="港/美/韩分组预设：隐藏 A 股专有列，显示 52 周高低等海外有值字段" />
         <ui:Button Content="默认" Height="28" Padding="14,0" Margin="8,0,0,0" FontSize="12" Click="Default_Click"
                    ToolTip="代码、名称、最新价、涨跌幅、涨跌、行业" />
       </StackPanel>

@@ -19,8 +19,8 @@ namespace StockClient.App.Views;
 /// </summary>
 public sealed class TrendChart : FrameworkElement
 {
-    private static readonly Brush UpBrush = Frozen("#EF5350");
-    private static readonly Brush DownBrush = Frozen("#26A69A");
+    private static readonly Brush UpBrush = Frozen(Tones.UpHex);
+    private static readonly Brush DownBrush = Frozen(Tones.DownHex);
     private static readonly Brush MainTag = Frozen("#DCE4EE");
     private static readonly Brush CompareTag = Frozen("#4C8DFF");
     private static readonly Pen PriceLine = FrozenPen("#DCE4EE", 1.3);
