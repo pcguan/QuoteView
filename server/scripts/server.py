@@ -936,6 +936,65 @@ def kr_sweep_tick():
 # 数据永久丢失（违反"服务端数据永远保留"铁律）。
 HOLIDAY_PROBE = "SH000001"
 
+# 每天对一只固定活跃标的抽查腾讯行情的关键字段是否还在、是否落合理区间。
+# 这些接口是未公开的免费口子，字段位一旦被上游调整，客户端只会默默显示"-"，
+# 事后无从判断是接口变了还是网络抖动。canary 把"接口结构变了"变成一条显式告警。
+CANARY_CODE = "sh600519"       # 贵州茅台，常年活跃、不停牌
+CANARY_MIN, CANARY_MAX = 50.0, 5000.0   # 合理价区间（宽松，只抓字段错位/清零）
+
+
+def field_canary():
+    now = datetime.now(CN)
+    if now.weekday() >= 5 or now.time() < datetime.strptime("15:01", "%H:%M").time():
+        return
+    day = f"{now:%F}"
+    if load_state().get("canary_day") == day:
+        return
+
+    problems = []
+    try:
+        req = urllib.request.Request("https://qt.gtimg.cn/q=" + CANARY_CODE, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+            "Referer": "https://gu.qq.com/"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            body = r.read().decode("gbk", errors="replace")
+        seg = body.split("=", 1)[1].strip().strip('"') if "=" in body else ""
+        f = seg.split("~")
+        if len(f) < 40:
+            problems.append(f"字段数不足: {len(f)}")
+        else:
+            name, price, pct = f[1], f[3], f[32]
+            if not name:
+                problems.append("名称为空(f[1])")
+            try:
+                p = float(price)
+                if not (CANARY_MIN <= p <= CANARY_MAX):
+                    problems.append(f"现价越界 f[3]={price}")
+            except ValueError:
+                problems.append(f"现价非数值 f[3]={price!r}")
+            try:
+                float(pct)
+            except ValueError:
+                problems.append(f"涨跌幅非数值 f[32]={pct!r}")
+    except Exception as e:  # noqa: BLE001
+        problems.append(f"抓取失败: {type(e).__name__}: {e}")
+        # 抓取失败可能只是一次网络抖动，不写 canary_day，留到下一轮重试
+        log(f"canary {day}: {CANARY_CODE} probe failed, will retry: {e}")
+        return
+
+    if problems:
+        entry = {"at": f"{now:%F %T}", "code": CANARY_CODE, "problems": problems}
+        archive_overflow("canary", [entry])
+        log(f"!!! CANARY {day}: 腾讯行情字段异常 {CANARY_CODE}: {'; '.join(problems)}")
+    else:
+        log(f"canary {day}: ok")
+    with _lock:
+        st = load_state()
+        st["canary_day"] = day
+        st["last_canary"] = {"day": day, "ok": not problems,
+                             "problems": problems, "at": f"{now:%F %T}"}
+        save_state(st)
+
 
 def sweep_once():
     """One throttled pass over whatever is missing for today. Returns idle time hint."""
@@ -1306,6 +1365,10 @@ def scheduler():
             kr_sweep_tick()
         except Exception as e:  # noqa: BLE001
             log(f"kr sweep error: {e}")
+        try:
+            field_canary()
+        except Exception as e:  # noqa: BLE001
+            log(f"canary error: {e}")
         _beat("archive")
         # Wake AT the archive minute: a flat 300s cadence could push the first
         # after-close pass to ~15:06, defeating the 15:01 promise.
@@ -2178,7 +2241,10 @@ class Handler(BaseHTTPRequestHandler):
             if records and records[0].get("prev", 0) > 0:
                 candles.append({"date": "", "close": records[0]["prev"]})
             for r in records:
-                candles.append({"date": r.get("date", ""), "close": r.get("close", 0)})
+                # pct is the session's own move from its live quote; the client
+                # prefers it for 昨日涨幅 so a missing archived day can't skew it.
+                candles.append({"date": r.get("date", ""), "close": r.get("close", 0),
+                                "pct": r.get("pct", 0)})
             return self._json({"candles": candles[-270:]})
 
         if url.path == "/groups":
@@ -2202,8 +2268,10 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/status":
             # 无鉴权端点，只回一条健康信号（归档调度还在不在跑）。账户数、合约
             # 并集这些业务数据在有鉴权的管理台看，不从公网裸奔。
+            st = load_state()
             return self._json({"ok": True,
-                               "last_sweep": load_state().get("last_sweep")})
+                               "last_sweep": st.get("last_sweep"),
+                               "last_canary": st.get("last_canary")})
 
         self._bad("not found", 404)
 

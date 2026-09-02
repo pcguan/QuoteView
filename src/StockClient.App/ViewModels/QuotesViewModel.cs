@@ -209,10 +209,25 @@ public sealed class QuoteRow : ObservableObject
         private set => Set(ref _flash, value);
     }
 
+    // Wall-clock of the last time this row's quote actually moved (price or the
+    // exchange timestamp). The VM compares it against the market's PEERS to spot
+    // a halt — a clock-free judgement, so it can't misfire during a lunch
+    // recess, pre-open auction or exchange holiday (when the WHOLE market is
+    // frozen together and no row lags its peers).
+    public DateTimeOffset LastChange { get; private set; } = DateTimeOffset.Now;
+    private string _lastMoveKey = "";
+
     public void Update(Quote next)
     {
         var previous = _quote.Now;
         Quote = next;
+
+        var key = $"{next.Now}|{next.Time}";
+        if (key != _lastMoveKey)
+        {
+            _lastMoveKey = key;
+            LastChange = DateTimeOffset.Now;
+        }
 
         // Empty string = "all properties changed" to WPF. With ~30 passthrough
         // props now, a hand-kept name list is a bug farm.
@@ -221,6 +236,24 @@ public sealed class QuoteRow : ObservableObject
         if (!next.IsMissing && previous > 0 && Math.Abs(next.Now - previous) > 1e-9)
             Flash = next.Now > previous ? 1 : -1;
     }
+
+    private bool _isStale;
+
+    /// <summary>Set by the VM: this row is frozen while its market's peers keep
+    /// ticking — a halt/suspension, not the market being closed.</summary>
+    public bool IsStale => _isStale;
+
+    public void SetStale(bool value)
+    {
+        if (_isStale == value) return;
+        _isStale = value;
+        OnPropertyChanged(nameof(IsStale));
+        OnPropertyChanged(nameof(TimeDisplay));
+    }
+
+    /// <summary>Exchange time, with a 停 marker when the row looks halted, so a
+    /// frozen 涨跌幅 isn't read as live.</summary>
+    public string TimeDisplay => _isStale ? $"{_quote.Time} 停" : _quote.Time;
 
     public void ClearFlash() => Flash = 0;
 }
@@ -1130,6 +1163,40 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _extraPoller.SetTarget(targets);
     }
 
+    /// <summary>
+    /// Flags a row as halted when its market's PEERS are ticking but it is not.
+    /// Clock-free on purpose: a lunch recess, pre-open auction or exchange
+    /// holiday freezes the whole market together, so no row lags its peers and
+    /// nothing is flagged — the failure mode of the earlier clock-based version.
+    /// A market with a single member can't be judged (its own change IS the
+    /// market's), so it is never flagged.
+    /// </summary>
+    private static readonly TimeSpan HaltAfter = TimeSpan.FromMinutes(20);
+
+    private void MarkStaleRows()
+    {
+        var activity = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        var members = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in _rows.Values)
+        {
+            var m = CodeMapper.MarketOf(row.Code);
+            if (m.Length == 0) continue;
+            members[m] = members.GetValueOrDefault(m) + 1;
+            if (!activity.TryGetValue(m, out var seen) || row.LastChange > seen)
+                activity[m] = row.LastChange;
+        }
+
+        foreach (var row in _rows.Values)
+        {
+            var m = CodeMapper.MarketOf(row.Code);
+            var stale = m.Length > 0 && members.GetValueOrDefault(m) > 1
+                && !row.IsMissing && row.Now > 0
+                && activity.TryGetValue(m, out var last)
+                && last - row.LastChange > HaltAfter;
+            row.SetStale(stale);
+        }
+    }
+
     private void OnExtraTick(IReadOnlyDictionary<string, QuoteExtra> extras) =>
         _dispatcher.InvokeAsync(() =>
         {
@@ -1299,6 +1366,8 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
                 // recovered (rollover refetch) can fill in the board fields it lacked.
                 if (!row.MetaResolved) FillMeta(row);
             }
+
+            MarkStaleRows();
 
             foreach (var quote in tick.Quotes)
             {

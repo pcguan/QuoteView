@@ -42,6 +42,14 @@ public sealed record Kline
     /// <summary>Turnover in currency. 0 when not reported (KR reports 0).</summary>
     public double Amount { get; init; }
 
+    /// <summary>
+    /// The session's own change %, when the source computed it from a live
+    /// quote rather than us dividing two closes. Only the KR archive fills this
+    /// (from /krdaily): it makes 昨日涨幅 immune to a missing archived session,
+    /// which dividing by the PREVIOUS stored close is not. Null everywhere else.
+    /// </summary>
+    public double? Percent { get; init; }
+
     public bool IsUp => Close >= Open;
 
     public static double Parse(string s) =>

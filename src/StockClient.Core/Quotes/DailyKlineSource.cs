@@ -121,10 +121,12 @@ public sealed class DailyKlineSource
             var close = c.TryGetProperty("close", out var cl) ? cl.GetDouble() : 0;
             if (close <= 0) continue;
             var date = c.TryGetProperty("date", out var d) ? d.GetString() ?? "" : "";
+            double? pct = c.TryGetProperty("pct", out var pc) && pc.ValueKind == JsonValueKind.Number
+                ? pc.GetDouble() : null;
             candles.Add(new Kline
             {
                 Date = date, Open = close, Close = close,
-                High = close, Low = close,
+                High = close, Low = close, Percent = pct,
             });
         }
         return candles.Count == 0 ? null : new KlineSeries

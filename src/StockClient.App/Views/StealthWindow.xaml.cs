@@ -865,7 +865,7 @@ public partial class StealthWindow : Window
         StealthField.High => Price(r.High),
         StealthField.Low => Price(r.Low),
         StealthField.Yesterday => Price(r.Yesterday),
-        StealthField.Time => r.Time,
+        StealthField.Time => r.TimeDisplay,
         StealthField.Volume => Scale(r.Volume),
         StealthField.Amount => Scale(r.Amount),
         StealthField.TotalCap => Scale(r.TotalCap),

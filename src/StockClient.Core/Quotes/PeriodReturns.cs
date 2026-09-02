@@ -81,11 +81,20 @@ public static class PeriodReturns
     /// The last completed session's move: anchor close ÷ its predecessor. This
     /// is what 昨日涨幅 shows at every moment, flipping with the quote's own
     /// rollover.
+    ///
+    /// When the anchor candle carries its own <see cref="Kline.Percent"/> (only
+    /// the KR archive does), that is authoritative: it was computed from that
+    /// day's live quote and stays right even if the immediately-preceding
+    /// session never made it into the archive — dividing by the stored
+    /// predecessor would then be off by a whole session.
     /// </summary>
     public static double? PrevDayPercent(IReadOnlyList<Kline> candles, int yesterdayIndex)
     {
-        if (yesterdayIndex < 1) return null;
+        if (yesterdayIndex < 0 || yesterdayIndex >= candles.Count) return null;
 
+        if (candles[yesterdayIndex].Percent is { } pct) return pct;
+
+        if (yesterdayIndex < 1) return null;
         var prev = candles[yesterdayIndex - 1].Close;
         return prev > 0 ? (candles[yesterdayIndex].Close / prev - 1) * 100 : null;
     }

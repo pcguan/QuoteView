@@ -383,7 +383,7 @@
                                 ElementStyle="{StaticResource NumCell}" />
             <DataGridTextColumn Header="内盘" Binding="{Binding InnerVolume, Converter={StaticResource Num}}" Width="84" MinWidth="64" Visibility="Collapsed"
                                 ElementStyle="{StaticResource NumCell}" />
-            <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="130" MinWidth="90" Visibility="Collapsed">
+            <DataGridTextColumn Header="时间" Binding="{Binding TimeDisplay}" Width="130" MinWidth="90" Visibility="Collapsed">
               <DataGridTextColumn.ElementStyle>
                 <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Faint}" />
                   <Setter Property="FontFamily" Value="Consolas" /><Setter Property="VerticalAlignment" Value="Center" /></Style>
