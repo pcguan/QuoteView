@@ -546,6 +546,13 @@
                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,6,0"
                    Icon="{ui:SymbolIcon Settings24}" Click="ColumnSettings_Click"
                    ToolTip="列设置：勾选显示/隐藏，拖动调整顺序" />
+        <StackPanel x:Name="EmptyOverlay" Visibility="Collapsed"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+          <TextBlock Text="该分组还没有合约" Foreground="#8B93A3" FontSize="14"
+                     HorizontalAlignment="Center" Margin="0,0,0,4" />
+          <TextBlock Text="在上方输入框添加，如 SH600519 / 茅台 / gzmt" Foreground="#5F6672"
+                     FontSize="12" HorizontalAlignment="Center" />
+        </StackPanel>
         </Grid>
       </Border>
 

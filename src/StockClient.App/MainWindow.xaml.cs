@@ -86,11 +86,21 @@ public partial class MainWindow : FluentWindow
             _klineHttp, appVersion, baseUrl: () => AppPrefs.ApiBase));
         ErrorReporter.Init(_session);
         _presence = new PresenceChannel(_session, appVersion);
+        _presence.ConnectedChanged += connected =>
+            Dispatcher.InvokeAsync(() => OnPresenceChanged(connected));
         _presence.Start();
         _session.Changed += () => Dispatcher.InvokeAsync(() =>
         {
             UpdateAccountButton();
             UpdateGates();
+            // Signed out (kick / expiry) severs the socket too, which would
+            // otherwise leave the "服务端暂不可达" banner armed and stuck — the
+            // reconnect loop idles on a null token and never raises Connected.
+            if (!_session.IsSignedIn)
+            {
+                _offlineTimer?.Stop();
+                OfflineBar.Visibility = Visibility.Collapsed;
+            }
         });
         _session.Kicked += () => Dispatcher.InvokeAsync(async () =>
             await InfoDialog("已退出登录", "该账户已被管理员登出；如需继续使用请重新登录。"));
@@ -952,6 +962,15 @@ public partial class MainWindow : FluentWindow
 
         ShowTrayIcon();
 
+        if (!AppPrefs.StealthIntroShown)
+        {
+            AppPrefs.StealthIntroShown = true;
+            _tray?.ShowBalloonTip(9000, "简洁面板已开启",
+                "双击面板变暗/隐身，原位再双击恢复；Win+Alt+↑/↓ 调亮度、Ctrl+滚轮切分组、"
+                + "滚轮切合约。Win+Alt+End 在主窗口与面板间切换。右键面板有全部操作。",
+                System.Windows.Forms.ToolTipIcon.Info);
+        }
+
         WindowState = WindowState.Minimized;
         ShowInTaskbar = false;
     }
@@ -997,6 +1016,33 @@ public partial class MainWindow : FluentWindow
     /// minimized or in the background) so a glance draws the eye. The alert
     /// disarmed itself, so this fires once per crossing, not every tick.
     /// </summary>
+    // Debounced offline banner: a single dropped socket reconnects in seconds,
+    // so wait ~20s of continuous disconnection before telling the user — and
+    // hide the instant it reconnects.
+    private DispatcherTimer? _offlineTimer;
+
+    private void OnPresenceChanged(bool connected)
+    {
+        if (connected)
+        {
+            _offlineTimer?.Stop();
+            OfflineBar.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (!_session.IsSignedIn) return;   // a logout isn't a server outage
+        if (OfflineBar.Visibility == Visibility.Visible || _offlineTimer is { IsEnabled: true }) return;
+        _offlineTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
+        _offlineTimer.Tick += (_, _) =>
+        {
+            _offlineTimer!.Stop();
+            // Re-check at fire time: the 20s may have covered a kick/expiry, and
+            // an "unreachable" banner over a signed-out client is just wrong.
+            if (_session.IsSignedIn) OfflineBar.Visibility = Visibility.Visible;
+        };
+        _offlineTimer.Start();
+    }
+
     private void OnAlertFired(Quote quote, Services.PriceAlert alert)
     {
         var name = quote.IsMissing ? quote.Code : quote.Name;

@@ -600,6 +600,10 @@ public partial class QuotesView : UserControl
     {
         if (Vm is null || !QuoteGrid.IsLoaded) return;
 
+        // Empty-group guidance: same hook as the remove-rail, so it tracks
+        // every add/remove/group-switch without a separate subscription.
+        EmptyOverlay.Visibility = Vm.Quotes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
         var headerBottom = TemplatePart(ref _headers)?.ActualHeight ?? 0;
         var used = 0;
 

@@ -18,7 +18,7 @@
       <StackPanel x:Name="ChangePassPanel" Visibility="Collapsed" Margin="0,14,0,0">
         <TextBlock Text="旧密码" Foreground="#5F6672" FontSize="11" Margin="0,0,0,2" />
         <PasswordBox x:Name="OldPassBox" Margin="0,0,0,8" />
-        <TextBlock Text="新密码（至少 6 位）" Foreground="#5F6672" FontSize="11" Margin="0,0,0,2" />
+        <TextBlock Text="新密码（≥8 位，非纯数字/弱口令）" Foreground="#5F6672" FontSize="11" Margin="0,0,0,2" />
         <PasswordBox x:Name="NewPassBox" Margin="0,0,0,8" />
         <TextBlock Text="确认新密码" Foreground="#5F6672" FontSize="11" Margin="0,0,0,2" />
         <PasswordBox x:Name="NewPass2Box" Margin="0,0,0,10" />

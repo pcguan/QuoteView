@@ -44,6 +44,13 @@ public sealed class PresenceChannel : IAsyncDisposable
     /// <summary>Raised when the server pushes a fresh-news notification.</summary>
     public event Action? NewsPushed;
 
+    /// <summary>Live server connectivity, for a global "服务端暂不可达" banner.
+    /// Raised on the reconnect thread; the handler marshals to the UI. Carries
+    /// the consecutive-failure count so the UI can wait out a brief blip.</summary>
+    public event Action<bool>? ConnectedChanged;
+
+    private int _failStreak;
+
     public void Start() => _loop ??= RunAsync();
 
     private async Task RunAsync()
@@ -79,6 +86,7 @@ public sealed class PresenceChannel : IAsyncDisposable
                     throw new WebSocketException("auth rejected");
 
                 backoff = TimeSpan.FromSeconds(5);
+                if (_failStreak != 0) { _failStreak = 0; ConnectedChanged?.Invoke(true); }
                 Probe.Log("presence: connected");
 
                 while (true)
@@ -111,7 +119,9 @@ public sealed class PresenceChannel : IAsyncDisposable
                 continue;
             }
 
-            Probe.Log($"presence: disconnected, retry in {backoff.TotalSeconds:0}s");
+            _failStreak++;
+            ConnectedChanged?.Invoke(false);
+            Probe.Log($"presence: disconnected ({_failStreak}), retry in {backoff.TotalSeconds:0}s");
 
             // One authenticated probe per drop: if the server just force-logged
             // this session out (admin kick severs the socket), the ping's 401

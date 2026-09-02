@@ -17,7 +17,7 @@ public static class AppPrefs
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
         int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
         string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
-        int UpdateDelayHours = 0);
+        int UpdateDelayHours = 0, bool StealthIntroShown = false);
 
     private static Doc _doc = Load();
 
@@ -103,6 +103,13 @@ public static class AppPrefs
     {
         get => Math.Clamp(_doc.UpdateDelayHours, 0, 72);
         set { var v = Math.Clamp(value, 0, 72); if (_doc.UpdateDelayHours == v) return; _doc = _doc with { UpdateDelayHours = v }; Save(); }
+    }
+
+    /// <summary>The one-time stealth-panel gesture intro balloon has been shown.</summary>
+    public static bool StealthIntroShown
+    {
+        get => _doc.StealthIntroShown;
+        set { if (_doc.StealthIntroShown == value) return; _doc = _doc with { StealthIntroShown = value }; Save(); }
     }
 
     public const string ProxyOff = "off";

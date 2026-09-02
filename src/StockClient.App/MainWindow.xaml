@@ -53,8 +53,11 @@
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock Text="登录后查看实时行情" Foreground="#8B93A3" FontSize="14"
                          HorizontalAlignment="Center" Margin="0,0,0,12" />
-              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+              <Button Content="登录" HorizontalAlignment="Center" Padding="14,4"
                       Click="Account_Click" />
+              <TextBlock Foreground="#5F6672" FontSize="11" Margin="0,10,0,0"
+                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="300"
+                         Text="也可在登录窗口选择「离线模式」：分组与设置仅存本机，不含历史分时与多端同步。" />
             </StackPanel>
           </Border>
         </Grid>
@@ -67,7 +70,7 @@
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock x:Name="HistoryGateText" Text="登录后查询历史分时" Foreground="#8B93A3"
                          FontSize="14" HorizontalAlignment="Center" Margin="0,0,0,12" />
-              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+              <Button Content="登录" HorizontalAlignment="Center" Padding="14,4"
                       Click="Account_Click" />
             </StackPanel>
           </Border>
@@ -81,7 +84,7 @@
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock Text="登录后查看每日资讯" Foreground="#8B93A3" FontSize="14"
                          HorizontalAlignment="Center" Margin="0,0,0,12" />
-              <Button Content="登录 / 注册" HorizontalAlignment="Center" Padding="14,4"
+              <Button Content="登录" HorizontalAlignment="Center" Padding="14,4"
                       Click="Account_Click" />
             </StackPanel>
           </Border>
@@ -337,8 +340,20 @@
       </TabItem>
     </TabControl>
 
+    <!-- Row 2 的两条底栏纵向排列，避免同时可见时重叠（都是不透明满宽条）。 -->
+    <StackPanel Grid.Row="2">
+    <!-- 服务端暂不可达横幅：presence 连续断线一段时间才显示，恢复即消失。 -->
+    <Border x:Name="OfflineBar" Visibility="Collapsed"
+            Background="#2A2320" BorderBrush="#4A3A2A" BorderThickness="0,1,0,0" Padding="16,8">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <ui:SymbolIcon Symbol="CloudOff24" Foreground="#E0A46B" VerticalAlignment="Center" />
+        <TextBlock Margin="9,0,0,0" VerticalAlignment="Center" Foreground="#E8DFD4" FontSize="12"
+                   Text="服务端暂不可达，正在自动重连。实时行情不受影响；历史分时、资讯与多端同步稍后恢复。" />
+      </StackPanel>
+    </Border>
+
     <!-- Bottom status bar: update prompt. Collapsed until a newer version is found. -->
-    <Border x:Name="UpdateBar" Grid.Row="2" Visibility="Collapsed"
+    <Border x:Name="UpdateBar" Visibility="Collapsed"
             Background="#1B2233" BorderBrush="#2C3547" BorderThickness="0,1,0,0" Padding="16,8">
       <Grid>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -354,5 +369,6 @@
         </StackPanel>
       </Grid>
     </Border>
+    </StackPanel>
   </Grid>
 </ui:FluentWindow>

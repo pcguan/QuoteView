@@ -198,7 +198,7 @@ public partial class LoginWindow : Window
         }
 
         if (oldPw.Length == 0 || newPw.Length == 0) { Result("请输入旧密码和新密码", false); return; }
-        if (newPw.Length < 6) { Result("新密码至少 6 位", false); return; }
+        if (!StrongEnough(newPw)) { Result(PasswordRule, false); return; }
         if (newPw != NewPass2Box.Password) { Result("两次输入的新密码不一致", false); return; }
 
         ChangePassButton.IsEnabled = false;
@@ -229,6 +229,19 @@ public partial class LoginWindow : Window
 
     private async void Register_Click(object sender, RoutedEventArgs e) => await SubmitAsync(register: true);
 
+    // Mirrors the server's strong_enough (server.py): ≥8, not all-digits, not a
+    // common weak password. Kept client-side too so a weak password is rejected
+    // before the round-trip instead of coming back as a server 400.
+    public const string PasswordRule = "密码至少 8 位，且不能是纯数字或常见弱口令";
+    private static readonly HashSet<string> WeakPasswords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "password", "12345678", "123456789", "1234567890", "qwertyui",
+        "abcd1234", "admin123", "88888888", "11111111", "iloveyou",
+    };
+
+    public static bool StrongEnough(string pw) =>
+        pw.Length >= 8 && !pw.All(char.IsDigit) && !WeakPasswords.Contains(pw);
+
     private async Task SubmitAsync(bool register)
     {
         var user = UserBox.Text.Trim();
@@ -237,6 +250,14 @@ public partial class LoginWindow : Window
         if (user.Length == 0 || pass.Length == 0)
         {
             ShowError("请输入用户名和密码");
+            return;
+        }
+
+        // Only registration must satisfy the rule (a login just checks whatever
+        // you set before). Catch it here so the guidance is specific.
+        if (register && !StrongEnough(pass))
+        {
+            ShowError(PasswordRule);
             return;
         }
 
