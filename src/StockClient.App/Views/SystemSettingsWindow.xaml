@@ -43,7 +43,7 @@
         <RadioButton x:Name="ProxyManualRadio" GroupName="px" Foreground="#EDF1F7"
                      Content="手动指定" Checked="Proxy_Changed" />
         <TextBox x:Name="ProxyAddressBox" Margin="26,6,0,0" Width="200" HorizontalAlignment="Left"
-                 Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                 Foreground="#EDF1F7"
                  LostFocus="ProxyAddress_Changed" />
         <TextBlock Margin="26,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                    Text="格式：主机:端口（如 127.0.0.1:7890）。修改代理设置重启客户端后生效。" />
@@ -52,7 +52,7 @@
 
         <TextBlock Text="服务器地址" Foreground="#EDF1F7" Margin="0,0,0,6" />
         <TextBox x:Name="ApiBaseBox" Width="360" HorizontalAlignment="Left"
-                 Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                 Foreground="#EDF1F7"
                  LostFocus="ApiBase_Changed" />
         <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
                    Text="留空即用默认公网域名。域名或 CDN 不可用时，可在局域网内改填内网直连地址（如 http://192.168.x.x:8388/quoteview/api）继续查行情与历史（作用于账户/K线/历史接口；实时长连接与更新检查仍走默认域名），改后重启客户端生效。" />
@@ -63,7 +63,7 @@
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="发现新版本后延迟" Foreground="#EDF1F7" VerticalAlignment="Center" />
           <TextBox x:Name="UpdateDelayBox" Width="48" Margin="6,0,6,0"
-                   Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                   Foreground="#EDF1F7"
                    LostFocus="UpdateDelay_Changed" />
           <TextBlock Text="小时后再自动更新" Foreground="#EDF1F7" VerticalAlignment="Center" />
         </StackPanel>
