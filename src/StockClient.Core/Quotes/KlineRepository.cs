@@ -98,7 +98,7 @@ public sealed class KlineRepository
         {
             // A cache that only needed the closing candle added still draws the
             // whole history. Better that than swapping it for Tencent's fallback,
-            // which is same-day only for BJ/US/KR and would wipe the history.
+            // which has no BJ/KR history at all and would wipe the history.
             if (cached is not null) return (cached, Label(cached));
 
             var series = await _tencent.FetchAsync(contract, period, adjust, cancellationToken);

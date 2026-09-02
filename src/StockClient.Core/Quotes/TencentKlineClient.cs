@@ -10,10 +10,12 @@ namespace StockClient.Core.Quotes;
 ///
 ///   https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,2000,qfq
 ///
-/// Coverage is narrower than EastMoney: full history for SH/SZ (front-adjusted)
-/// and HK, but BJ/US/KR return only the current day here. So it's a best-effort
-/// backup that keeps a chart on screen, not a full replacement — EastMoney is
-/// preferred whenever it answers.
+/// Coverage: full history for SH/SZ (front-adjusted), HK and US. US needs the
+/// exchange suffix on THIS endpoint (usASX.N / usAAPL.OQ) — the quote endpoint
+/// accepts the bare form, so the bare form got reused here for months and
+/// Tencent answered it with a one-or-two-row stub, which read as "no US
+/// history at Tencent". BJ and KR genuinely return nothing here in any form;
+/// those stay EastMoney-only (BJ) or server-archived (KR).
 ///
 /// Row order matches EastMoney: date, open, <b>close</b>, high, low, volume.
 /// </summary>
@@ -33,7 +35,7 @@ public sealed class TencentKlineClient
         Contract contract, KlinePeriod period, KlineAdjust adjust, int count,
         CancellationToken cancellationToken)
     {
-        var api = TencentQuoteClient.ToApiCode(contract.Code);
+        var api = ToKlineApiCode(contract);
         var span = Span(period);
         var (endpoint, adjustParam, prefix) = AdjustParts(adjust);
 
@@ -54,6 +56,28 @@ public sealed class TencentKlineClient
             Adjust = adjust,
             Candles = candles,
         };
+    }
+
+    /// <summary>
+    /// The symbol form the kline endpoint wants. Unlike the quote endpoint it
+    /// needs US exchange suffixes: .N NYSE, .OQ NASDAQ, .A NYSE American —
+    /// keyed by EastMoney's market number, which the contract list carries
+    /// (106/105/107). A bare US contract with no number defaults to NASDAQ,
+    /// same as EastMoneySecId does; a miss there just falls through to
+    /// EastMoney via the caller's chain.
+    /// </summary>
+    public static string ToKlineApiCode(Contract contract)
+    {
+        var api = TencentQuoteClient.ToApiCode(contract.Code);
+        if (contract.Market != Market.US) return api;
+
+        var suffix = (contract.MarketNumber ?? 105) switch
+        {
+            106 => ".N",
+            107 => ".A",
+            _ => ".OQ",
+        };
+        return api + suffix;
     }
 
     /// <summary>

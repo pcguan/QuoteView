@@ -65,16 +65,19 @@ public sealed class DailyKlineSource
     {
         if (contract.Market == Market.KR) return await KoreaAsync(contract, cancellationToken);
 
-        // SH/SZ/HK: Tencent FIRST — full history, same vendor as the quote poll
-        // (so 昨收 matches to the tick), and immune to the EastMoney kline host's
-        // routine outages; EastMoney only as its backup.
-        if (contract.Market is Market.SH or Market.SZ or Market.HK)
+        // SH/SZ/HK/US: Tencent FIRST — full history, same vendor as the quote
+        // poll (so 昨收 matches to the tick), and immune to the EastMoney kline
+        // host's routine outages; EastMoney only as its backup. US joined this
+        // list once the exchange-suffix form was found (see
+        // TencentKlineClient.ToKlineApiCode) — a whole evening of blank US
+        // returns during a push2his outage is what surfaced it.
+        if (contract.Market is Market.SH or Market.SZ or Market.HK or Market.US)
         {
             try
             {
                 var series = await _tencent.FetchAsync(
                     contract, KlinePeriod.Day, KlineAdjust.Qfq, CandleCount, cancellationToken);
-                if (series.Candles.Count > 0) return Trim(series);
+                if (Usable(series)) return Trim(series);
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
@@ -84,15 +87,21 @@ public sealed class DailyKlineSource
             return await EastAsync(contract, cancellationToken);
         }
 
-        // BJ/US: EastMoney only — Tencent serves a single same-day candle there,
-        // and caching that as "fresh" would stop the retries; null keeps the
-        // 10-minute sweep trying instead.
+        // BJ: EastMoney only — Tencent has no Beijing klines in any symbol form.
         return await EastAsync(contract, cancellationToken);
     }
 
     /// <summary>
+    /// A series that can't yield even 昨日涨幅 is no data, not partial data.
+    /// Returning it would let the caller stamp the day as fetched and stop
+    /// retrying — exactly how a one-row upstream stub once blanked every US
+    /// return for a whole session.
+    /// </summary>
+    private static bool Usable(KlineSeries? series) => series is { Candles.Count: >= 2 };
+
+    /// <summary>
     /// Korea has no queryable daily history upstream (EastMoney's period fields
-    /// are broken there, Tencent klines carry only the current day) — the SERVER
+    /// are broken there, Tencent has no KR klines in any symbol form) — the SERVER
     /// archives each session's close itself and serves the pairs back.
     /// </summary>
     private async Task<KlineSeries?> KoreaAsync(Contract contract, CancellationToken cancellationToken)
@@ -143,7 +152,7 @@ public sealed class DailyKlineSource
                 {
                     var fromServer = EastMoneyKlineClient.ParseSeries(
                         json, contract, KlinePeriod.Day, KlineAdjust.Qfq);
-                    if (fromServer.Candles.Count > 0) return fromServer;
+                    if (Usable(fromServer)) return fromServer;
                 }
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
@@ -156,7 +165,7 @@ public sealed class DailyKlineSource
         {
             var east = await _east.FetchAsync(
                 contract, KlinePeriod.Day, KlineAdjust.Qfq, CandleCount, cancellationToken);
-            if (east.Candles.Count > 0) return east;
+            if (Usable(east)) return east;
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -164,7 +173,7 @@ public sealed class DailyKlineSource
         }
 
         // A cancelled fetch says nothing about the host. Counting it tripped the
-        // breaker on every group switch made mid-crawl, and BJ/US (no Tencent
+        // breaker on every group switch made mid-crawl, and BJ (no Tencent
         // history) were then left with no daily source at all for five minutes.
         if (cancellationToken.IsCancellationRequested) return null;
 

@@ -81,14 +81,28 @@ public class DailyKlineSourceTests
             Assert.Equal(1, fqt);        // qfq
             Assert.Equal(DailyKlineSource.CandleCount, lmt);
             return Task.FromResult<string?>(
-                "{\"data\":{\"code\":\"AAPL\",\"klines\":[\"2026-08-28,10,11,12,9,100,0\"]}}");
+                "{\"data\":{\"code\":\"AAPL\",\"klines\":["
+                + "\"2026-08-27,10,11,12,9,100,0\",\"2026-08-28,11,12,13,10,100,0\"]}}");
         });
 
         var series = await source.FetchAsync(Of("USAAPL"), default);
 
         Assert.Equal(1, hits);
         Assert.NotNull(series);
-        Assert.Single(series!.Candles);
+        Assert.Equal(2, series!.Candles.Count);
+    }
+
+    [Fact]
+    public async Task A_one_row_stub_is_no_data_at_all()
+    {
+        // Tencent answered bare US symbols with a one-row stub for months, and
+        // the server's fallback relayed it. Accepting it stamped the day as
+        // fetched and left every US return blank until the date rolled — so
+        // anything that can't yield even 昨日涨幅 must read as "nothing".
+        var source = Source(server: (_, _, _, _, _) => Task.FromResult<string?>(
+            "{\"data\":{\"code\":\"AAPL\",\"klines\":[\"2026-08-28,10,11,12,9,100,0\"]}}"));
+
+        Assert.Null(await source.FetchAsync(Of("USAAPL"), default));
     }
 
     [Fact]

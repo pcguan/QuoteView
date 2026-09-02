@@ -406,6 +406,10 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         foreach (var (code, entry) in _dailyCache.Load())
         {
             if (!DateOnly.TryParse(entry.Stamp, out var stamp)) continue;
+            // A one-row entry is an upstream stub that got stamped as the day's
+            // fetch (v1.1.0–1.1.2 accepted those for US); loading it would keep
+            // the row blank until the date rolls. Drop it so the sweep refetches.
+            if (entry.Candles.Count < 2) continue;
             _daily[code] = entry.Candles
                 .Where(c => c.Close > 0)
                 .Select(c => new Kline

@@ -571,7 +571,7 @@ def union_codes():
 def kr_codes():
     """KR codes across every account synced within the TTL, deduped. Korea has
     no queryable daily history anywhere we reach (EastMoney's period fields are
-    broken there, Tencent klines carry only the current day), so the server
+    broken there, Tencent has no KR klines in any form), so the server
     archives each session's close itself — see kr_sweep_tick."""
     cutoff = time.time() - CLIENT_TTL_DAYS * 86400
     seen = set()
@@ -775,7 +775,7 @@ def kline_body(secid, klt, fqt, lmt):
     # EastMoney exhausted: Tencent fallback, converted to the EastMoney shape
     # the clients parse (the same chain every client carries itself — but the
     # proxy answering means one upstream hit still serves everyone). Tencent
-    # covers SH/SZ/HK with history; BJ/US/KR come back same-day only there.
+    # covers SH/SZ/HK/US with history (US via exchange suffix); BJ/KR have none.
     body = kline_tencent(secid, klt, fqt, lmt)
     if body is not None:
         return body
@@ -801,7 +801,10 @@ def kline_tencent(secid, klt, fqt, lmt):
     elif market == "116":
         api = "hk" + symbol
     elif market in ("105", "106", "107"):
-        api = "us" + symbol
+        # This endpoint needs the exchange suffix for US (the quote endpoint
+        # doesn't): without it Tencent returns a one-row stub, which the client
+        # then stamped as the day's fetch and showed blank returns all session.
+        api = "us" + symbol + {"105": ".OQ", "106": ".N", "107": ".A"}[market]
     else:
         return None
 
@@ -820,7 +823,9 @@ def kline_tencent(secid, klt, fqt, lmt):
         # strings: "date,open,close,high,low,volume,amount".
         klines = [",".join([str(x) for x in row[:6]] + ["0"])
                   for row in rows if isinstance(row, list) and len(row) >= 6]
-        if not klines:
+        # Fewer than two rows is a stub, not history — serving it is worse than
+        # serving nothing (the client caches it as the day's answer).
+        if len(klines) < 2:
             return None
         log(f"kline fallback tencent {api} {span} rows={len(klines)}")
         return json.dumps({"data": {"code": symbol, "klines": klines}})
