@@ -107,7 +107,7 @@ public sealed class AccountClient
         }
     }
 
-    public async Task<(bool Ok, bool Unauthorized)> SyncAsync(
+    public async Task<(bool Ok, bool Unauthorized, bool Conflict)> SyncAsync(
         string token,
         IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups,
         long at,
@@ -131,11 +131,12 @@ public sealed class AccountClient
 
             using var response = await _http.SendAsync(request, ct);
             return (response.IsSuccessStatusCode,
-                    response.StatusCode == System.Net.HttpStatusCode.Unauthorized);
+                    response.StatusCode == System.Net.HttpStatusCode.Unauthorized,
+                    response.StatusCode == System.Net.HttpStatusCode.Conflict);
         }
         catch (Exception)
         {
-            return (false, false);
+            return (false, false, false);
         }
     }
 

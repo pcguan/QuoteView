@@ -324,7 +324,8 @@ public partial class MainWindow : FluentWindow
         if (!string.Equals(_quotes.ConfigOwner, _session.Username, StringComparison.OrdinalIgnoreCase))
             return;
 
-        if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
+        if (await _session.SyncGroupsAsync(_quotes.ExportGroups(), _quotes.GroupsUpdatedAt)
+                == AccountSession.SyncOutcome.Ok)
             _lastPushedGroups = _quotes.ExportGroupsJson();
     }
 
@@ -397,16 +398,30 @@ public partial class MainWindow : FluentWindow
                     {
                         _lastPushedGroups = groupsJson;
                     }
-                    else if (await _session.SyncGroupsAsync(
-                        _quotes.ExportGroups(), _quotes.GroupsUpdatedAt))
-                    {
-                        _lastPushedGroups = groupsJson;
-                        Probe.Log("groups push ok");
-                    }
                     else
                     {
-                        // 409 stale included: the reconcile pass pulls the newer copy.
-                        ok = false;
+                        var outcome = await _session.SyncGroupsAsync(
+                            _quotes.ExportGroups(), _quotes.GroupsUpdatedAt);
+                        if (outcome == AccountSession.SyncOutcome.Ok)
+                        {
+                            _lastPushedGroups = groupsJson;
+                            Probe.Log("groups push ok");
+                        }
+                        else if (outcome == AccountSession.SyncOutcome.Conflict)
+                        {
+                            // Another machine holds a newer copy — the server
+                            // rejected our stale push. Reconcile sets the
+                            // baseline to the adopted copy on success; on
+                            // failure (pull failed / remote empty) we must NOT
+                            // mark the rejected local as pushed, or the change
+                            // silently sticks here forever. Leave the baseline
+                            // and retry at the gentler cadence.
+                            ok = await ReconcileStaleGroupsAsync();
+                        }
+                        else
+                        {
+                            ok = false;   // network hiccup: retry at a gentler cadence
+                        }
                     }
                 }
 
@@ -453,7 +468,8 @@ public partial class MainWindow : FluentWindow
             if (settingsDirty && await _session.PutSettingsAsync(json))
                 _lastPushedSettings = json;
             if (groupsDirty && await _session.SyncGroupsAsync(
-                    quotes.ExportGroups(), quotes.GroupsUpdatedAt))
+                    quotes.ExportGroups(), quotes.GroupsUpdatedAt)
+                    == AccountSession.SyncOutcome.Ok)
                 _lastPushedGroups = groupsJson;
         }
 
@@ -526,8 +542,6 @@ public partial class MainWindow : FluentWindow
         // previous user's groups. Server empty + same owner -> keep local (the
         // periodic upload republishes it).
         var config = store.Load();
-        var otherOwner = config.Owner is not null
-                         && !string.Equals(config.Owner, username, StringComparison.OrdinalIgnoreCase);
 
         var remoteGroups = await _session.GroupsWithAtAsync();
         for (var attempt = 0; attempt < 2 && remoteGroups is null; attempt++)
@@ -538,7 +552,8 @@ public partial class MainWindow : FluentWindow
 
         if (remoteGroups is { } remote)
         {
-            if (remote.Groups.Count > 0)
+            var action = LoginMerge.Decide(config.Owner, username, remote.Groups.Count);
+            if (action == LoginMerge.Action.AdoptRemote)
             {
                 config = store.Load();
 
@@ -562,7 +577,7 @@ public partial class MainWindow : FluentWindow
                 store.Save(config);
                 changed = true;
             }
-            else if (otherOwner)
+            else if (action == LoginMerge.Action.ClearLocal)
             {
                 config = store.Load();
                 config.Groups = new List<Group>();
@@ -571,7 +586,7 @@ public partial class MainWindow : FluentWindow
                 store.Save(config);
                 changed = true;
             }
-            else if (config.Owner is null)
+            else if (action == LoginMerge.Action.StampOwnerKeepLocal)
             {
                 config.Owner = username;
                 store.Save(config);
@@ -580,6 +595,58 @@ public partial class MainWindow : FluentWindow
         }
 
         return changed;
+    }
+
+    /// <summary>
+    /// The server rejected our push as stale: another machine holds a newer
+    /// groups copy. Pull it, write it to this profile's store, reload the live
+    /// view, and surface a self-dismissing note — the overwrite is no longer
+    /// silent, which is the whole point.
+    /// </summary>
+    private async Task<bool> ReconcileStaleGroupsAsync()
+    {
+        if (_quotes is null) return false;
+
+        var remote = await _session.GroupsWithAtAsync();
+        if (remote is not { } r || r.Groups.Count == 0) return false;   // caller retries
+
+        var store = new GroupStore();
+        var config = store.Load();
+
+        var localPanel = new Dictionary<string, bool>();
+        foreach (var g in config.Groups) localPanel[g.Name] = g.InPanel;
+
+        config.Groups = r.Groups.Select(g => new Group
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = g.Name.Length > 0 ? g.Name : "分组",
+            Codes = g.Codes.ToList(),
+            InPanel = !localPanel.TryGetValue(g.Name, out var p) || p,
+        }).ToList();
+        config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
+        config.GroupsUpdatedAt = r.At;
+        store.Save(config);
+
+        _quotes.ReloadFromStore();
+        _lastPushedGroups = _quotes.ExportGroupsJson();
+
+        // Honest wording: the server rejected this machine's push as older, so
+        // the adopted copy wins — this machine's just-made edit may have been
+        // superseded. Don't claim "newer" (clock skew makes that not always true).
+        ShowSyncNote("分组配置已与其他设备同步；本机刚才的改动可能被对端版本覆盖。");
+        return true;
+    }
+
+    private DispatcherTimer? _syncNoteTimer;
+
+    private void ShowSyncNote(string text)
+    {
+        SyncNoteText.Text = text;
+        SyncNote.Visibility = Visibility.Visible;
+        _syncNoteTimer?.Stop();
+        _syncNoteTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _syncNoteTimer.Tick += (_, _) => { _syncNoteTimer!.Stop(); SyncNote.Visibility = Visibility.Collapsed; };
+        _syncNoteTimer.Start();
     }
 
     private async void Account_Click(object sender, RoutedEventArgs e)

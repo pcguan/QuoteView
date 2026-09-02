@@ -509,6 +509,46 @@ def trend_dates(code):
 ARCHIVE_DIR = os.path.join(DATA, "archive")
 
 
+def audit(kind, detail, ip="", user=""):
+    detail = str(detail)[:300]
+    user = str(user)[:64]
+    """Append-only security trail: auth failures (incl. unknown users, which
+    have no account to log into), rate-limit trips, admin actions. Separate
+    from the rotating app log and永久保留 via archive_overflow, so a burst of
+    failed logins can't age out the evidence."""
+    archive_overflow("audit", [{
+        "at": f"{datetime.now(CN):%F %T}", "kind": kind,
+        "user": user, "ip": ip, "detail": detail,
+    }])
+
+
+def read_audit(limit=500):
+    """Recent audit entries, newest first, for the console. Cheap: audit
+    volume is low; read the whole file and tail it."""
+    path = os.path.join(ARCHIVE_DIR, "audit.jsonl")
+    rows = []
+    try:
+        with open(path, "rb") as f:
+            # Tail only: audit.jsonl is永久保留 and can grow large; reading the
+            # whole file into memory on every console load is a DoS amplifier.
+            try:
+                f.seek(-256 * 1024, os.SEEK_END)
+                f.readline()   # drop the partial first line
+            except OSError:
+                f.seek(0)
+            for raw in f.read().decode("utf-8", "replace").splitlines():
+                raw = raw.strip()
+                if raw:
+                    try:
+                        rows.append(json.loads(raw))
+                    except Exception:
+                        pass
+    except FileNotFoundError:
+        return []
+    rows.sort(key=lambda r: r.get("at", ""), reverse=True)
+    return rows[:limit]
+
+
 def archive_overflow(kind, entries):
     if not entries:
         return
@@ -1164,7 +1204,16 @@ TONE_BAD = ("预减", "减持", "下调", "亏损", "立案", "调查", "诉讼"
             "大跌", "净利降", "业绩降", "商誉减值")
 
 
+# 否定/转折词：命中就说明标题在讲"没发生/被否/不及"，关键词的方向可能整个反过来
+# （"重组终止""业绩不及预期""撤销处罚"）。关键词多数表决对这类句子极不可靠，
+# 一律回落中性，把方向判断留给每日简报的人工/深度分析，而不是在持仓旁标错颜色。
+TONE_NEGATION = ("终止", "取消", "撤销", "撤回", "放弃", "否决", "不及", "低于", "未达",
+                 "未能", "下修", "延期", "暂缓", "中止", "失败", "无法", "不予")
+
+
 def news_tone(text):
+    if any(w in text for w in TONE_NEGATION):
+        return "中性"
     good = sum(1 for w in TONE_GOOD if w in text)
     bad = sum(1 for w in TONE_BAD if w in text)
     return "利多" if good > bad else "利空" if bad > good else "中性"
@@ -1668,6 +1717,9 @@ tr.err:hover td{background:#331722}
     </div>
     <div class=grid2>
       <div class=card><h2>登录统计（按用户汇总）</h2><div id=login-stats></div></div>
+      <div class=card><h2>安全审计
+        <span class=dim style="font-size:12px;font-weight:normal">（登录失败/限速/管理动作，永久留存于 archive/audit.jsonl）</span></h2>
+        <div id=audit-list></div></div>
       <div class=card><h2>客户端异常
         <span class=dim style="font-size:12px;font-weight:normal">（客户端未处理异常自动上报，同类 10 分钟内只报一次）</span></h2>
         <div id=fault-list></div></div>
@@ -1806,7 +1858,7 @@ function esc(v){
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50}, fault: {page:0, size:20} };
+const PAGES = { login: {page:0, size:50}, chg: {page:0, size:50}, pw: {page:0, size:50}, fault: {page:0, size:20}, audit: {page:0, size:50} };
 
 function pager(key, total){
   const st = PAGES[key];
@@ -1833,7 +1885,22 @@ function rerenderLog(key){
   if (key === 'login') renderLogs();
   else if (key === 'chg') renderChanges();
   else if (key === 'fault') renderFaults();
+  else if (key === 'audit') renderAudits();
   else renderPw();
+}
+function renderAudits(){
+  if (!LOGS) return;
+  const all = LOGS.audits || [];
+  const rows = pageSlice('audit', all).map(l => `<tr>
+      <td class=mono>${esc(l.at)}</td>
+      <td><span class="tag t-role">${esc(l.kind)}</span></td>
+      <td><b>${esc(l.user||'-')}</b></td>
+      <td>${esc(l.detail)}</td>
+      <td class=mono>${esc(l.ip||'-')}</td></tr>`).join('');
+  $('audit-list').innerHTML = all.length
+    ? `<table><tr><th>时间</th><th>类型</th><th>用户</th><th>详情</th><th>IP</th></tr>${rows}</table>`
+      + pager('audit', all.length)
+    : '<div class=dim>暂无审计事件</div>';
 }
 function renderFaults(){
   if (!LOGS) return;
@@ -1857,6 +1924,7 @@ async function loadLogs(){
   renderChanges();
   renderPw();
   renderFaults();
+  renderAudits();
   const stats = {};
   for (const l of LOGS.logins){
     if ((l.level || 'info') !== 'info') continue;   // stats = successful logins
@@ -2144,12 +2212,14 @@ class Handler(BaseHTTPRequestHandler):
                                    "detail": entry.get("detail") or ""})
             logins.sort(key=lambda x: x["at"], reverse=True)
             faults.sort(key=lambda x: x["at"], reverse=True)
+            audits = read_audit(500)
             passwords.sort(key=lambda x: x["at"], reverse=True)
             changes.sort(key=lambda x: x["at"], reverse=True)
             # Pagination lives client-side now, so the merged caps are only a
             # payload guard, not a display limit.
             return self._json({"logins": logins[:1000], "passwords": passwords[:500],
-                               "changes": changes[:1000], "faults": faults[:500]})
+                               "changes": changes[:1000], "faults": faults[:500],
+                               "audits": audits})
 
         if url.path == "/web/api/accounts":
             actor = self._admin()
@@ -2435,6 +2505,7 @@ class Handler(BaseHTTPRequestHandler):
             if account is not None:
                 blocked = login_attempt(user, ip)
                 if blocked:
+                    audit("web-login-throttled", f"锁定中，剩 {blocked}s", ip=ip, user=user)
                     log(f"web login throttled {user} from {ip} ({blocked}s left)")
                     return self._bad(f"尝试过于频繁，请 {blocked} 秒后重试", 429)
             if account is None or account.get("disabled") \
@@ -2442,6 +2513,7 @@ class Handler(BaseHTTPRequestHandler):
                     or not verify_password(account, password):
                 if account is not None:
                     self._log_login(user, "error", "管理台登录失败")
+                audit("web-login-fail", "用户名/密码错误或无权限", ip=ip, user=user)
                 return self._bad("用户名或密码错误，或无管理权限", 401)
             login_ok(user, ip)
             token = web_session_create(user, role_of(account), ip)
@@ -2526,20 +2598,26 @@ class Handler(BaseHTTPRequestHandler):
             user = str(doc.get("username") or "")
             password = str(doc.get("password") or "")
             account = load_account(user) if USER_RE.match(user) else None
+            ip = self._ip()
             if account is None:
+                # 不写 audit：这是节流之前、无需认证的路径，匿名刷不存在的用户名
+                # 会无界撑大永久归档（正是限速刻意要堵的资源耗尽路）。已知账户的
+                # 失败在下面节流之后才记，条数有界。
                 return self._bad("用户名或密码错误", 401)
             # 限速只对存在的账户计数：不存在的用户名枚举不到任何信息，也就
             # 不给攻击者一条撑爆内存的路。
-            ip = self._ip()
             blocked = login_attempt(user, ip)
             if blocked:
+                audit("login-throttled", f"锁定中，剩 {blocked}s", ip=ip, user=user)
                 log(f"login throttled {user} from {ip} ({blocked}s left)")
                 return self._bad(f"尝试过于频繁，请 {blocked} 秒后重试", 429)
             if account.get("disabled"):
                 self._log_login(user, "error", "登录失败：账户已禁用")
+                audit("login-fail", "账户已禁用", ip=ip, user=user)
                 return self._bad("账户已禁用", 403)
             if not verify_password(account, password):
                 self._log_login(user, "error", "登录失败：密码错误")
+                audit("login-fail", "密码错误", ip=ip, user=user)
                 return self._bad("用户名或密码错误", 401)
             login_ok(user, ip)
             token = self._mint()
@@ -2577,6 +2655,16 @@ class Handler(BaseHTTPRequestHandler):
                 account = load_account(user)
                 if account is None:
                     return self._bad("unauthorized", 401)
+                # 陈旧拒绝：推送带的 at 是"本机上次改动时刻"。若它早于服务端已存的
+                # groups_at，说明这台机拿的是过时底稿（多半是空闲机的例行重推），
+                # 接受它就会盖掉另一台更新的改动。回 409 + 当前较新副本，让客户端
+                # 同步过去并提示，而不是无声覆盖。at 相等或更新才放行。
+                stored_at = int(account.get("groups_at") or 0)
+                # 120s 宽限：at 是客户端墙钟，两台机时钟未必严格同步；只拒真正落后
+                # 一大截的推送（空闲机拿旧底稿重推），不因几十秒偏差误拒正常编辑。
+                if at and stored_at and at < stored_at - 120:
+                    return self._json({"error": "stale", "groups": account.get("groups") or [],
+                                       "at": stored_at}, status=409)
                 # Old clients (≤1.0.52) send no "panel" field. Defaulting those
                 # to true silently wiped the rotation flags every 5 minutes —
                 # instead, a missing field inherits the stored flag by group
@@ -2813,6 +2901,7 @@ class Handler(BaseHTTPRequestHandler):
                     "created": f"{datetime.now(CN):%F %T}",
                 })
             log(f"admin[{actor_name}]: create {user}")
+            audit("admin-create", f"创建 {user}", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         account = load_account(user)
@@ -2841,6 +2930,7 @@ class Handler(BaseHTTPRequestHandler):
                 account["role"] = role
                 save_account(user, account)
             log(f"admin[{actor_name}]: role {user} -> {role}")
+            audit("admin-role", f"{user} 角色改为 {role}", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         if action == "delete":
@@ -2851,6 +2941,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             _token_cache.clear()
             log(f"admin[{actor_name}]: delete {user}")
+            audit("admin-delete", f"删除 {user}", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         if action == "disable":
@@ -2865,6 +2956,7 @@ class Handler(BaseHTTPRequestHandler):
                 save_account(user, account)
             _token_cache.clear()
             log(f"admin[{actor_name}]: disable {user} -> {account['disabled']}")
+            audit("admin-disable", f"{user} 禁用={account['disabled']}", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         if action == "logout":
@@ -2891,6 +2983,7 @@ class Handler(BaseHTTPRequestHandler):
                         WS_CONNS.pop(tok, None)
             self._log_login(user, "warn", f"被管理员登出（{actor_name}）")
             log(f"admin[{actor_name}]: logout {user}")
+            audit("admin-logout", f"强制登出 {user}", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         if action == "password":
@@ -2912,15 +3005,48 @@ class Handler(BaseHTTPRequestHandler):
                 save_account(user, account)
             _token_cache.clear()
             log(f"admin[{actor_name}]: password {user} (logout={bool(doc.get('logout'))})")
+            audit("admin-password", f"重置 {user} 口令", ip=self._ip(), user=actor_name)
             return self._json({"ok": True})
 
         return self._bad("not found", 404)
+
+
+def bootstrap_sysadmin():
+    """First-run only: if QV_ADMIN_PASSWORD is set and NO sysadmin exists yet,
+    create one (username from QV_ADMIN_USER, default 'admin'). A no-op once a
+    sysadmin exists — so leaving the env set is harmless. Replaces the old
+    "hand-write a JSON file" bootstrap the env pretended to do but never did."""
+    pw = os.environ.get("QV_ADMIN_PASSWORD", "")
+    if not pw:
+        return
+    if os.path.isdir(ACCOUNTS):
+        for name in os.listdir(ACCOUNTS):
+            if name.endswith(".json"):
+                acc = load_account(name[:-5])
+                if acc and role_of(acc) == "sysadmin":
+                    return   # already have one, nothing to do
+    user = os.environ.get("QV_ADMIN_USER", "admin")
+    if not USER_RE.match(user):
+        log(f"bootstrap: QV_ADMIN_USER '{user}' 不合法，跳过")
+        return
+    if os.path.exists(account_path(user)):
+        log(f"bootstrap: {user} 已存在但非 sysadmin，跳过（请手动改角色）")
+        return
+    salt = secrets.token_hex(16)
+    save_account(user, {
+        "auth": {"salt": salt, "hash": hash_pw(pw, salt), "iters": PBKDF2_ITERS},
+        "role": "sysadmin", "tokens": [], "groups": [],
+        "created": f"{datetime.now(CN):%F %T}",
+    })
+    log(f"bootstrap: 已创建系统管理员 {user}（来自 QV_ADMIN_PASSWORD）")
 
 
 def main():
     os.makedirs(DATA, exist_ok=True)
     os.makedirs(ACCOUNTS, exist_ok=True)
     os.makedirs(TRENDS, exist_ok=True)
+
+    bootstrap_sysadmin()
 
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=news_scheduler, daemon=True).start()

@@ -284,10 +284,15 @@ public sealed class AccountSession
         return unauthorized ? fallback : result;
     }
 
-    public Task<bool> SyncGroupsAsync(
+    public enum SyncOutcome { Ok, Conflict, Failed }
+
+    public Task<SyncOutcome> SyncGroupsAsync(
         IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> groups, long at) =>
         CallAsync(t => _client.SyncAsync(t, groups, at, CancellationToken.None).ContinueWith(
-            x => (x.Result.Ok, x.Result.Unauthorized)), false);
+            x => (x.Result.Ok ? SyncOutcome.Ok
+                  : x.Result.Conflict ? SyncOutcome.Conflict
+                  : SyncOutcome.Failed,
+                  x.Result.Unauthorized)), SyncOutcome.Failed);
 
     public Task<(IReadOnlyList<(string Name, IReadOnlyList<string> Codes, bool InPanel)> Groups, long At)?> GroupsWithAtAsync() =>
         CallAsync(t => _client.GroupsAsync(t, CancellationToken.None).ContinueWith(

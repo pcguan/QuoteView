@@ -340,8 +340,17 @@
       </TabItem>
     </TabControl>
 
-    <!-- Row 2 的两条底栏纵向排列，避免同时可见时重叠（都是不透明满宽条）。 -->
+    <!-- Row 2 的底栏纵向排列，避免同时可见时重叠（都是不透明满宽条）。 -->
     <StackPanel Grid.Row="2">
+    <!-- 同步提示：其他设备的较新配置已同步到本机时短暂出现，自动消失。 -->
+    <Border x:Name="SyncNote" Visibility="Collapsed"
+            Background="#1B2A20" BorderBrush="#2C4736" BorderThickness="0,1,0,0" Padding="16,8">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <ui:SymbolIcon Symbol="CloudSync24" Foreground="#6BD1A0" VerticalAlignment="Center" />
+        <TextBlock x:Name="SyncNoteText" Margin="9,0,0,0" VerticalAlignment="Center"
+                   Foreground="#DCEDE4" FontSize="12" />
+      </StackPanel>
+    </Border>
     <!-- 服务端暂不可达横幅：presence 连续断线一段时间才显示，恢复即消失。 -->
     <Border x:Name="OfflineBar" Visibility="Collapsed"
             Background="#2A2320" BorderBrush="#4A3A2A" BorderThickness="0,1,0,0" Padding="16,8">

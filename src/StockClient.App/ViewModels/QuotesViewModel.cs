@@ -1314,36 +1314,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private double? GroupIndex(GroupRow group)
     {
-        var pcts = new List<double>();
-        var caps = new List<double>();   // 0 = unknown, resolved to the average below
-
+        // A-shares only (SH/SZ/BJ) — see GroupIndexCalc for why. The weighting
+        // maths is a tested pure function; the VM just gathers the members.
+        var members = new List<GroupIndexCalc.Member>();
         foreach (var code in group.Model.Codes)
         {
-            // A-shares only (SH/SZ/BJ). HK trades a different session and US/KR
-            // quotes carry ANOTHER day's move entirely — mixing them into an
-            // intraday basket produces a number that means nothing.
             if (!CodeMapper.IsAShare(code)) continue;
-            if (!_agg.TryGetValue(code, out var q)) continue;
-            pcts.Add(q.Pct);
-            caps.Add(q.FloatCap > 0 ? q.FloatCap / (1 + q.Pct / 100) : 0);
+            if (_agg.TryGetValue(code, out var q))
+                members.Add(new GroupIndexCalc.Member(q.Pct, q.FloatCap));
         }
-
-        if (pcts.Count == 0) return null;
-        if (AggEqualWeight) return pcts.Average();
-
-        var known = caps.Where(c => c > 0).ToArray();
-        if (known.Length == 0) return pcts.Average();   // no caps at all: equal weight
-
-        var fallback = known.Average();
-        double num = 0, den = 0;
-        for (var i = 0; i < pcts.Count; i++)
-        {
-            var w = caps[i] > 0 ? caps[i] : fallback;
-            num += w * pcts[i];
-            den += w;
-        }
-
-        return den > 0 ? num / den : null;
+        return GroupIndexCalc.Compute(members, AggEqualWeight);
     }
 
     private void RecomputeGroupIndices()
