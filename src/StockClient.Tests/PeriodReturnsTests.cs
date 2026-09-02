@@ -30,6 +30,29 @@ public class PeriodReturnsTests
     }
 
     [Fact]
+    public void Anchor_never_reaches_back_to_a_coincidental_old_close()
+    {
+        // The AMKR bug: today's 昨收 (45.65) sits just off the true last candle
+        // (45.73), and a candle a year back also closed ~45.65 after a −24.74%
+        // day. The anchor must be the recent session (45.73), never the old one.
+        var candles = new List<Kline>
+        {
+            Candle("2025-09-02", 60.66),   // the −24.74% day's predecessor…
+            Candle("2025-09-03", 45.66),   // …coincidentally near today's 45.65
+        };
+        for (var i = 0; i < 30; i++) candles.Add(Candle($"2026-08-{1 + i:00}", 50 + i * 0.1));
+        candles.Add(Candle("2026-08-31", 47.30));
+        candles.Add(Candle("2026-09-01", 45.73));
+
+        var idx = PeriodReturns.YesterdayIndex(candles, 45.65);
+        Assert.Equal(candles.Count - 1, idx);                 // the 09-01 candle
+        Assert.Equal(45.73, candles[idx].Close, 6);
+
+        var pct = PeriodReturns.PrevDayPercent(candles, idx)!.Value;
+        Assert.Equal((45.73 / 47.30 - 1) * 100, pct, 6);      // ≈ −3.32%, not −24.74%
+    }
+
+    [Fact]
     public void Anchor_prefers_the_newest_of_equal_closes()
     {
         var candles = new[] { Candle("2026-01-05", 10), Candle("2026-01-06", 11), Candle("2026-01-07", 10) };

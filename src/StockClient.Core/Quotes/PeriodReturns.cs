@@ -21,12 +21,31 @@ public static class PeriodReturns
     /// the quote refers to). -1 when nothing matches — history stale or the
     /// contract had a rights adjustment the candles don't reflect yet.
     /// </summary>
+    /// <summary>
+    /// "Yesterday" is the last completed session, so the anchor lives at the
+    /// RECENT end — only the newest few candles are considered. Searching the
+    /// whole year was the AMKR bug: the quote's 昨收 (45.65) sat just outside
+    /// tolerance of the true last candle (45.73), fell through, and matched a
+    /// coincidentally same-priced candle a year back — reporting THAT day's
+    /// −24.74% as 昨日涨幅. The window (covers today + the pre-open case where
+    /// the quote still names the session before the newest candle) makes a
+    /// far-back collision impossible.
+    ///
+    /// Tolerance is 0.3%: a US 昨收 and the front-adjusted kline close of the
+    /// same session routinely differ by ~0.1–0.2% (dividend adjustment,
+    /// rounding), while adjacent sessions differ by the day's move — almost
+    /// always more — so this matches the right session without bleeding into
+    /// the next.
+    /// </summary>
+    private const int MaxAnchorLookback = 3;
+
     public static int YesterdayIndex(IReadOnlyList<Kline> candles, double yesterdayClose)
     {
         if (yesterdayClose <= 0) return -1;
 
-        var tolerance = Math.Max(yesterdayClose * 1e-3, 0.005);
-        for (var i = candles.Count - 1; i >= 0; i--)
+        var tolerance = Math.Max(yesterdayClose * 3e-3, 0.01);
+        var floor = Math.Max(0, candles.Count - MaxAnchorLookback);
+        for (var i = candles.Count - 1; i >= floor; i--)
             if (Math.Abs(candles[i].Close - yesterdayClose) <= tolerance)
                 return i;
         return -1;
