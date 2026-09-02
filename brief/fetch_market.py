@@ -54,6 +54,27 @@ def trading_day() -> tuple[str, str]:
 
 
 def load_watchlist() -> list[dict]:
+    # 优先用账户自己的自选（服务端 /watchlist，就是客户端里的分组合约），
+    # 这样简报的"自选池"和你在终端里盯的盘一致，不用再手工维护 CSV。
+    # 需要 QV_WATCHLIST_URL + QV_WATCHLIST_TOKEN（放未跟踪的 .env.local）。
+    # 任何失败都回退到本地 watchlist.csv，简报流程绝不因此中断。
+    url = os.environ.get("QV_WATCHLIST_URL", "").strip()
+    token = os.environ.get("QV_WATCHLIST_TOKEN", "").strip()
+    if url and token:
+        try:
+            import json as _json
+            import urllib.request
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                codes = (_json.loads(r.read().decode("utf-8")) or {}).get("codes") or []
+            rows = [{"code": c, "name": "", "tag": "自选"} for c in codes if c]
+            if rows:
+                print(f"  watchlist    从服务端取到 {len(rows)} 只自选")
+                return rows
+            print("  watchlist    服务端自选为空，回退本地 CSV")
+        except Exception as e:  # noqa: BLE001
+            print(f"  watchlist    服务端拉取失败({e})，回退本地 CSV")
+
     path = os.path.join(BASE, "watchlist.csv")
     if not os.path.exists(path):
         return []

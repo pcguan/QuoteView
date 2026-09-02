@@ -2247,6 +2247,22 @@ class Handler(BaseHTTPRequestHandler):
                                 "pct": r.get("pct", 0)})
             return self._json({"candles": candles[-270:]})
 
+        if url.path == "/watchlist":
+            # 请求账户【自己】的 A 股合约并集（去重、保序）。给每日简报当"自选池"
+            # 用；只回本账户，不回 union_codes()（那是全账户并集，会越权泄露别人的持仓）。
+            authed = self._auth()
+            if authed is None:
+                return
+            _, doc, _ = authed
+            seen, codes = set(), []
+            for g in doc.get("groups") or []:
+                for c in g.get("codes") or []:
+                    c = str(c).upper()
+                    if CODE_RE.match(c) and c not in seen:
+                        seen.add(c)
+                        codes.append(c)
+            return self._json({"codes": codes})
+
         if url.path == "/groups":
             authed = self._auth()
             if authed is None:

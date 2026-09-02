@@ -50,6 +50,28 @@
 
         <Separator Margin="0,16,0,14" Background="#232B3B" />
 
+        <TextBlock Text="服务器地址" Foreground="#EDF1F7" Margin="0,0,0,6" />
+        <TextBox x:Name="ApiBaseBox" Width="360" HorizontalAlignment="Left"
+                 Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                 LostFocus="ApiBase_Changed" />
+        <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="留空即用默认公网域名。域名或 CDN 不可用时，可在局域网内改填内网直连地址（如 http://192.168.x.x:8388/quoteview/api）继续查行情与历史（作用于账户/K线/历史接口；实时长连接与更新检查仍走默认域名），改后重启客户端生效。" />
+
+        <Separator Margin="0,16,0,14" Background="#232B3B" />
+
+        <TextBlock Text="更新灰度" Foreground="#EDF1F7" Margin="0,0,0,6" />
+        <StackPanel Orientation="Horizontal">
+          <TextBlock Text="发现新版本后延迟" Foreground="#EDF1F7" VerticalAlignment="Center" />
+          <TextBox x:Name="UpdateDelayBox" Width="48" Margin="6,0,6,0"
+                   Background="#0F1420" Foreground="#EDF1F7" BorderBrush="#33405C"
+                   LostFocus="UpdateDelay_Changed" />
+          <TextBlock Text="小时后再自动更新" Foreground="#EDF1F7" VerticalAlignment="Center" />
+        </StackPanel>
+        <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#5F6672" TextWrapping="Wrap"
+                   Text="0 = 立即（用于先行验证的机器）。设几小时可让先行机先装、有问题先发现，再轮到本机。手动「检查更新」不受此延迟限制。" />
+
+        <Separator Margin="0,16,0,14" Background="#232B3B" />
+
         <TextBlock Text="关于" Foreground="#EDF1F7" Margin="0,0,0,6" />
         <TextBlock x:Name="VersionText" Foreground="#8B93A3" />
         <TextBlock FontSize="11" Foreground="#5F6672" Margin="0,4,0,0"

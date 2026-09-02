@@ -827,6 +827,14 @@ public partial class QuotesView : UserControl
                 if (!string.IsNullOrWhiteSpace(targets[0].Code)) OpenKlineRequested?.Invoke(targets[0].Code);
             };
             menu.Items.Add(chart);
+
+            var count = vm.Alerts.For(targets[0].Code).Count;
+            var alert = new System.Windows.Controls.MenuItem
+            {
+                Header = count > 0 ? $"到价提醒（{count}）…" : "到价提醒…",
+            };
+            alert.Click += (_, _) => _ = EditAlertsAsync(targets[0]);
+            menu.Items.Add(alert);
         }
 
         var remove = new System.Windows.Controls.MenuItem
@@ -873,6 +881,78 @@ public partial class QuotesView : UserControl
 
         vm.SetNote(row.Code, input.Text);
         ShowNoteColumn();
+    }
+
+    /// <summary>
+    /// Edits this contract's price/percent alerts. One row per alert (指标/方向/
+    /// 阈值 + 删除) plus an add button; 当前价 shown so a threshold is easy to
+    /// pick. Alerts are machine-local and evaluated on every quote tick.
+    /// </summary>
+    private async Task EditAlertsAsync(QuoteRow row)
+    {
+        if (Vm is not { } vm) return;
+
+        var list = new System.Windows.Controls.StackPanel { MinWidth = 360 };
+        var rows = new List<Func<Services.PriceAlert?>>();
+
+        void AddRow(Services.PriceAlert? seed)
+        {
+            var line = new System.Windows.Controls.StackPanel
+            {
+                Orientation = System.Windows.Controls.Orientation.Horizontal,
+                Margin = new Thickness(0, 3, 0, 3),
+            };
+            var metric = new System.Windows.Controls.ComboBox { Width = 84, SelectedIndex = seed is { Metric: "pct" } ? 1 : 0 };
+            metric.Items.Add("价格"); metric.Items.Add("涨跌幅");
+            var op = new System.Windows.Controls.ComboBox { Width = 64, Margin = new Thickness(6, 0, 6, 0), SelectedIndex = seed is { Above: false } ? 1 : 0 };
+            op.Items.Add("≥"); op.Items.Add("≤");
+            var val = new System.Windows.Controls.TextBox { Width = 96, Text = seed?.Value.ToString("0.###") ?? "" };
+            var del = new Wpf.Ui.Controls.Button { Content = "删除", Margin = new Thickness(6, 0, 0, 0) };
+            line.Children.Add(metric); line.Children.Add(op); line.Children.Add(val); line.Children.Add(del);
+            list.Children.Add(line);
+
+            Func<Services.PriceAlert?> read = () =>
+                double.TryParse(val.Text.Trim(), out var v)
+                    ? new Services.PriceAlert
+                    {
+                        Code = row.Code,
+                        Metric = metric.SelectedIndex == 1 ? "pct" : "price",
+                        Above = op.SelectedIndex == 0,
+                        Value = v,
+                    }
+                    : null;
+            rows.Add(read);
+            del.Click += (_, _) => { list.Children.Remove(line); rows.Remove(read); };
+        }
+
+        foreach (var a in vm.Alerts.For(row.Code)) AddRow(a);
+
+        var add = new Wpf.Ui.Controls.Button { Content = "+ 添加一条", Margin = new Thickness(0, 4, 0, 0) };
+        add.Click += (_, _) => AddRow(null);
+
+        var hint = new System.Windows.Controls.TextBlock
+        {
+            Text = $"当前价 {row.Now:0.###}   涨跌幅 {row.Percent:+0.00;-0.00;0.00}%",
+            Foreground = System.Windows.Media.Brushes.Gray,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+
+        var body = new System.Windows.Controls.StackPanel();
+        body.Children.Add(hint);
+        body.Children.Add(list);
+        body.Children.Add(add);
+
+        var dialog = new Wpf.Ui.Controls.MessageBox
+        {
+            Title = $"到价提醒 · {row.Name} {row.Code}",
+            Content = body,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+        };
+
+        if (await dialog.ShowDialogAsync() != Wpf.Ui.Controls.MessageBoxResult.Primary) return;
+
+        vm.Alerts.Replace(row.Code, rows.Select(r => r()).OfType<Services.PriceAlert>());
     }
 
     private void ShowNoteColumn()

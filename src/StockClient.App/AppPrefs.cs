@@ -16,7 +16,8 @@ public static class AppPrefs
 
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
         int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
-        string ProxyMode = "", string ProxyAddress = "");
+        string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
+        int UpdateDelayHours = 0);
 
     private static Doc _doc = Load();
 
@@ -81,6 +82,27 @@ public static class AppPrefs
     {
         get => _doc.PanelShadeRestore;
         set { if (_doc.PanelShadeRestore == value) return; _doc = _doc with { PanelShadeRestore = value }; Save(); }
+    }
+
+    /// <summary>
+    /// Overrides the account/API endpoint. Empty = the public domain. Set this
+    /// to a LAN URL (e.g. http://192.168.x.x:8388/quoteview/api, or the direct
+    /// container http://&lt;NAS&gt;:8388) to keep working when the domain or CDN
+    /// is down. Applies to the account API, /kline proxy and /krdaily.
+    /// </summary>
+    public static string ApiBase
+    {
+        get => _doc.ApiBase;
+        set { var v = (value ?? "").Trim(); if (_doc.ApiBase == v) return; _doc = _doc with { ApiBase = v }; Save(); }
+    }
+
+    /// <summary>Hours to defer an available auto-update. 0 = update as soon as
+    /// the mode allows (canary machines). A few hours lets a canary catch a bad
+    /// release before the rest of the fleet installs it.</summary>
+    public static int UpdateDelayHours
+    {
+        get => Math.Clamp(_doc.UpdateDelayHours, 0, 72);
+        set { var v = Math.Clamp(value, 0, 72); if (_doc.UpdateDelayHours == v) return; _doc = _doc with { UpdateDelayHours = v }; Save(); }
     }
 
     public const string ProxyOff = "off";

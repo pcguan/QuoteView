@@ -82,7 +82,8 @@ public partial class MainWindow : FluentWindow
 
         var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version?.ToString(3) ?? "";
-        _session = new AccountSession(new AccountClient(_klineHttp, appVersion));
+        _session = new AccountSession(new AccountClient(
+            _klineHttp, appVersion, baseUrl: () => AppPrefs.ApiBase));
         ErrorReporter.Init(_session);
         _presence = new PresenceChannel(_session, appVersion);
         _presence.Start();
@@ -165,6 +166,8 @@ public partial class MainWindow : FluentWindow
             _quotes = new QuotesViewModel(Dispatcher, _vm.Repository,
                 fetchDaily: dailySource.FetchAsync);
             Quotes.DataContext = _quotes;
+            _quotes.AlertFired += (quote, alert) =>
+                Dispatcher.InvokeAsync(() => OnAlertFired(quote, alert));
 
             // Every later config save pushes the preference slice back up,
             // debounced — colour-picker drags save on every tick of the drag.
@@ -699,8 +702,21 @@ public partial class MainWindow : FluentWindow
             // off never applies (bar/toast still prompt). The relaunch keeps
             // the current state either way. A failed attempt backs off so a
             // broken download isn't retried every 30 seconds.
+            // Staged rollout: a canary machine runs delay=0 and installs first;
+            // others defer N hours from when THIS version was first seen, so the
+            // canary has a window to catch a bad release before the fleet takes
+            // it. Manual 检查更新 ignores the delay (you asked for it now). The
+            // clock is in-memory: a restart re-arms it, fine for a few-hour delay.
+            if (check.Release!.Version != _delayedVersion)
+            {
+                _delayedVersion = check.Release!.Version;
+                _delayedSince = DateTime.Now;
+            }
+            var delayPassed = AppPrefs.UpdateDelayHours == 0
+                || DateTime.Now - _delayedSince >= TimeSpan.FromHours(AppPrefs.UpdateDelayHours);
+
             var mode = AppPrefs.AutoUpdateMode;
-            if (!manual && mode != AppPrefs.AutoOff && !_updateApplying
+            if (!manual && delayPassed && mode != AppPrefs.AutoOff && !_updateApplying
                 && (mode == AppPrefs.AutoInstant
                     || Views.Native.IdleTime() >= TimeSpan.FromMinutes(10))
                 && DateTime.Now - _autoUpdateFailedAt >= TimeSpan.FromMinutes(30))
@@ -737,6 +753,8 @@ public partial class MainWindow : FluentWindow
     /// <summary>True from the moment 更新 is clicked until the app restarts (or
     /// the download fails). Blocks every path that could redraw the bar.</summary>
     private bool _updateApplying;
+    private Version? _delayedVersion;
+    private DateTime _delayedSince;
 
     private void ShowUpdateBar(UpdateCheck check)
     {
@@ -973,6 +991,51 @@ public partial class MainWindow : FluentWindow
     /// be dimmed to near-invisible, so without this there is no handle on the
     /// app at all — it just looks like it died.
     /// </summary>
+    /// <summary>
+    /// A price alert crossed its threshold. In stealth the tray balloon is the
+    /// least-intrusive nudge; otherwise flash the taskbar button (works
+    /// minimized or in the background) so a glance draws the eye. The alert
+    /// disarmed itself, so this fires once per crossing, not every tick.
+    /// </summary>
+    private void OnAlertFired(Quote quote, Services.PriceAlert alert)
+    {
+        var name = quote.IsMissing ? quote.Code : quote.Name;
+        var text = $"{alert.Describe()}，现价 {quote.Now:0.###}";
+        try { System.Media.SystemSounds.Asterisk.Play(); } catch { /* headless */ }
+
+        if (_tray is { } tray)
+        {
+            tray.ShowBalloonTip(5000, $"到价提醒 · {name}", text,
+                System.Windows.Forms.ToolTipIcon.Info);
+            return;
+        }
+
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        var info = new FLASHWINFO
+        {
+            cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<FLASHWINFO>(),
+            hwnd = hwnd,
+            dwFlags = 0x3 | 0xC,   // FLASHW_ALL | FLASHW_TIMERNOFG
+            uCount = 3,
+            dwTimeout = 0,
+        };
+        FlashWindowEx(ref info);
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
+
     private void ShowTrayIcon()
     {
         var menu = new System.Windows.Forms.ContextMenuStrip();

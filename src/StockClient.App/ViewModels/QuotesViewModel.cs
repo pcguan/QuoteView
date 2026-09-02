@@ -391,6 +391,16 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private readonly Dictionary<string, (DateOnly Stamp, bool Settled)> _dailyMeta = new(StringComparer.OrdinalIgnoreCase);
     private readonly DailyCloseCache _dailyCache = new();
 
+    /// <summary>Machine-local price alerts, evaluated on every tick.</summary>
+    public Services.AlertStore Alerts { get; } = new();
+
+    /// <summary>Raised when an alert crosses its threshold — MainWindow pops a
+    /// tray balloon or flashes the taskbar. Carries the Quote (not a row): an
+    /// alerted contract may not be in the ACTIVE group, so there's no row for
+    /// it — the whole point of an alert is that it fires while you're looking
+    /// elsewhere.</summary>
+    public event Action<Quote, Services.PriceAlert>? AlertFired;
+
     /// <summary>A cached contract survives this long without a refresh before
     /// the file drops it — long enough to cover holidays and a machine left
     /// off for a while, short enough that removed contracts do age out.</summary>
@@ -1368,6 +1378,19 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
             }
 
             MarkStaleRows();
+
+            if (Alerts.Any)
+            {
+                // Evaluated from the quote, NOT a row: the poll covers every
+                // group's codes, and an alert must fire even when its contract
+                // isn't in the group currently on screen (no row exists then).
+                foreach (var quote in tick.Quotes)
+                {
+                    if (quote.IsMissing || quote.Now <= 0) continue;
+                    foreach (var a in Alerts.Evaluate(quote.Code, quote.Now, quote.Percent))
+                        AlertFired?.Invoke(quote, a);
+                }
+            }
 
             foreach (var quote in tick.Quotes)
             {

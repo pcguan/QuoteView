@@ -22,15 +22,25 @@ public sealed record AuthResult(string? Token, string? Error)
 /// </summary>
 public sealed class AccountClient
 {
-    private const string Base = "https://nas.pcguan.cn/quoteview/api";
+    /// <summary>The public domestic endpoint. Fronted by nginx + CDN.</summary>
+    public const string DefaultBase = "https://nas.pcguan.cn/quoteview/api";
+
+    // Resolved per request so a settings change (e.g. falling back to a LAN IP
+    // when the domain/CDN is down) takes effect without recreating the client.
+    private readonly Func<string> _base;
+    private string Base => Normalize(_base());
+
+    private static string Normalize(string b) =>
+        string.IsNullOrWhiteSpace(b) ? DefaultBase : b.TrimEnd('/');
 
     private readonly HttpClient _http;
     private readonly string _version;
 
-    public AccountClient(HttpClient http, string version = "")
+    public AccountClient(HttpClient http, string version = "", Func<string>? baseUrl = null)
     {
         _http = http;
         _version = version;
+        _base = baseUrl ?? (() => DefaultBase);
     }
 
     private void Stamp(HttpRequestMessage request, string? token = null)

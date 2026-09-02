@@ -37,6 +37,8 @@ public partial class SystemSettingsWindow : Window
         ProxyAddressBox.Text = AppPrefs.ProxyAddress;
         ProxyAddressBox.IsEnabled = AppPrefs.ProxyMode == AppPrefs.ProxyManual;
 
+        ApiBaseBox.Text = AppPrefs.ApiBase;
+        UpdateDelayBox.Text = AppPrefs.UpdateDelayHours.ToString();
         VersionText.Text = $"当前版本 v{UpdateService.Current}";
         Tabs.SelectedIndex = tab;
     }
@@ -56,6 +58,20 @@ public partial class SystemSettingsWindow : Window
     private void UpdateToast_Changed(object sender, RoutedEventArgs e)
     {
         if (IsLoaded) AppPrefs.UpdateToast = UpdateToastBox.IsChecked == true;
+    }
+
+    private void ApiBase_Changed(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded) AppPrefs.ApiBase = ApiBaseBox.Text;
+    }
+
+    private void UpdateDelay_Changed(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded && int.TryParse(UpdateDelayBox.Text.Trim(), out var h))
+        {
+            AppPrefs.UpdateDelayHours = h;
+            UpdateDelayBox.Text = AppPrefs.UpdateDelayHours.ToString();   // reflect clamp
+        }
     }
 
     private void Proxy_Changed(object sender, RoutedEventArgs e)
