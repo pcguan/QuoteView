@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using StockClient.App.ViewModels;
 using StockClient.Core.Quotes;
 
@@ -144,27 +145,37 @@ public partial class KlineWindow : Window
         UpdateStatus();
     });
 
-    /// <summary>Width of the book + 成交明细 pane beside the intraday line.</summary>
-    private const double DepthWidth = 250;
+    /// <summary>Width of the book + stats + 成交明细 pane beside the intraday line.</summary>
+    private const double DepthWidth = 280;
+
+    private static readonly Brush UpBrush = Frozen(Tones.UpHex);
+    private static readonly Brush DownBrush = Frozen(Tones.DownHex);
+    private static readonly Brush NeutralBrush = Frozen("#DCE4EE");
+
+    private static Brush Frozen(string hex)
+    {
+        var b = (Brush)new BrushConverter().ConvertFromString(hex)!;
+        b.Freeze();
+        return b;
+    }
 
     private DepthChart? _depth;
 
     private void OnLiveUpdated() => Dispatcher.Invoke(RenderDepth);
 
     /// <summary>
-    /// Draws the book from the window's own 1s quote. Rows are taller and the type
-    /// bigger than the stealth panel's copy — there is room here, and this is the
-    /// view someone opens to actually study the book.
+    /// Draws the book from the window's own 1s quote plus the day's stats
+    /// (委比/委差, 涨跌停, 总手/金额/换手/量比, 外/内盘) — the full 分时 side panel.
     /// </summary>
     private void RenderDepth()
     {
         if (!_vm.IsTrend) return;
 
-        _depth ??= new DepthChart { RowHeight = 22, FontSize = 12 };
+        _depth ??= new DepthChart { RowHeight = 16, FontSize = 12 };
         if (!ReferenceEquals(DepthHost.Child, _depth))
         {
             DepthHost.Child = _depth;
-            DepthHost.Height = 22 * 10 + 1;
+            DepthHost.Height = 16 * 10 + 1;
         }
 
         var live = _vm.Live;
@@ -173,8 +184,53 @@ public partial class KlineWindow : Window
             live?.Yesterday ?? 0,
             Decimals(live));
 
-        DepthTime.Text = live is null ? "" : $"{live.Name}  {live.Now}  {live.Time}";
+        RenderStats(live);
     }
+
+    /// <summary>Fills the numeric stat rows from the quote; "--" where a field
+    /// isn't served (non-A markets carry no turnover/limit/盘 fields).</summary>
+    private void RenderStats(Quote? q)
+    {
+        if (q is null)
+        {
+            foreach (var t in new[] { WeibiText, WeichaText, LimitUpText, LimitDownText,
+                         TotalVolText, AmountText, TurnoverText, VolRatioText, OuterText, InnerText })
+                t.Text = "--";
+            WeibiText.Foreground = WeichaText.Foreground = NeutralBrush;
+            return;
+        }
+
+        var dec = Decimals(q);
+        var bid = q.Depth.Bids.Sum(b => b.Volume);
+        var ask = q.Depth.Asks.Sum(a => a.Volume);
+        var sum = bid + ask;
+        if (sum > 0)
+        {
+            var ratio = (bid - ask) / sum * 100;
+            var diff = bid - ask;
+            WeibiText.Text = ratio.ToString("+0.00;-0.00;0.00") + "%";
+            WeichaText.Text = diff.ToString("+#,##0;-#,##0;0");
+            WeibiText.Foreground = WeichaText.Foreground = diff >= 0 ? UpBrush : DownBrush;
+        }
+        else
+        {
+            WeibiText.Text = WeichaText.Text = "--";
+            WeibiText.Foreground = WeichaText.Foreground = NeutralBrush;
+        }
+
+        LimitUpText.Text = q.LimitUp is { } lu and > 0 ? lu.ToString("F" + dec) : "--";
+        LimitDownText.Text = q.LimitDown is { } ld and > 0 ? ld.ToString("F" + dec) : "--";
+        TotalVolText.Text = q.Volume is { } v and > 0 ? Compact(v) + "手" : "--";
+        AmountText.Text = q.Amount is { } a and > 0 ? Compact(a) : "--";
+        TurnoverText.Text = q.TurnoverRate is { } tr ? tr.ToString("F2") + "%" : "--";
+        VolRatioText.Text = q.VolumeRatio is { } vr ? vr.ToString("F2") : "--";
+        OuterText.Text = q.OuterVolume is { } o and > 0 ? Compact(o) + "手" : "--";
+        InnerText.Text = q.InnerVolume is { } inn and > 0 ? Compact(inn) + "手" : "--";
+    }
+
+    /// <summary>万/亿 short form for 手 counts and 元 amounts.</summary>
+    private static string Compact(double v) =>
+        v >= 1e8 ? $"{v / 1e8:F2}亿" : v >= 1e4 ? $"{v / 1e4:F2}万" : $"{v:F0}";
 
     private static int Decimals(StockClient.Core.Quotes.Quote? quote) =>
         quote is null ? 2 : StockClient.Core.Quotes.PriceScale.Decimals(quote.Now, quote.Depth);
@@ -214,6 +270,14 @@ public partial class KlineWindow : Window
         Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan);
     }
 
+    /// <summary>Opens the full-day 成交明细 in its own window (filter + paging).</summary>
+    private void More_Click(object sender, RoutedEventArgs e)
+    {
+        if (_vm.Details is null) return;
+        new TickDetailWindow(_vm.Contract, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan)
+        { Owner = this }.Show();
+    }
+
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
     {
         if (_vm.Trend is { } trend) Trend.SetSeries(trend);
@@ -240,6 +304,7 @@ public partial class KlineWindow : Window
         var tape = trend && _vm.HasTape;
         TapeHeader.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
         Tape.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
+        MoreButton.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
         if (tape) RenderTape();
 
         // Adjustment doesn't apply to an intraday line; the hint changes to match.

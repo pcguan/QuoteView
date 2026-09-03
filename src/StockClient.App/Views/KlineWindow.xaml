@@ -54,22 +54,91 @@
                 BorderBrush="#222A38" BorderThickness="1,0,0,0" Padding="10,8">
           <Grid>
             <Grid.RowDefinitions>
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="Auto" />
-              <RowDefinition Height="*" />
+              <RowDefinition Height="Auto" />   <!-- 委比/委差 -->
+              <RowDefinition Height="Auto" />   <!-- 涨停 -->
+              <RowDefinition Height="Auto" />   <!-- 五档 -->
+              <RowDefinition Height="Auto" />   <!-- 跌停 -->
+              <RowDefinition Height="Auto" />   <!-- 统计块 -->
+              <RowDefinition Height="Auto" />   <!-- 成交明细 header -->
+              <RowDefinition Height="*" />      <!-- 最新分笔 tape -->
+              <RowDefinition Height="Auto" />   <!-- 更多 button -->
             </Grid.RowDefinitions>
 
-            <TextBlock Grid.Row="0" Text="五档盘口" FontSize="11" Foreground="#8B93A3"
-                       Margin="0,0,0,6" />
-            <Border x:Name="DepthHost" Grid.Row="1" VerticalAlignment="Top" />
-            <TextBlock x:Name="DepthTime" Grid.Row="2" FontSize="10" Foreground="#5F6672"
-                       Margin="0,6,0,0" />
+            <!-- 委比 / 委差 -->
+            <Grid Grid.Row="0" Margin="0,0,0,4">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <Grid Grid.Column="0" Margin="0,0,8,0">
+                <TextBlock Text="委比" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                <TextBlock x:Name="WeibiText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+              </Grid>
+              <Grid Grid.Column="1">
+                <TextBlock Text="委差" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                <TextBlock x:Name="WeichaText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+              </Grid>
+            </Grid>
 
-            <!-- 成交明细 (逐笔) — 沪深 only; collapsed for other markets. -->
-            <Grid x:Name="TapeHeader" Grid.Row="3" Margin="0,12,0,4">
-              <TextBlock Text="成交明细" FontSize="11" Foreground="#8B93A3" VerticalAlignment="Center" />
+            <!-- 涨停 -->
+            <Grid Grid.Row="1" Margin="0,2,0,2">
+              <TextBlock Text="涨停" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+              <TextBlock x:Name="LimitUpText" FontSize="11" Foreground="#EF5350" HorizontalAlignment="Right" />
+            </Grid>
+
+            <Border x:Name="DepthHost" Grid.Row="2" VerticalAlignment="Top" />
+
+            <!-- 跌停 -->
+            <Grid Grid.Row="3" Margin="0,2,0,6">
+              <TextBlock Text="跌停" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+              <TextBlock x:Name="LimitDownText" FontSize="11" Foreground="#26A69A" HorizontalAlignment="Right" />
+            </Grid>
+
+            <!-- 统计块: 总手/金额 · 换手/量比 · 外盘/内盘 -->
+            <StackPanel Grid.Row="4">
+              <Border Height="1" Background="#222A38" Margin="0,0,0,6" />
+              <Grid Margin="0,0,0,3">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Grid Grid.Column="0" Margin="0,0,8,0">
+                  <TextBlock Text="总手" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="TotalVolText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+                </Grid>
+                <Grid Grid.Column="1">
+                  <TextBlock Text="金额" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="AmountText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+                </Grid>
+              </Grid>
+              <Grid Margin="0,0,0,3">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Grid Grid.Column="0" Margin="0,0,8,0">
+                  <TextBlock Text="换手" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="TurnoverText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+                </Grid>
+                <Grid Grid.Column="1">
+                  <TextBlock Text="量比" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="VolRatioText" FontSize="11" Foreground="#DCE4EE" HorizontalAlignment="Right" />
+                </Grid>
+              </Grid>
+              <Grid Margin="0,0,0,4">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Grid Grid.Column="0" Margin="0,0,8,0">
+                  <TextBlock Text="外盘" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="OuterText" FontSize="11" Foreground="#EF5350" HorizontalAlignment="Right" />
+                </Grid>
+                <Grid Grid.Column="1">
+                  <TextBlock Text="内盘" FontSize="11" Foreground="#8B93A3" HorizontalAlignment="Left" />
+                  <TextBlock x:Name="InnerText" FontSize="11" Foreground="#26A69A" HorizontalAlignment="Right" />
+                </Grid>
+              </Grid>
+              <Border Height="1" Background="#222A38" Margin="0,2,0,0" />
+            </StackPanel>
+
+            <!-- 成交明细 header: 最新 + 图例 + 大单阈值 -->
+            <Grid x:Name="TapeHeader" Grid.Row="5" Margin="0,8,0,4">
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="成交明细" FontSize="11" Foreground="#8B93A3" VerticalAlignment="Center" />
+                <TextBlock Text="●" FontSize="10" Foreground="#C77DFF" VerticalAlignment="Center" Margin="8,0,0,0"
+                           ToolTip="大单主动买" />
+                <TextBlock Text="●" FontSize="10" Foreground="#2EE6D6" VerticalAlignment="Center" Margin="2,0,0,0"
+                           ToolTip="大单主动卖" />
+              </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <TextBlock Text="大单≥" FontSize="10" Foreground="#5F6672" VerticalAlignment="Center" />
                 <TextBox x:Name="BigTradeBox" Width="42" FontSize="10" Padding="3,1"
@@ -81,7 +150,10 @@
               </StackPanel>
             </Grid>
 
-            <views:TradeTapeView x:Name="Tape" Grid.Row="4" />
+            <views:TradeTapeView x:Name="Tape" Grid.Row="6" />
+
+            <Button x:Name="MoreButton" Grid.Row="7" Content="查看更多成交明细" FontSize="12"
+                    Margin="0,8,0,0" Padding="0,5" HorizontalAlignment="Stretch" Click="More_Click" />
           </Grid>
         </Border>
       </Grid>

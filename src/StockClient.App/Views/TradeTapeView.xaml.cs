@@ -19,11 +19,6 @@ namespace StockClient.App.Views;
 /// </summary>
 public partial class TradeTapeView : UserControl
 {
-    // 大单 keeps the side's hue but jumps to a vivid variant: 主动买 red → violet,
-    // 主动卖 green → cyan, so a large print reads as "big AND which side" at a glance.
-    private const string BigBuyHex = "#C77DFF";
-    private const string BigSellHex = "#2EE6D6";
-
     private ScrollViewer? _scroll;
 
     public TradeTapeView() => InitializeComponent();
@@ -42,28 +37,15 @@ public partial class TradeTapeView : UserControl
         var wasAtBottom = sv is null || sv.ScrollableHeight <= 0
             || sv.VerticalOffset >= sv.ScrollableHeight - 4;
 
-        var bigYuan = bigTradeWan * 10_000.0;
-        var buy = Frozen(Tones.UpHex);
-        var sell = Frozen(Tones.DownHex);
-        var flat = Frozen(Tones.FlatHex);
-        var bigBuy = Frozen(BigBuyHex);
-        var bigSell = Frozen(BigSellHex);
-
         var rows = new List<Row>(ticks.Count);
         foreach (var t in ticks)   // chronological — earliest first
         {
-            var big = bigYuan > 0 && t.Amount >= bigYuan;
-            var fg = t.Side switch
-            {
-                TradeSide.Buy => big ? bigBuy : buy,
-                TradeSide.Sell => big ? bigSell : sell,
-                _ => flat,
-            };
+            var big = TradeColors.IsBig(t, bigTradeWan);
             rows.Add(new Row(
                 t.Time,
                 t.Price.ToString("F" + decimals),
                 t.Volume.ToString(),
-                fg,
+                TradeColors.For(t.Side, big),
                 big ? FontWeights.SemiBold : FontWeights.Normal));
         }
         // Replacing ItemsSource resets the viewport to the top, so restore the
@@ -83,13 +65,6 @@ public partial class TradeTapeView : UserControl
     }
 
     public void Clear() => List.ItemsSource = null;
-
-    private static Brush Frozen(string hex)
-    {
-        var b = (Brush)new BrushConverter().ConvertFromString(hex)!;
-        b.Freeze();
-        return b;
-    }
 
     /// <summary>One tape line, pre-shaped for the virtualized item template.</summary>
     private sealed record Row(string Time, string Price, string Volume, Brush Fg, FontWeight Weight);

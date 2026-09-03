@@ -218,6 +218,26 @@ public static class Program
         kvmT.GetProperty("Ticks")!.SetValue(kvm, tape);
 
         var kwin = new StockClient.App.Views.KlineWindow(kvm);
+
+        // Inject a fake quote so the stat rows (委比/委差, 涨跌停, 总手… 外/内盘) and
+        // the 5-level book render populated instead of "--".
+        StockClient.Core.Quotes.DepthLevel Bid(double p, double v) => new(p, v);
+        var fakeQuote = new StockClient.Core.Quotes.Quote
+        {
+            Code = "SH600519", Name = "贵州茅台", Now = 11.60, Yesterday = 11.50,
+            Open = 11.52, High = 11.71, Low = 11.48, Time = "14:59:57",
+            Volume = 802500, Amount = 1.777e9, TurnoverRate = 17.74, VolumeRatio = 1.09,
+            LimitUp = 12.65, LimitDown = 10.35, OuterVolume = 396600, InnerVolume = 405800,
+            Depth = new StockClient.Core.Quotes.QuoteDepth
+            {
+                Asks = new[] { Bid(11.61, 230), Bid(11.62, 415), Bid(11.63, 152), Bid(11.64, 1671), Bid(11.65, 721) },
+                Bids = new[] { Bid(11.60, 5439), Bid(11.59, 2406), Bid(11.58, 1094), Bid(11.57, 590), Bid(11.56, 190) },
+            },
+        };
+        kvmT.GetField("_live", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(kvm, fakeQuote);
+        typeof(StockClient.App.Views.KlineWindow)
+            .GetMethod("RenderDepth", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(kwin, null);
+
         var kContent = (FrameworkElement)kwin.Content;
         kwin.Content = null;
         Render(new Border
@@ -226,6 +246,23 @@ public static class Program
             Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
             Child = kContent,
         }, @"C:\work\preview-tape.png");
+
+        // 6d) The full-day 成交明细 detail window (filter + paging). Ticks injected;
+        // Loaded never fires (not shown) so no fetch happens.
+        var detContract = new StockClient.Core.Contracts.Contract { Code = "SH600519", Name = "贵州茅台" };
+        var detWin = new StockClient.App.Views.TickDetailWindow(
+            detContract, new StockClient.Core.Quotes.EastMoneyDetailsClient(http), 2, 100);
+        var detT = typeof(StockClient.App.Views.TickDetailWindow);
+        detT.GetField("_all", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(detWin, tape);
+        detT.GetMethod("ApplyFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
+        var detContent = (FrameworkElement)detWin.Content;
+        detWin.Content = null;
+        Render(new Border
+        {
+            Width = 520, Height = 680,
+            Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
+            Child = detContent,
+        }, @"C:\work\preview-tickdetail.png");
 
         // 6c) The history page with the 成交明细 side pane OPEN (P3 replay). A
         // fresh view (history3 is already parented above) with a chart series and

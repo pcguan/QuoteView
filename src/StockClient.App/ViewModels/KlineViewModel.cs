@@ -88,6 +88,12 @@ public sealed class KlineViewModel : ObservableObject
 
     public string Title => $"{_contract.Name}  {_contract.Code}";
 
+    /// <summary>The charted contract, for opening a detail view on it.</summary>
+    public Contract Contract => _contract;
+
+    /// <summary>The 逐笔 client, or null when none was supplied (non-沪深, tests).</summary>
+    public EastMoneyDetailsClient? Details => _details;
+
     /// <summary>Current period; changed via <see cref="ShowKline"/> so the trend mode exits cleanly.</summary>
     public KlinePeriod Period => _period;
 
