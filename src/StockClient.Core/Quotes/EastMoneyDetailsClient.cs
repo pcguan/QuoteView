@@ -19,10 +19,17 @@ namespace StockClient.Core.Quotes;
 public sealed class EastMoneyDetailsClient
 {
     private const string Fields2 = "f51,f52,f53,f54,f55";
-    private const string Host = "push2.eastmoney.com";
     private const string Referer = "https://quote.eastmoney.com/";
 
+    // push2 is the realtime host and the first choice, but 东财 drops some egress
+    // IPs on it (RemoteDisconnected) — seen from both the NAS and a home desktop.
+    // push2delay (the delayed-push host) stays reachable and serves the same
+    // details, so it's the fallback. The working host is remembered (_hostIdx) so
+    // a blocked box doesn't re-probe push2 on every 5s poll.
+    private static readonly string[] Hosts = { "push2.eastmoney.com", "push2delay.eastmoney.com" };
+
     private readonly HttpClient _http;
+    private int _hostIdx;
 
     public EastMoneyDetailsClient(HttpClient http) => _http = http;
 
@@ -75,27 +82,34 @@ public sealed class EastMoneyDetailsClient
 
     private async Task<DetailsResponse?> GetAsync(string path, CancellationToken cancellationToken)
     {
-        // Same flaky host as the trend/kline paths; retry the ordinary drop.
-        const int maxAttempts = 3;
         Exception? last = null;
 
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        // Start from the last-known-good host; on total failure of one, fall
+        // through to the next and (on success) stick to it.
+        for (var h = 0; h < Hosts.Length; h++)
         {
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Get, $"https://{Host}{path}");
-                request.Headers.Referrer = new Uri(Referer);
+            var idx = (_hostIdx + h) % Hosts.Length;
+            var host = Hosts[idx];
 
-                using var response = await _http.SendAsync(request, cancellationToken);
-                response.EnsureSuccessStatusCode();
-
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                return JsonSerializer.Deserialize<DetailsResponse>(json);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            for (var attempt = 1; attempt <= 2; attempt++)
             {
-                last = ex;
-                if (attempt < maxAttempts) await Task.Delay(300 * attempt, cancellationToken);
+                try
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, $"https://{host}{path}");
+                    request.Headers.Referrer = new Uri(Referer);
+
+                    using var response = await _http.SendAsync(request, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var json = await response.Content.ReadAsStringAsync(cancellationToken);
+                    _hostIdx = idx;   // remember what worked
+                    return JsonSerializer.Deserialize<DetailsResponse>(json);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    last = ex;
+                    if (attempt < 2) await Task.Delay(250, cancellationToken);
+                }
             }
         }
 
