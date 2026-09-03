@@ -918,6 +918,13 @@ public partial class MainWindow : FluentWindow
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("恢复本体", null, (_, _) => Dispatcher.Invoke(() => RestoreFromStealth("tray menu 恢复本体")));
         menu.Items.Add("显示/隐藏行情条", null, (_, _) => Dispatcher.Invoke(TogglePanel));
+        // A reliable, aim-free way back from shade 0: double-clicking the
+        // invisible panel is fiddly, the more so after an auto-update restart
+        // re-opens it already hidden. Shown only while a hidden panel is up.
+        var unhide = new System.Windows.Forms.ToolStripMenuItem(
+            "恢复面板亮度", null, (_, _) => Dispatcher.Invoke(() => _stealth?.RestoreBrightness("tray menu 恢复面板亮度")));
+        menu.Opening += (_, _) => unhide.Visible = _stealth is { PanelHidden: true };
+        menu.Items.Add(unhide);
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         var auto = new System.Windows.Forms.ToolStripMenuItem("自动更新")
         {

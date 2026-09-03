@@ -986,9 +986,37 @@ public partial class StealthWindow : Window
     /// </summary>
     private void StepShade(int step)
     {
+        var before = _config.Shade;
         _config.Shade = Math.Clamp(_config.Shade + step, 0, MaxShade);
+        // Any path into blackout (Win+Alt+Down, Shift+wheel) records the shade
+        // to come back to — same as double-click hide — so RestoreBrightness
+        // returns the pre-hide brightness whichever gesture put it to sleep.
+        if (_config.Shade == 0 && before > 0) AppPrefs.PanelShadeRestore = before;
         ApplyShade();
         _save();
+    }
+
+    /// <summary>
+    /// Un-hide the panel: restore the brightness it had before it was blacked
+    /// out (double-click / Win+Alt+Down), falling back to a readable 7 when no
+    /// pre-hide value was recorded. Position-independent, so it can be reached
+    /// from the tray — the ghost double-click has to land inside an invisible,
+    /// click-through rectangle, which is unreliable to aim at after an
+    /// auto-update restart re-opens the panel already hidden. No-op when the
+    /// panel is already showing something.
+    /// </summary>
+    /// <summary>True while the panel is blacked out (shade 0), so the tray can
+    /// offer 恢复面板亮度 only when it would do something.</summary>
+    public bool PanelHidden => _config.Shade <= 0;
+
+    public void RestoreBrightness(string via)
+    {
+        if (_config.Shade > 0) return;
+        _config.Shade = Math.Clamp(
+            AppPrefs.PanelShadeRestore > 0 ? AppPrefs.PanelShadeRestore : 7, 1, MaxShade);
+        ApplyShade();
+        _save();
+        Snapshot($"restore brightness ({via})");
     }
 
     /// <summary>The shade already applied, to catch the 0 → visible transition;
@@ -1616,6 +1644,18 @@ public partial class StealthWindow : Window
     private int _ghostClickTime;
     private int _ghostClickX, _ghostClickY;
 
+    // Slack around the invisible panel so a not-quite-on-target double-click
+    // (all you can do when the window can't be seen) still brings it back.
+    private const int GhostHitPad = 14;
+
+    private static Native.Rect Inflated(Native.Rect r, int by) => new()
+    {
+        Left = r.Left - by,
+        Top = r.Top - by,
+        Right = r.Right + by,
+        Bottom = r.Bottom + by,
+    };
+
     // The union of recently-used panel footprints (see the wheel handler) and
     // when it expires, in the hook's own millisecond clock.
     private Native.Rect _stickyRect;
@@ -1628,8 +1668,12 @@ public partial class StealthWindow : Window
             var click = System.Runtime.InteropServices.Marshal
                 .PtrToStructure<Native.MouseLowLevel>(lParam);
             var h = _source?.Handle ?? IntPtr.Zero;
+            // Aiming a click at an invisible rectangle is imprecise, so the hit
+            // area is padded outward a little — a near-miss on the blacked-out
+            // panel still counts. (Clicks that land here but never form a
+            // double just pass through to whatever is underneath.)
             if (h != IntPtr.Zero && Native.GetWindowRect(h, out var r)
-                && r.Contains(click.X, click.Y))
+                && Inflated(r, GhostHitPad).Contains(click.X, click.Y))
             {
                 var isDouble = _ghostClickTime != 0
                     && click.Time - _ghostClickTime <= Native.GetDoubleClickTime()
@@ -1640,15 +1684,9 @@ public partial class StealthWindow : Window
                 _ghostClickY = click.Y;
 
                 if (isDouble)
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        _config.Shade = Math.Clamp(
-                            AppPrefs.PanelShadeRestore > 0 ? AppPrefs.PanelShadeRestore : 7,
-                            1, MaxShade);
-                        ApplyShade();
-                        _save();
-                        Snapshot("ghost double-click -> restore shade");
-                    }), DispatcherPriority.Input);
+                    Dispatcher.BeginInvoke(
+                        new Action(() => RestoreBrightness("ghost double-click")),
+                        DispatcherPriority.Input);
             }
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
         }
