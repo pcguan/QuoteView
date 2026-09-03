@@ -20,3 +20,7 @@ brief/.env.local
 release/
 tools/Preview/bin/
 tools/Preview/obj/
+
+# Python bytecode cache (from local py_compile)
+__pycache__/
+*.pyc
