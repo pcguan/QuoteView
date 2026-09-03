@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Windows.Threading;
+using StockClient.Core;
 using StockClient.Core.Contracts;
 using StockClient.Core.Quotes;
 
@@ -31,10 +32,14 @@ public sealed class KlineViewModel : ObservableObject
     /// </summary>
     private static readonly TimeSpan KlineInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>Rows of the live 成交明细 tape to keep — a tail, not the whole day.</summary>
+    private const int TapeRows = 60;
+
     private readonly Contract _contract;
     private readonly KlineRepository _repo;
     private readonly TrendRepository _trends;
     private readonly TencentQuoteClient? _quotes;
+    private readonly EastMoneyDetailsClient? _details;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _klineTimer;
@@ -55,12 +60,14 @@ public sealed class KlineViewModel : ObservableObject
 
     public KlineViewModel(
         Contract contract, KlineRepository repo,
-        TrendRepository trends, Dispatcher dispatcher, TencentQuoteClient? quotes = null)
+        TrendRepository trends, Dispatcher dispatcher, TencentQuoteClient? quotes = null,
+        EastMoneyDetailsClient? details = null)
     {
         _contract = contract;
         _repo = repo;
         _trends = trends;
         _quotes = quotes;
+        _details = details;
         _dispatcher = dispatcher;
 
         _trendTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
@@ -108,6 +115,20 @@ public sealed class KlineViewModel : ObservableObject
 
     /// <summary>Raised after each live-quote tick so the book can redraw.</summary>
     public event Action? LiveUpdated;
+
+    /// <summary>
+    /// Newest-last 成交明细 tail for the running session (last <see cref="TapeRows"/>
+    /// rows). Empty until the first poll, or for markets EastMoney details doesn't
+    /// serve (only 沪深). Fed while the intraday line is showing.
+    /// </summary>
+    public IReadOnlyList<TradeTick> Ticks { get; private set; } = Array.Empty<TradeTick>();
+
+    /// <summary>Whether a 成交明细 tape is available here — details is 沪深 only.</summary>
+    public bool HasTape =>
+        _details is not null && CodeMapper.MarketOf(_contract.Code) is "SH" or "SZ";
+
+    /// <summary>Raised after each 成交明细 poll so the tape can redraw.</summary>
+    public event Action? TicksUpdated;
 
     /// <summary>Which source served the current candles: "东财" or "腾讯(备用)".</summary>
     public string Source
@@ -213,6 +234,7 @@ public sealed class KlineViewModel : ObservableObject
         }
 
         _ = PollLiveAsync();
+        _ = PollDetailsAsync();
 
         try
         {
@@ -260,6 +282,29 @@ public sealed class KlineViewModel : ObservableObject
         catch (Exception)
         {
             // The book just keeps its last state; the line is the main event here.
+        }
+    }
+
+    /// <summary>
+    /// One 成交明细 poll for the tape beside the book, on the same trend cadence.
+    /// 沪深 only (EastMoney details serves nothing else), best-effort like the
+    /// book: a failed poll leaves the last tape in place.
+    /// </summary>
+    private async Task PollDetailsAsync()
+    {
+        if (!HasTape || !IsTrend) return;
+
+        try
+        {
+            var snap = await _details!.FetchAsync(_contract, TapeRows, CancellationToken.None);
+            if (!IsTrend || snap is null) return;
+
+            Ticks = snap.Ticks;
+            TicksUpdated?.Invoke();
+        }
+        catch (Exception)
+        {
+            // Tape keeps its last state; not worth surfacing.
         }
     }
 

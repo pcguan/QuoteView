@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using StockClient.App.ViewModels;
 using StockClient.Core.Quotes;
 
@@ -46,6 +47,8 @@ public partial class KlineWindow : Window
         _vm.LiveUpdated += OnLiveUpdated;
         _vm.Refreshed += OnKlineRefreshed;
         _vm.TrendLoaded += OnTrendLoaded;
+        _vm.TicksUpdated += OnTicksLoaded;
+        InitTape();
         _vm.PropertyChanged += (_, e) => Dispatcher.Invoke(() =>
         {
             if (e.PropertyName == nameof(KlineViewModel.IsTrend)) ApplyMode();
@@ -137,8 +140,8 @@ public partial class KlineWindow : Window
         UpdateStatus();
     });
 
-    /// <summary>Width of the book pane beside the intraday line.</summary>
-    private const double DepthWidth = 200;
+    /// <summary>Width of the book + 成交明细 pane beside the intraday line.</summary>
+    private const double DepthWidth = 250;
 
     private DepthChart? _depth;
 
@@ -172,6 +175,97 @@ public partial class KlineWindow : Window
     private static int Decimals(StockClient.Core.Quotes.Quote? quote) =>
         quote is null ? 2 : StockClient.Core.Quotes.PriceScale.Decimals(quote.Now, quote.Depth);
 
+    // --- 成交明细 tape ---------------------------------------------------------
+
+    /// <summary>Amber wash behind a 大单 row.</summary>
+    private static readonly Brush BigRowBrush = Frozen("#3B2B10");
+    private static readonly Brush TapeTimeBrush = Frozen("#6E7686");
+
+    private static Brush Frozen(string hex)
+    {
+        var b = (Brush)new BrushConverter().ConvertFromString(hex)!;
+        b.Freeze();
+        return b;
+    }
+
+    private void InitTape()
+    {
+        BigTradeBox.Text = AppPrefs.BigTradeWan.ToString();
+        BigTradeBox.LostKeyboardFocus += (_, _) => CommitBigTrade();
+        BigTradeBox.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter) return;
+            CommitBigTrade();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        };
+    }
+
+    private void CommitBigTrade()
+    {
+        AppPrefs.BigTradeWan = int.TryParse(BigTradeBox.Text.Trim(), out var v) ? v : AppPrefs.BigTradeWan;
+        BigTradeBox.Text = AppPrefs.BigTradeWan.ToString();   // reflect the clamp
+        RenderTape();
+    }
+
+    private void OnTicksLoaded() => Dispatcher.Invoke(RenderTape);
+
+    /// <summary>
+    /// Rebuilds the tape newest-first from the view model's tail. Cheap enough to
+    /// redo whole each 5s poll (≤60 rows); 大单 (成交额 ≥ the 万元 threshold, 0
+    /// disables) get an amber wash and bold.
+    /// </summary>
+    private void RenderTape()
+    {
+        if (!_vm.HasTape) return;
+
+        var decimals = Decimals(_vm.Live);
+        var bigYuan = AppPrefs.BigTradeWan * 10_000.0;
+
+        var buy = Frozen(Tones.UpHex);
+        var sell = Frozen(Tones.DownHex);
+        var flat = Frozen(Tones.FlatHex);
+
+        TapeHost.Children.Clear();
+        var ticks = _vm.Ticks;
+        for (var i = ticks.Count - 1; i >= 0; i--)
+        {
+            var t = ticks[i];
+            var fg = t.Side switch { TradeSide.Buy => buy, TradeSide.Sell => sell, _ => flat };
+            TapeHost.Children.Add(TapeRow(t, decimals, fg, bigYuan > 0 && t.Amount >= bigYuan));
+        }
+    }
+
+    private static UIElement TapeRow(TradeTick tick, int decimals, Brush sideBrush, bool big)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 1, 0, 1) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
+        if (big) grid.Background = BigRowBrush;
+
+        var weight = big ? FontWeights.SemiBold : FontWeights.Normal;
+        grid.Children.Add(Cell(tick.Time, TapeTimeBrush, TextAlignment.Left, FontWeights.Normal, 0));
+        grid.Children.Add(Cell(tick.Price.ToString("F" + decimals), sideBrush, TextAlignment.Right, weight, 1));
+        grid.Children.Add(Cell(tick.Volume.ToString(), sideBrush, TextAlignment.Right, weight, 2));
+        return grid;
+    }
+
+    private static TextBlock Cell(string text, Brush fg, TextAlignment align, FontWeight weight, int col)
+    {
+        var tb = new TextBlock
+        {
+            Text = text,
+            Foreground = fg,
+            FontSize = 11,
+            FontWeight = weight,
+            TextAlignment = align,
+            Margin = new Thickness(col == 0 ? 0 : 6, 0, 0, 0),
+        };
+        Grid.SetColumn(tb, col);
+        return tb;
+    }
+
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
     {
         if (_vm.Trend is { } trend) Trend.SetSeries(trend);
@@ -193,6 +287,12 @@ public partial class KlineWindow : Window
         DepthPane.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         DepthColumn.Width = trend ? new GridLength(DepthWidth) : new GridLength(0);
         if (trend) RenderDepth();
+
+        // 成交明细 rides alongside the book, and only where EastMoney serves it (沪深).
+        var tape = trend && _vm.HasTape;
+        TapeHeader.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
+        TapeScroll.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
+        if (tape) RenderTape();
 
         // Adjustment doesn't apply to an intraday line; the hint changes to match.
         AdjustButtons.IsEnabled = !trend;

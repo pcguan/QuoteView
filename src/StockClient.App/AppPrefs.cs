@@ -17,7 +17,8 @@ public static class AppPrefs
     private sealed record Doc(bool AutoUpdate = true, bool PanelOpen = false,
         int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
         string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
-        int UpdateDelayHours = 0, bool StealthIntroShown = false);
+        int UpdateDelayHours = 0, bool StealthIntroShown = false,
+        int BigTradeWan = 100);
 
     private static Doc _doc = Load();
 
@@ -106,6 +107,19 @@ public static class AppPrefs
     }
 
     /// <summary>The one-time stealth-panel gesture intro balloon has been shown.</summary>
+    /// <summary>成交明细里认定「大单」的成交额门槛,单位万元;0 = 不高亮。1..99999 万。</summary>
+    public static int BigTradeWan
+    {
+        get => _doc.BigTradeWan;
+        set
+        {
+            var v = Math.Clamp(value, 0, 99999);
+            if (_doc.BigTradeWan == v) return;
+            _doc = _doc with { BigTradeWan = v };
+            Save();
+        }
+    }
+
     public static bool StealthIntroShown
     {
         get => _doc.StealthIntroShown;

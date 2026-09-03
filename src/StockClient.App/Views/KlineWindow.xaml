@@ -52,13 +52,40 @@
 
         <Border x:Name="DepthPane" Grid.Column="1" Visibility="Collapsed"
                 BorderBrush="#222A38" BorderThickness="1,0,0,0" Padding="10,8">
-          <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="五档盘口" FontSize="11" Foreground="#8B93A3"
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="五档盘口" FontSize="11" Foreground="#8B93A3"
                        Margin="0,0,0,6" />
-            <TextBlock x:Name="DepthTime" DockPanel.Dock="Bottom" FontSize="10" Foreground="#5F6672"
+            <Border x:Name="DepthHost" Grid.Row="1" VerticalAlignment="Top" />
+            <TextBlock x:Name="DepthTime" Grid.Row="2" FontSize="10" Foreground="#5F6672"
                        Margin="0,6,0,0" />
-            <Border x:Name="DepthHost" VerticalAlignment="Top" />
-          </DockPanel>
+
+            <!-- 成交明细 (逐笔) — 沪深 only; collapsed for other markets. -->
+            <Grid x:Name="TapeHeader" Grid.Row="3" Margin="0,12,0,4">
+              <TextBlock Text="成交明细" FontSize="11" Foreground="#8B93A3" VerticalAlignment="Center" />
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock Text="大单≥" FontSize="10" Foreground="#5F6672" VerticalAlignment="Center" />
+                <TextBox x:Name="BigTradeBox" Width="42" FontSize="10" Padding="3,1"
+                         VerticalContentAlignment="Center" MaxLength="5"
+                         Background="#141A26" Foreground="#EDF1F7" BorderBrush="#2C3547"
+                         ToolTip="单笔成交额达到该万元数即标为大单（0 = 不高亮）" />
+                <TextBlock Text="万" FontSize="10" Foreground="#5F6672"
+                           VerticalAlignment="Center" Margin="3,0,0,0" />
+              </StackPanel>
+            </Grid>
+
+            <ScrollViewer x:Name="TapeScroll" Grid.Row="4" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+              <StackPanel x:Name="TapeHost" />
+            </ScrollViewer>
+          </Grid>
         </Border>
       </Grid>
     </Border>

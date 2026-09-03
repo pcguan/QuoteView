@@ -180,6 +180,53 @@ public static class Program
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history3 },
             @"C:\work\preview-compare.png");
 
+        // 6b) KlineWindow in 分时 mode with a fake 成交明细 tape beside the book —
+        // the P1 逐笔 feature. Trend + ticks are injected via reflection so nothing
+        // is fetched; a low price makes the 大单 threshold (100万 default) split
+        // into highlighted and plain rows.
+        var http = new System.Net.Http.HttpClient();
+        var clock = new StockClient.Core.Contracts.MarketClock();
+        var kRepo = new StockClient.Core.Quotes.KlineRepository(
+            new StockClient.Core.Quotes.EastMoneyKlineClient(http),
+            new StockClient.Core.Quotes.TencentKlineClient(http),
+            new StockClient.Core.Quotes.KlineCache(Path.Combine(Path.GetTempPath(), "qv-prev-kline")),
+            clock);
+        var tRepo = new StockClient.Core.Quotes.TrendRepository(
+            new StockClient.Core.Quotes.EastMoneyTrendClient(http), clock);
+        var kContract = new StockClient.Core.Contracts.Contract { Code = "SH600519", Name = "贵州茅台" };
+        var kvm = new StockClient.App.ViewModels.KlineViewModel(kContract, kRepo, tRepo,
+            System.Windows.Threading.Dispatcher.CurrentDispatcher, null,
+            new StockClient.Core.Quotes.EastMoneyDetailsClient(http));
+
+        var kvmT = typeof(StockClient.App.ViewModels.KlineViewModel);
+        kvmT.GetField("_isTrend", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(kvm, true);
+        var tape = new List<StockClient.Core.Quotes.TradeTick>();
+        var rnd = new Random(7);
+        for (var i = 0; i < 42; i++)
+        {
+            var side = i % 8 == 0 ? StockClient.Core.Quotes.TradeSide.Neutral
+                : (rnd.Next(2) == 0 ? StockClient.Core.Quotes.TradeSide.Buy : StockClient.Core.Quotes.TradeSide.Sell);
+            tape.Add(new StockClient.Core.Quotes.TradeTick
+            {
+                Time = $"13:{(5 + i / 3):00}:{(i * 7) % 60:00}",
+                Price = Math.Round(11.6 + (rnd.NextDouble() - 0.5) * 0.2, 2),
+                Volume = i % 9 == 0 ? 1500 : rnd.Next(1, 60),   // 1500 手 @ ~11.6 ≈ 174万 → 大单
+                Trades = rnd.Next(1, 20),
+                Side = side,
+            });
+        }
+        kvmT.GetProperty("Ticks")!.SetValue(kvm, tape);
+
+        var kwin = new StockClient.App.Views.KlineWindow(kvm);
+        var kContent = (FrameworkElement)kwin.Content;
+        kwin.Content = null;
+        Render(new Border
+        {
+            Width = 920, Height = 560,
+            Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
+            Child = kContent,
+        }, @"C:\work\preview-tape.png");
+
         // 7) Settings window with the template bar.
         var config2 = StealthConfig.CreateDefault();
         var tmpls = new List<StockClient.Core.Groups.NamedStealthTemplate>
