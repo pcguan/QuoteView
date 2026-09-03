@@ -22,6 +22,7 @@ Stdlib only — the container just needs python3.
 """
 
 import base64
+import gzip
 import hashlib
 import ipaddress
 import json
@@ -232,6 +233,9 @@ TOKEN_RE = re.compile(r"^[0-9a-f]{64}$")
 
 ACCOUNTS = os.path.join(DATA, "accounts")
 TRENDS = os.path.join(DATA, "trends")
+# 逐笔成交 (成交明细) archive, gzipped — one file per contract per day. Fed by the
+# same after-close sweep as TRENDS, kept just as long (RETAIN_DAYS).
+TICKS = os.path.join(DATA, "ticks")
 STATE = os.path.join(DATA, "state.json")
 
 MAX_ACCOUNTS = 10          # personal server; also caps drive-by registrations
@@ -501,6 +505,34 @@ def trend_dates(code):
     return sorted(out, reverse=True)
 
 
+def tick_dir(code):
+    return os.path.join(TICKS, code)
+
+
+def tick_path(code, day):
+    return os.path.join(tick_dir(code), f"{day}.json.gz")
+
+
+def tick_dates(code):
+    d = tick_dir(code)
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for name in os.listdir(d):
+        if re.match(r"^\d{4}-\d{2}-\d{2}\.json\.gz$", name):
+            out.append(name[:-8])   # strip ".json.gz"
+    return sorted(out, reverse=True)
+
+
+def write_ticks(code, day, payload):
+    """Gzips one day's 逐笔 payload atomically (tmp + replace)."""
+    os.makedirs(tick_dir(code), exist_ok=True)
+    tmp = tick_path(code, day) + ".tmp"
+    with gzip.open(tmp, "wt", encoding="utf-8") as f:
+        json.dump({**payload, "Date": day}, f, ensure_ascii=False)
+    os.replace(tmp, tick_path(code, day))
+
+
 # ---------------------------------------------------------- retention principle
 # 服务端数据永远保留（2026-09-01 定的原则）：客户端可以不保留，但用户要数据时必须
 # 能从服务端拿到。工作集列表照旧截断保证读写快；被截掉的条目一律先落入只追加的
@@ -576,6 +608,16 @@ def prune(code):
     for day in trend_dates(code)[RETAIN_DAYS:]:
         try:
             os.remove(trend_path(code, day))
+        except OSError:
+            pass
+
+
+def prune_ticks(code):
+    if RETAIN_DAYS <= 0:
+        return
+    for day in tick_dates(code)[RETAIN_DAYS:]:
+        try:
+            os.remove(tick_path(code, day))
         except OSError:
             pass
 
@@ -684,6 +726,47 @@ def fetch_eastmoney(code):
             time.sleep(2)
     log(f"fetch eastmoney {code} failed: {type(last).__name__}: {last}")
     return None, None
+
+
+def fetch_ticks(code):
+    """Full-day 逐笔成交 (成交明细) from EastMoney details/get, or None.
+
+    ⚠️ details/get carries NO date of its own (rows are just HH:MM:SS), so the
+    caller MUST gate freshness elsewhere — the sweep only archives a code whose
+    trends2 snapshot for `day` already landed (that path DID verify the date).
+    One request returns the whole running day; pos=-1000000 lifts the tail cap.
+    Details rows are stored verbatim (time,price,量,笔,方向) — the client parses
+    them exactly like the live tape."""
+    market = "1" if code.startswith("SH") else "0"
+    secid = f"{market}.{code[2:]}"
+    url = ("https://push2.eastmoney.com/api/qt/stock/details/get"
+           "?fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55"
+           "&ut=fa5fd1943c7b386f172d6893dbfba10b&pos=-1000000"
+           f"&secid={secid}")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+        "Referer": "https://quote.eastmoney.com/",
+    })
+    last = None
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                doc = json.load(r)
+            data = doc.get("data") or {}
+            details = data.get("details") or []
+            if not details:
+                return None
+            return {
+                "Code": code,
+                "PrePrice": float(data.get("prePrice") or 0),
+                "Decimals": int(data.get("decimal") or 2),
+                "Details": [str(x) for x in details],
+            }
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(2)
+    log(f"fetch ticks {code} failed: {type(last).__name__}: {last}")
+    return None
 
 
 def fetch_tencent(code):
@@ -1108,6 +1191,45 @@ def sweep_once():
     enrich_summaries(day, all_codes)
 
 
+def sweep_ticks_once():
+    """After-close 逐笔成交 archive, riding on the trend sweep. Only touches a
+    code whose trends2 snapshot for `day` already landed: that snapshot's date
+    was verified against `day`, and details/get carries no date of its own, so
+    the snapshot's existence is what proves this is a real session. Same
+    throttle/backoff as the trend sweep — file existence = done, so a backed-off
+    pass resumes from where it stopped on the next tick."""
+    now = datetime.now(CN)
+    if now.weekday() >= 5 or now.time() < datetime.strptime("15:01", "%H:%M").time():
+        return
+    day = f"{now:%F}"
+    if load_state().get("holiday") == day:
+        return
+
+    codes = [c for c in union_codes() if os.path.exists(trend_path(c, day))]
+    missing = [c for c in codes if not os.path.exists(tick_path(c, day))]
+    if not missing:
+        return
+
+    log(f"tick sweep {day}: {len(missing)} contracts to fetch")
+    done = failed = streak = 0
+    for code in missing:
+        payload = fetch_ticks(code)
+        if payload is not None:
+            streak = 0
+            write_ticks(code, day, payload)
+            prune_ticks(code)
+            done += 1
+        else:
+            failed += 1
+            streak += 1
+            if streak >= 5:
+                log(f"tick sweep {day}: {streak} consecutive failures, backing off "
+                    f"(done={done} failed={failed})")
+                return
+        time.sleep(FETCH_GAP_S)
+    log(f"tick sweep {day}: done={done} failed={failed}")
+
+
 def enrich_summaries(day, codes):
     """Attaches the day's closing metrics (change %, turnover, volume, the
     outer/inner split) to every snapshot of `day` still missing them — ONE
@@ -1410,6 +1532,10 @@ def scheduler():
             sweep_once()
         except Exception as e:  # noqa: BLE001 - the loop must survive anything
             log(f"sweep error: {e}")
+        try:
+            sweep_ticks_once()
+        except Exception as e:  # noqa: BLE001
+            log(f"tick sweep error: {e}")
         try:
             kr_sweep_tick()
         except Exception as e:  # noqa: BLE001
@@ -2269,6 +2395,38 @@ class Handler(BaseHTTPRequestHandler):
                 return self._bad("not found", 404)
             with open(path, "rb") as f:
                 body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if url.path == "/tickdates":
+            if self._auth() is None:
+                return
+            code = (q.get("code") or [""])[0].upper()
+            if not CODE_RE.match(code):
+                return self._bad("bad code")
+            return self._json({"dates": tick_dates(code)})
+
+        if url.path == "/ticks":
+            if self._auth() is None:
+                return
+            code = (q.get("code") or [""])[0].upper()
+            day = (q.get("date") or [""])[0]
+            if not CODE_RE.match(code) or not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+                return self._bad("bad code/date")
+            path = tick_path(code, day)
+            if not os.path.exists(path):
+                return self._bad("not found", 404)
+            # Stored gzipped; decompress and send JSON (the client parses the
+            # same detail rows as the live tape).
+            try:
+                with gzip.open(path, "rb") as f:
+                    body = f.read()
+            except OSError:
+                return self._bad("not found", 404)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
