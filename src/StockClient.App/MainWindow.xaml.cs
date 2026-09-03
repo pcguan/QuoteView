@@ -52,6 +52,7 @@ public partial class MainWindow : FluentWindow
     // to the front), so they're tracked here to be closed when the app closes —
     // otherwise an ownerless window would keep the process alive.
     private readonly List<Views.KlineWindow> _klineWindows = new();
+    private readonly List<Views.TrendHistoryWindow> _historyWindows = new();
 
     public MainWindow()
     {
@@ -273,6 +274,7 @@ public partial class MainWindow : FluentWindow
 
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
+            foreach (var window in _historyWindows.ToArray()) window.Close();
 
             _pingTimer?.Stop();
             await _presence.DisposeAsync();
@@ -736,16 +738,20 @@ public partial class MainWindow : FluentWindow
     }
 
     /// <summary>
-    /// From the stealth panel: bring the main window back, switch to 历史分时,
-    /// and jump to this contract. History is a main-window tab (not an ownerless
-    /// window like the chart), so the window has to be restored first; the tab
-    /// index (1) matches the TabControl order in XAML.
+    /// From the stealth panel: open 历史分时对比 for this contract in its OWN
+    /// window, leaving the panel exactly where it is (the old behaviour dropped
+    /// back to the main window, which defeats the point of the panel). Ownerless
+    /// and tracked like the chart windows; several can sit beside the panel.
     /// </summary>
     private void OpenHistoryByCode(string code)
     {
-        RestoreFromStealth("panel 历史分时对比");
-        MainTabs.SelectedIndex = 1;   // 历史分时
-        History.SelectContract(code);
+        if (_quotes is null) return;
+
+        var window = new Views.TrendHistoryWindow(
+            _quotes, _trendCache, _vm.Repository, _session, code);
+        _historyWindows.Add(window);
+        window.Closed += (_, _) => _historyWindows.Remove(window);
+        window.Show();
     }
 
     private void OpenKline(Contract contract)
