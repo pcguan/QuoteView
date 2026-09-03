@@ -996,6 +996,10 @@ public partial class StealthWindow : Window
         _save();
     }
 
+    /// <summary>True while the panel is blacked out (shade 0), so the tray can
+    /// offer 恢复面板亮度 only when it would do something.</summary>
+    public bool PanelHidden => _config.Shade <= 0;
+
     /// <summary>
     /// Un-hide the panel: restore the brightness it had before it was blacked
     /// out (double-click / Win+Alt+Down), falling back to a readable 7 when no
@@ -1005,10 +1009,6 @@ public partial class StealthWindow : Window
     /// auto-update restart re-opens the panel already hidden. No-op when the
     /// panel is already showing something.
     /// </summary>
-    /// <summary>True while the panel is blacked out (shade 0), so the tray can
-    /// offer 恢复面板亮度 only when it would do something.</summary>
-    public bool PanelHidden => _config.Shade <= 0;
-
     public void RestoreBrightness(string via)
     {
         if (_config.Shade > 0) return;
