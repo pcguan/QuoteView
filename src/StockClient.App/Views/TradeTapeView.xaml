@@ -5,11 +5,16 @@
        live, so only the visible rows are ever realized. -->
   <ItemsControl x:Name="List"
                 VirtualizingStackPanel.IsVirtualizing="True"
-                VirtualizingStackPanel.VirtualizationMode="Recycling"
-                ScrollViewer.CanContentScroll="True">
+                VirtualizingStackPanel.VirtualizationMode="Recycling">
     <ItemsControl.Template>
       <ControlTemplate TargetType="ItemsControl">
-        <ScrollViewer x:Name="TapeScroll" VerticalScrollBarVisibility="Auto"
+        <!-- CanContentScroll MUST live on the actual ScrollViewer: the attached
+             value on the ItemsControl does not flow into a hard-coded template
+             scroller, and without item-based scrolling the VirtualizingStackPanel
+             gets an infinite viewport and realizes every row (defeating the whole
+             point). -->
+        <ScrollViewer x:Name="TapeScroll" CanContentScroll="True"
+                      VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled" Focusable="False">
           <ItemsPresenter />
         </ScrollViewer>
