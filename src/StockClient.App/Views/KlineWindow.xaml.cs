@@ -72,6 +72,11 @@ public partial class KlineWindow : Window
     {
         base.OnPreviewKeyDown(e);
 
+        // While a text box has focus (the 大单 threshold input) these window
+        // shortcuts must stay out of the way — otherwise typing "1"/"2" fires
+        // 分时/日K and the view jumps out from under the cursor.
+        if (Keyboard.FocusedElement is System.Windows.Controls.TextBox) return;
+
         // Shift is deliberately allowed through: on a US layout "+" IS Shift+OemPlus,
         // so gating on "no modifier at all" would leave the zoom-in key dead.
         const ModifierKeys blocked = ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Windows;

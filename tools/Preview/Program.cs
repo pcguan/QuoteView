@@ -236,7 +236,7 @@ public static class Program
         ((System.Windows.Controls.ColumnDefinition)t3.GetField("TapeColumn", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).Width = new GridLength(300);
         H4("TapePane").Visibility = Visibility.Visible;
         ((System.Windows.Controls.TextBlock)H4("TapeTitle")).Text = "成交明细 · 08-24 · 42 笔";
-        ((StockClient.App.Views.TradeTapeView)t3.GetField("Tape", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).SetTicks(tape, 2, 100, newestFirst: false);
+        ((StockClient.App.Views.TradeTapeView)t3.GetField("Tape", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).SetTicks(tape, 2, 100, stickToNewest: false);
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history4 },
             @"C:\work\preview-hist-tape.png");
 

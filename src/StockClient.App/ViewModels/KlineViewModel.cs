@@ -32,8 +32,10 @@ public sealed class KlineViewModel : ObservableObject
     /// </summary>
     private static readonly TimeSpan KlineInterval = TimeSpan.FromSeconds(30);
 
-    /// <summary>Rows of the live 成交明细 tape to keep — a tail, not the whole day.</summary>
-    private const int TapeRows = 60;
+    /// <summary>Cap on the live 成交明细 pull — large enough for the whole running
+    /// day (details is a few thousand rows even for the busiest names), so the
+    /// tape shows open-to-now, not just a tail. The view virtualizes the rows.</summary>
+    private const int TapeMaxRows = 100_000;
 
     private readonly Contract _contract;
     private readonly KlineRepository _repo;
@@ -296,7 +298,7 @@ public sealed class KlineViewModel : ObservableObject
 
         try
         {
-            var snap = await _details!.FetchAsync(_contract, TapeRows, CancellationToken.None);
+            var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
             if (!IsTrend || snap is null) return;
 
             Ticks = snap.Ticks;

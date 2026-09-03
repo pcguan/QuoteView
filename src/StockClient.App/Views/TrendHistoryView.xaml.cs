@@ -345,7 +345,7 @@ public partial class TrendHistoryView : UserControl
         }
 
         TapeTitle.Text = $"成交明细 · {date:MM-dd} · {snap.Ticks.Count} 笔";
-        Tape.SetTicks(snap.Ticks, snap.Decimals, AppPrefs.BigTradeWan, newestFirst: false);
+        Tape.SetTicks(snap.Ticks, snap.Decimals, AppPrefs.BigTradeWan, stickToNewest: false);
     }
 
     // Accents match each day's line colour in the chart below.
