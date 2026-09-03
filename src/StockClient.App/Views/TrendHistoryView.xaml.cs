@@ -44,6 +44,31 @@ public partial class TrendHistoryView : UserControl
         else ShowEmpty("还没有分组");
     }
 
+    /// <summary>
+    /// Jumps straight to one contract's history (from the stealth panel's
+    /// right-click). Picks a group that actually contains it — preferring the
+    /// active one — so the code dropdown is populated before we select the code.
+    /// Sync throughout: selecting the group runs FillCodes inline.
+    /// </summary>
+    public void SelectContract(string code)
+    {
+        if (_vm is null) return;
+        code = code.ToUpperInvariant();
+
+        var group = _vm.Groups.FirstOrDefault(g => ReferenceEquals(g, _vm.ActiveGroup)
+                        && g.Model.Codes.Any(c => string.Equals(c, code, StringComparison.OrdinalIgnoreCase)))
+                    ?? _vm.Groups.FirstOrDefault(g => g.Model.Codes.Any(
+                        c => string.Equals(c, code, StringComparison.OrdinalIgnoreCase)));
+        if (group is null) return;
+
+        GroupBox.SelectedItem = group;   // fires FillCodes synchronously
+        if (CodeBox.ItemsSource is IEnumerable<CodeItem> items)
+        {
+            var item = items.FirstOrDefault(i => string.Equals(i.Code, code, StringComparison.OrdinalIgnoreCase));
+            if (item is not null) CodeBox.SelectedItem = item;   // fires the date/load chain
+        }
+    }
+
     // Rebuilt on open rather than kept in sync: membership changes in the main
     // tab and there is no change event per group to hang a refresh on.
     private void GroupBox_DropDownOpened(object? sender, EventArgs e)

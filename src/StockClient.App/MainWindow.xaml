@@ -44,7 +44,7 @@
       </ui:TitleBar.Header>
     </ui:TitleBar>
 
-    <TabControl Grid.Row="1" Margin="16,0,16,0" Background="Transparent" BorderThickness="0">
+    <TabControl x:Name="MainTabs" Grid.Row="1" Margin="16,0,16,0" Background="Transparent" BorderThickness="0">
       <TabItem Header="实时行情">
         <Grid>
           <Grid.Resources />

@@ -185,9 +185,10 @@ public partial class StealthWindow : Window
     /// <summary>Opens the full K-line window for a code — supplied by the main
     /// window, which owns the chart plumbing. Null = the menu item is hidden.</summary>
     private readonly Action<string>? _openKline;
+    private readonly Action<string>? _openHistory;
 
     public StealthWindow(QuotesViewModel vm, StealthConfig config, Action save, TrendRepository trends,
-        Action<string>? openKline = null)
+        Action<string>? openKline = null, Action<string>? openHistory = null)
     {
         InitializeComponent();
 
@@ -196,6 +197,7 @@ public partial class StealthWindow : Window
         _save = save;
         _trends = trends;
         _openKline = openKline;
+        _openHistory = openHistory;
         _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
@@ -1066,8 +1068,29 @@ public partial class StealthWindow : Window
                 if (_rows.Count > 0) openKline(_rows[0].Code);
             };
             menu.Items.Add(kline);
-            menu.Items.Add(new Separator());
         }
+
+        if (_openHistory is { } openHistory)
+        {
+            // 历史分时对比只覆盖沪深快照，所以仅对沪深合约启用；港美韩没有归档。
+            var history = new MenuItem { Header = "历史分时对比" };
+            menu.Opened += (_, _) =>
+            {
+                var row = _rows.Count > 0 ? _rows[0] : null;
+                var ok = row is not null
+                    && StockClient.Core.CodeMapper.MarketOf(row.Code) is "SH" or "SZ";
+                history.Header = ok ? $"历史分时对比（{row!.Name}）" : "历史分时对比（仅沪深）";
+                history.IsEnabled = ok;
+            };
+            history.Click += (_, _) =>
+            {
+                if (_rows.Count > 0) openHistory(_rows[0].Code);
+            };
+            menu.Items.Add(history);
+        }
+
+        if (_openKline is not null || _openHistory is not null)
+            menu.Items.Add(new Separator());
 
         var settings = new MenuItem { Header = "设置…" };
         settings.Click += (_, _) => SettingsRequested?.Invoke();

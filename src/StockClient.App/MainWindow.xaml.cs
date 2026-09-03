@@ -735,6 +735,19 @@ public partial class MainWindow : FluentWindow
         OpenKline(contract);
     }
 
+    /// <summary>
+    /// From the stealth panel: bring the main window back, switch to 历史分时,
+    /// and jump to this contract. History is a main-window tab (not an ownerless
+    /// window like the chart), so the window has to be restored first; the tab
+    /// index (1) matches the TabControl order in XAML.
+    /// </summary>
+    private void OpenHistoryByCode(string code)
+    {
+        RestoreFromStealth("panel 历史分时对比");
+        MainTabs.SelectedIndex = 1;   // 历史分时
+        History.SelectContract(code);
+    }
+
     private void OpenKline(Contract contract)
     {
         Probe.Log($"OpenKline {contract.Code} {contract.Name} secid={contract.EastMoneySecId}");
@@ -769,7 +782,7 @@ public partial class MainWindow : FluentWindow
         if (_quotes is null || _stealth is not null) return;
 
         _stealth = new Views.StealthWindow(_quotes, _quotes.Stealth, _quotes.SaveConfig, _trendRepo,
-            openKline: OpenKlineByCode);
+            openKline: OpenKlineByCode, openHistory: OpenHistoryByCode);
         _stealth.RestoreRequested += () => RestoreFromStealth("panel context menu 还原主窗口");
         _stealth.SettingsRequested += () => OpenSettings(Views.SystemSettingsWindow.TabPanel);
         _stealth.Closed += (_, _) => _stealth = null;
