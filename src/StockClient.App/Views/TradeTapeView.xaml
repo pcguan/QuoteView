@@ -37,10 +37,10 @@
             <ColumnDefinition Width="52" />
           </Grid.ColumnDefinitions>
           <TextBlock Text="{Binding Time}" Foreground="#6E7686" FontSize="11" />
-          <TextBlock Grid.Column="1" Text="{Binding Price}" Foreground="{Binding Fg}"
-                     FontSize="11" FontWeight="{Binding Weight}" Margin="8,0,0,0" />
-          <TextBlock Grid.Column="2" Text="{Binding Volume}" Foreground="{Binding Fg}"
-                     FontSize="11" FontWeight="{Binding Weight}" TextAlignment="Right" />
+          <TextBlock Grid.Column="1" Text="{Binding Price}" Foreground="{Binding PriceFg}"
+                     FontSize="11" Margin="8,0,0,0" />
+          <TextBlock Grid.Column="2" Text="{Binding Volume}" Foreground="{Binding VolFg}"
+                     FontSize="11" TextAlignment="Right" />
         </Grid>
       </DataTemplate>
     </ItemsControl.ItemTemplate>

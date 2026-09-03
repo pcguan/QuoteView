@@ -131,6 +131,9 @@ public sealed class KlineViewModel : ObservableObject
     /// </summary>
     public IReadOnlyList<TradeTick> Ticks { get; private set; } = Array.Empty<TradeTick>();
 
+    /// <summary>Yesterday's close from the 逐笔 feed, for the first tick's up/down colour.</summary>
+    public double TickPrePrice { get; private set; }
+
     /// <summary>Whether a 成交明细 tape is available here — details is 沪深 only.</summary>
     public bool HasTape =>
         _details is not null && CodeMapper.MarketOf(_contract.Code) is "SH" or "SZ";
@@ -308,6 +311,7 @@ public sealed class KlineViewModel : ObservableObject
             if (!IsTrend || snap is null) return;
 
             Ticks = snap.Ticks;
+            TickPrePrice = snap.PrePrice;
             TicksUpdated?.Invoke();
         }
         catch (Exception)

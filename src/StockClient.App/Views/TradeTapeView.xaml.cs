@@ -30,7 +30,7 @@ public partial class TradeTapeView : UserControl
     /// across refreshes unless the reader scrolled up. False = historical replay,
     /// which parks at the open (top).</param>
     public void SetTicks(IReadOnlyList<TradeTick> ticks, int decimals, int bigTradeWan,
-        bool stickToNewest = true)
+        double prePrice = 0, bool stickToNewest = true)
     {
         var sv = Scroll;
         var oldOffset = sv?.VerticalOffset ?? 0;
@@ -38,15 +38,19 @@ public partial class TradeTapeView : UserControl
             || sv.VerticalOffset >= sv.ScrollableHeight - 4;
 
         var rows = new List<Row>(ticks.Count);
+        var carry = TradeColors.Flat;
+        var prev = prePrice;
         foreach (var t in ticks)   // chronological — earliest first
         {
+            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, prev, ref carry);
+            prev = t.Price;
             var big = TradeColors.IsBig(t, bigTradeWan);
             rows.Add(new Row(
                 t.Time,
-                t.Price.ToString("F" + decimals),
+                t.Price.ToString("F" + decimals) + arrow,
                 t.Volume.ToString(),
-                TradeColors.For(t.Side, big),
-                big ? FontWeights.SemiBold : FontWeights.Normal));
+                priceFg,
+                TradeColors.Volume(t.Side, big)));
         }
         // Replacing ItemsSource resets the viewport to the top, so restore the
         // reader's place AFTER the new rows lay out. Chronological order means
@@ -67,5 +71,5 @@ public partial class TradeTapeView : UserControl
     public void Clear() => List.ItemsSource = null;
 
     /// <summary>One tape line, pre-shaped for the virtualized item template.</summary>
-    private sealed record Row(string Time, string Price, string Volume, Brush Fg, FontWeight Weight);
+    private sealed record Row(string Time, string Price, string Volume, Brush PriceFg, Brush VolFg);
 }

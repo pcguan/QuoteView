@@ -1,7 +1,7 @@
 <Window x:Class="StockClient.App.Views.TickDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Width="520" Height="680" MinWidth="380" MinHeight="420"
+        Width="560" Height="720" MinWidth="440" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Background="#0F1420" FontFamily="Microsoft YaHei"
         TextOptions.TextFormattingMode="Display">
@@ -9,39 +9,78 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
     <!-- Header: name/code + counts + refresh -->
-    <Grid Grid.Row="0" Margin="0,0,0,10">
+    <Grid Grid.Row="0">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Foreground="#EDF1F7"
                    VerticalAlignment="Center" />
         <TextBlock x:Name="CountText" FontSize="11" Foreground="#8B93A3"
-                   VerticalAlignment="Center" Margin="12,0,0,0" />
+                   VerticalAlignment="Bottom" Margin="12,0,0,2" />
       </StackPanel>
       <Button x:Name="RefreshButton" Content="刷新" FontSize="12" Padding="12,3"
               HorizontalAlignment="Right" VerticalAlignment="Center" Click="Refresh_Click" />
     </Grid>
 
-    <!-- Filter: 全部 / ≥100 / ≥1000 / ≥10000 手 -->
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
-      <TextBlock Text="筛选" FontSize="12" Foreground="#8B93A3" VerticalAlignment="Center"
-                 Margin="0,0,10,0" />
-      <StackPanel x:Name="FilterButtons" Orientation="Horizontal" />
-      <TextBlock x:Name="Hint" FontSize="11" Foreground="#5F6672" VerticalAlignment="Center"
-                 Margin="14,0,0,0" Text="按单笔成交量(手)过滤" />
+    <!-- 现价 + 涨跌 -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,6,0,8">
+      <TextBlock x:Name="PriceText" FontSize="22" FontWeight="SemiBold" Foreground="#DCE4EE"
+                 VerticalAlignment="Center" />
+      <TextBlock x:Name="ChangeText" FontSize="13" VerticalAlignment="Bottom"
+                 Margin="10,0,0,3" Foreground="#DCE4EE" />
+      <TextBlock x:Name="PercentText" FontSize="13" VerticalAlignment="Bottom"
+                 Margin="8,0,0,3" Foreground="#DCE4EE" />
     </StackPanel>
 
-    <!-- Detail table -->
-    <DataGrid x:Name="Grid" Grid.Row="2" AutoGenerateColumns="False" IsReadOnly="True"
+    <!-- 当日行情字段（拿不到填 -）。UniformGrid flows 14 cells into 4 columns. -->
+    <Border Grid.Row="2" BorderBrush="#222A38" BorderThickness="0,1,0,1" Padding="0,6">
+      <UniformGrid Columns="4">
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="今开" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="OpenText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="最高" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="HighText" Foreground="#EF5350" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="涨停" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="LimitUpText" Foreground="#EF5350" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="换手" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="TurnoverText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="昨收" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="PrevText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="最低" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="LowText" Foreground="#26A69A" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="跌停" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="LimitDownText" Foreground="#26A69A" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="量比" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="VolRatioText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="成交量" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="VolumeText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="成交额" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="AmountText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="市盈" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="PeText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="市净" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="PbText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="总市值" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="TotalCapText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+        <StackPanel Orientation="Horizontal" Margin="0,2"><TextBlock Text="流通" Foreground="#8B93A3" FontSize="11" Width="52" /><TextBlock x:Name="FloatCapText" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+      </UniformGrid>
+    </Border>
+
+    <!-- Filter + 倒序 -->
+    <StackPanel Grid.Row="3" Margin="0,8,0,8">
+      <WrapPanel>
+        <TextBlock Text="筛选大单" FontSize="12" Foreground="#8B93A3" VerticalAlignment="Center" Margin="0,0,8,0" />
+        <StackPanel x:Name="FilterButtons" Orientation="Horizontal" />
+        <CheckBox x:Name="ReverseBox" Content="倒序" FontSize="12" Foreground="#DCE4EE"
+                  VerticalAlignment="Center" Margin="14,0,0,0" Click="Reverse_Click" />
+      </WrapPanel>
+      <TextBlock x:Name="Legend" FontSize="11" Margin="0,6,0,0">
+        <Run Text="■" Foreground="#2EE6D6" /><Run Text=" 大单内盘(主动卖)   " Foreground="#8B93A3" /><Run Text="■" Foreground="#C77DFF" /><Run Text=" 大单外盘(主动买)" Foreground="#8B93A3" />
+      </TextBlock>
+    </StackPanel>
+
+    <!-- Detail table: 时间 · 成交价 · 手数 -->
+    <DataGrid x:Name="Grid" Grid.Row="4" AutoGenerateColumns="False" IsReadOnly="True"
               HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
               CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
               BorderBrush="#222A38" BorderThickness="1" FontSize="12"
               EnableRowVirtualization="True" EnableColumnVirtualization="False">
       <DataGrid.Columns>
-        <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="130">
+        <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="170">
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
               <Setter Property="Foreground" Value="#8B93A3" />
@@ -49,31 +88,21 @@
             </Style>
           </DataGridTextColumn.ElementStyle>
         </DataGridTextColumn>
-        <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="115">
+        <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="165">
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="{Binding Fg}" />
-              <Setter Property="FontWeight" Value="{Binding Weight}" />
+              <Setter Property="Foreground" Value="{Binding PriceFg}" />
               <Setter Property="TextAlignment" Value="Right" />
-              <Setter Property="Margin" Value="0,0,12,0" />
+              <Setter Property="Margin" Value="0,0,16,0" />
             </Style>
           </DataGridTextColumn.ElementStyle>
         </DataGridTextColumn>
-        <DataGridTextColumn Header="量(手)" Binding="{Binding Volume}" Width="110">
+        <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="165">
           <DataGridTextColumn.ElementStyle>
             <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="{Binding Fg}" />
-              <Setter Property="FontWeight" Value="{Binding Weight}" />
+              <Setter Property="Foreground" Value="{Binding VolFg}" />
               <Setter Property="TextAlignment" Value="Right" />
-              <Setter Property="Margin" Value="0,0,12,0" />
-            </Style>
-          </DataGridTextColumn.ElementStyle>
-        </DataGridTextColumn>
-        <DataGridTextColumn Header="方向" Binding="{Binding SideText}" Width="100">
-          <DataGridTextColumn.ElementStyle>
-            <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="{Binding Fg}" />
-              <Setter Property="TextAlignment" Value="Center" />
+              <Setter Property="Margin" Value="0,0,16,0" />
             </Style>
           </DataGridTextColumn.ElementStyle>
         </DataGridTextColumn>
@@ -81,16 +110,13 @@
     </DataGrid>
 
     <!-- Pagination -->
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Center"
-                Margin="0,10,0,0">
-      <Button x:Name="FirstButton" Content="⏮" FontSize="12" Padding="8,3" Click="First_Click" />
-      <Button x:Name="PrevButton" Content="上一页" FontSize="12" Padding="10,3" Margin="6,0,0,0"
-              Click="Prev_Click" />
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
+      <Button x:Name="FirstButton" Content="首页" FontSize="12" Padding="10,3" Click="First_Click" />
+      <Button x:Name="PrevButton" Content="上一页" FontSize="12" Padding="10,3" Margin="6,0,0,0" Click="Prev_Click" />
       <TextBlock x:Name="PageText" FontSize="12" Foreground="#EDF1F7" VerticalAlignment="Center"
                  Margin="12,0,12,0" MinWidth="96" TextAlignment="Center" />
       <Button x:Name="NextButton" Content="下一页" FontSize="12" Padding="10,3" Click="Next_Click" />
-      <Button x:Name="LastButton" Content="⏭" FontSize="12" Padding="8,3" Margin="6,0,0,0"
-              Click="Last_Click" />
+      <Button x:Name="LastButton" Content="尾页" FontSize="12" Padding="10,3" Margin="6,0,0,0" Click="Last_Click" />
     </StackPanel>
   </Grid>
 </Window>

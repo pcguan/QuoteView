@@ -267,14 +267,14 @@ public partial class KlineWindow : Window
     private void RenderTape()
     {
         if (!_vm.HasTape) return;
-        Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan);
+        Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan, _vm.TickPrePrice);
     }
 
-    /// <summary>Opens the full-day 成交明细 in its own window (filter + paging).</summary>
+    /// <summary>Opens the full-day 成交明细 in its own window (stats + filter + paging).</summary>
     private void More_Click(object sender, RoutedEventArgs e)
     {
         if (_vm.Details is null) return;
-        new TickDetailWindow(_vm.Contract, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan)
+        new TickDetailWindow(_vm.Contract, _vm.Live, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan)
         { Owner = this }.Show();
     }
 

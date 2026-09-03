@@ -251,15 +251,16 @@ public static class Program
         // Loaded never fires (not shown) so no fetch happens.
         var detContract = new StockClient.Core.Contracts.Contract { Code = "SH600519", Name = "贵州茅台" };
         var detWin = new StockClient.App.Views.TickDetailWindow(
-            detContract, new StockClient.Core.Quotes.EastMoneyDetailsClient(http), 2, 100);
+            detContract, fakeQuote, new StockClient.Core.Quotes.EastMoneyDetailsClient(http), 2, 100);
         var detT = typeof(StockClient.App.Views.TickDetailWindow);
         detT.GetField("_all", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(detWin, tape);
+        detT.GetMethod("BuildRows", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
         detT.GetMethod("ApplyFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
         var detContent = (FrameworkElement)detWin.Content;
         detWin.Content = null;
         Render(new Border
         {
-            Width = 520, Height = 680,
+            Width = 560, Height = 720,
             Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
             Child = detContent,
         }, @"C:\work\preview-tickdetail.png");
