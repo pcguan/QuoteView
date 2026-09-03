@@ -35,6 +35,10 @@
                   DropDownClosed="CompareBox_DropDownClosed"
                   SelectionChanged="CompareBox_SelectionChanged" />
 
+        <ToggleButton x:Name="TapeToggle" Content="成交明细" FontSize="12" Padding="11,3"
+                      Margin="18,0,0,0" Click="TapeToggle_Click"
+                      ToolTip="显示该日的逐笔成交明细（服务端归档，仅沪深）" />
+
         <TextBlock x:Name="Hint" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="11"
                    Foreground="{StaticResource Faint}"
                    Text="收盘后由服务端统一归档；对比线按各自昨收归一化。" />
@@ -43,24 +47,44 @@
 
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="8">
       <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto" /><RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-        <!-- One boxed stat panel per day, side by side with identical row
-             layout, so comparing 两天 is a straight horizontal glance. Content
-             is built in code (FillStats); the ■ in each header matches its
-             line colour in the chart. -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,2,6,6">
-          <Border x:Name="StatsMain" Visibility="Collapsed" Background="#0F1420"
-                  BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
-                  Padding="12,7,14,9" />
-          <Border x:Name="StatsCompare" Visibility="Collapsed" Background="#0F1420"
-                  BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
-                  Padding="12,7,14,9" Margin="10,0,0,0" />
-        </StackPanel>
-        <views:TrendChart x:Name="Chart" Grid.Row="1" />
-        <TextBlock x:Name="Empty" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center"
-                   FontSize="13" Foreground="{StaticResource Muted}" Visibility="Collapsed" />
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <!-- 成交明细 pane, widened only when toggled on. -->
+          <ColumnDefinition x:Name="TapeColumn" Width="0" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Grid.Column="0">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+          </Grid.RowDefinitions>
+          <!-- One boxed stat panel per day, side by side with identical row
+               layout, so comparing 两天 is a straight horizontal glance. Content
+               is built in code (FillStats); the ■ in each header matches its
+               line colour in the chart. -->
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,2,6,6">
+            <Border x:Name="StatsMain" Visibility="Collapsed" Background="#0F1420"
+                    BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
+                    Padding="12,7,14,9" />
+            <Border x:Name="StatsCompare" Visibility="Collapsed" Background="#0F1420"
+                    BorderBrush="#232B3B" BorderThickness="1" CornerRadius="6"
+                    Padding="12,7,14,9" Margin="10,0,0,0" />
+          </StackPanel>
+          <views:TrendChart x:Name="Chart" Grid.Row="1" />
+          <TextBlock x:Name="Empty" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     FontSize="13" Foreground="{StaticResource Muted}" Visibility="Collapsed" />
+        </Grid>
+
+        <Border x:Name="TapePane" Grid.Column="1" Visibility="Collapsed"
+                BorderBrush="#232B3B" BorderThickness="1,0,0,0" Margin="8,2,0,2" Padding="10,0,0,0">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="TapeTitle" Grid.Row="0" Text="成交明细" FontSize="11"
+                       Foreground="{StaticResource Muted}" Margin="0,0,0,6" />
+            <views:TradeTapeView x:Name="Tape" Grid.Row="1" />
+          </Grid>
+        </Border>
       </Grid>
     </Border>
   </Grid>

@@ -303,6 +303,16 @@ public sealed class AccountSession
         CallAsync(t => _client.DatesAsync(t, code, CancellationToken.None).ContinueWith(
             x => (x.Result.Dates, x.Result.Unauthorized)), (IReadOnlyList<DateOnly>)Array.Empty<DateOnly>());
 
+    /// <summary>Archived 成交明细 dates for a contract, or empty.</summary>
+    public Task<IReadOnlyList<DateOnly>> TickDatesAsync(string code) =>
+        CallAsync(t => _client.TickDatesAsync(t, code, CancellationToken.None).ContinueWith(
+            x => (x.Result.Dates, x.Result.Unauthorized)), (IReadOnlyList<DateOnly>)Array.Empty<DateOnly>());
+
+    /// <summary>One archived session's 成交明细, or null.</summary>
+    public Task<TradeTickSnapshot?> TicksAsync(string code, DateOnly date) =>
+        CallAsync(t => _client.TicksAsync(t, code, date, CancellationToken.None).ContinueWith(
+            x => (x.Result.Snap, x.Result.Unauthorized)), (TradeTickSnapshot?)null);
+
     /// <summary>The personalized watch feed for this account, or null.</summary>
     public Task<string?> NewsJsonAsync() =>
         CallAsync(t => _client.NewsAsync(t, CancellationToken.None), (string?)null);

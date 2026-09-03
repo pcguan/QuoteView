@@ -276,6 +276,10 @@ public partial class TrendHistoryView : UserControl
         {
             FillStats(StatsCompare, compareDate ?? default, compare, CompareAccent);
         }
+
+        // The tape follows the MAIN day; reload it whenever the selection lands.
+        if (TapeToggle.IsChecked == true)
+            _ = LoadTicksAsync(item.Code, date);
     }
 
     /// <summary>Local cache first — every server fetch is written back, so each
@@ -296,6 +300,52 @@ public partial class TrendHistoryView : UserControl
         }
 
         return series;
+    }
+
+    // --- 成交明细 (逐笔) side pane -----------------------------------------------
+
+    private const double TapePaneWidth = 300;
+    private int _ticksRequest;
+
+    private void TapeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        var on = TapeToggle.IsChecked == true;
+        TapePane.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        TapeColumn.Width = on ? new GridLength(TapePaneWidth) : new GridLength(0);
+
+        if (on && CodeBox.SelectedItem is CodeItem item && DateBox.SelectedItem is DateOnly date)
+            _ = LoadTicksAsync(item.Code, date);
+        else if (!on)
+            Tape.Clear();
+    }
+
+    /// <summary>
+    /// Loads one archived session's 成交明细 into the side pane, chronological
+    /// (top = earliest), for replay reading. Guarded so a slow answer for an old
+    /// selection can't overwrite a newer one. 大单 highlight shares the live
+    /// tape's machine-local threshold.
+    /// </summary>
+    private async Task LoadTicksAsync(string code, DateOnly date)
+    {
+        if (_session is null) return;
+
+        var request = ++_ticksRequest;
+        TapeTitle.Text = $"成交明细 · {date:MM-dd}";
+        Tape.Clear();
+
+        var snap = await _session.TicksAsync(code, date);
+        if (request != _ticksRequest) return;
+
+        if (snap is null || snap.Ticks.Count == 0)
+        {
+            TapeTitle.Text = _session.IsSignedIn
+                ? $"成交明细 · {date:MM-dd}（该日无归档）"
+                : "成交明细（登录后可取服务端归档）";
+            return;
+        }
+
+        TapeTitle.Text = $"成交明细 · {date:MM-dd} · {snap.Ticks.Count} 笔";
+        Tape.SetTicks(snap.Ticks, snap.Decimals, AppPrefs.BigTradeWan, newestFirst: false);
     }
 
     // Accents match each day's line colour in the chart below.

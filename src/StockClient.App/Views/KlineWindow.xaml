@@ -81,10 +81,7 @@
               </StackPanel>
             </Grid>
 
-            <ScrollViewer x:Name="TapeScroll" Grid.Row="4" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-              <StackPanel x:Name="TapeHost" />
-            </ScrollViewer>
+            <views:TradeTapeView x:Name="Tape" Grid.Row="4" />
           </Grid>
         </Border>
       </Grid>

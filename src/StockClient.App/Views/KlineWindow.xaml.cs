@@ -2,7 +2,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media;
 using StockClient.App.ViewModels;
 using StockClient.Core.Quotes;
 
@@ -177,17 +176,6 @@ public partial class KlineWindow : Window
 
     // --- 成交明细 tape ---------------------------------------------------------
 
-    /// <summary>Amber wash behind a 大单 row.</summary>
-    private static readonly Brush BigRowBrush = Frozen("#3B2B10");
-    private static readonly Brush TapeTimeBrush = Frozen("#6E7686");
-
-    private static Brush Frozen(string hex)
-    {
-        var b = (Brush)new BrushConverter().ConvertFromString(hex)!;
-        b.Freeze();
-        return b;
-    }
-
     private void InitTape()
     {
         BigTradeBox.Text = AppPrefs.BigTradeWan.ToString();
@@ -211,59 +199,14 @@ public partial class KlineWindow : Window
     private void OnTicksLoaded() => Dispatcher.Invoke(RenderTape);
 
     /// <summary>
-    /// Rebuilds the tape newest-first from the view model's tail. Cheap enough to
-    /// redo whole each 5s poll (≤60 rows); 大单 (成交额 ≥ the 万元 threshold, 0
-    /// disables) get an amber wash and bold.
+    /// Refreshes the tape newest-first from the view model's tail, each 5s poll.
+    /// The row rendering lives in <see cref="TradeTapeView"/>, shared with the
+    /// historical replay.
     /// </summary>
     private void RenderTape()
     {
         if (!_vm.HasTape) return;
-
-        var decimals = Decimals(_vm.Live);
-        var bigYuan = AppPrefs.BigTradeWan * 10_000.0;
-
-        var buy = Frozen(Tones.UpHex);
-        var sell = Frozen(Tones.DownHex);
-        var flat = Frozen(Tones.FlatHex);
-
-        TapeHost.Children.Clear();
-        var ticks = _vm.Ticks;
-        for (var i = ticks.Count - 1; i >= 0; i--)
-        {
-            var t = ticks[i];
-            var fg = t.Side switch { TradeSide.Buy => buy, TradeSide.Sell => sell, _ => flat };
-            TapeHost.Children.Add(TapeRow(t, decimals, fg, bigYuan > 0 && t.Amount >= bigYuan));
-        }
-    }
-
-    private static UIElement TapeRow(TradeTick tick, int decimals, Brush sideBrush, bool big)
-    {
-        var grid = new Grid { Margin = new Thickness(0, 1, 0, 1) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(58) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
-        if (big) grid.Background = BigRowBrush;
-
-        var weight = big ? FontWeights.SemiBold : FontWeights.Normal;
-        grid.Children.Add(Cell(tick.Time, TapeTimeBrush, TextAlignment.Left, FontWeights.Normal, 0));
-        grid.Children.Add(Cell(tick.Price.ToString("F" + decimals), sideBrush, TextAlignment.Right, weight, 1));
-        grid.Children.Add(Cell(tick.Volume.ToString(), sideBrush, TextAlignment.Right, weight, 2));
-        return grid;
-    }
-
-    private static TextBlock Cell(string text, Brush fg, TextAlignment align, FontWeight weight, int col)
-    {
-        var tb = new TextBlock
-        {
-            Text = text,
-            Foreground = fg,
-            FontSize = 11,
-            FontWeight = weight,
-            TextAlignment = align,
-            Margin = new Thickness(col == 0 ? 0 : 6, 0, 0, 0),
-        };
-        Grid.SetColumn(tb, col);
-        return tb;
+        Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan);
     }
 
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
@@ -291,7 +234,7 @@ public partial class KlineWindow : Window
         // 成交明细 rides alongside the book, and only where EastMoney serves it (沪深).
         var tape = trend && _vm.HasTape;
         TapeHeader.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
-        TapeScroll.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
+        Tape.Visibility = tape ? Visibility.Visible : Visibility.Collapsed;
         if (tape) RenderTape();
 
         // Adjustment doesn't apply to an intraday line; the hint changes to match.

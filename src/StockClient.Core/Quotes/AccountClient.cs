@@ -347,6 +347,86 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>Archived 成交明细 dates for a contract (GET /tickdates).</summary>
+    public async Task<(IReadOnlyList<DateOnly> Dates, bool Unauthorized)> TickDatesAsync(
+        string token, string code, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get, $"{Base}/tickdates?code={Uri.EscapeDataString(code)}");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                return (Array.Empty<DateOnly>(), true);
+            if (!response.IsSuccessStatusCode) return (Array.Empty<DateOnly>(), false);
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var dates = doc.RootElement.GetProperty("dates").EnumerateArray()
+                .Select(e => DateOnly.TryParseExact(e.GetString(), "yyyy-MM-dd", out var d)
+                    ? d : (DateOnly?)null)
+                .OfType<DateOnly>()
+                .OrderByDescending(d => d)
+                .ToArray();
+            return (dates, false);
+        }
+        catch (Exception)
+        {
+            return (Array.Empty<DateOnly>(), false);
+        }
+    }
+
+    /// <summary>
+    /// One archived session's 成交明细 (GET /ticks). The server stores the raw
+    /// EastMoney detail rows; they parse here exactly like the live tape.
+    /// </summary>
+    public async Task<(TradeTickSnapshot? Snap, bool Unauthorized)> TicksAsync(
+        string token, string code, DateOnly date, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get,
+                $"{Base}/ticks?code={Uri.EscapeDataString(code)}&date={date:yyyy-MM-dd}");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+
+            var dto = JsonSerializer.Deserialize<ArchivedTicks>(
+                await response.Content.ReadAsStringAsync(ct));
+            if (dto?.Details is not { Count: > 0 }) return (null, false);
+
+            var ticks = dto.Details
+                .Select(EastMoneyDetailsClient.ParseRow)
+                .Where(t => t is not null)
+                .Select(t => t!)
+                .ToArray();
+            if (ticks.Length == 0) return (null, false);
+
+            return (new TradeTickSnapshot
+            {
+                Code = code,
+                PrePrice = dto.PrePrice,
+                Decimals = dto.Decimals > 0 ? dto.Decimals : 2,
+                Ticks = ticks,
+            }, false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
+    private sealed record ArchivedTicks
+    {
+        public double PrePrice { get; init; }
+        public int Decimals { get; init; }
+        public List<string>? Details { get; init; }
+    }
+
     public async Task<(string? Json, bool Unauthorized)> KlineJsonAsync(
         string token, string secid, int klt, int fqt, int lmt, CancellationToken ct)
     {
