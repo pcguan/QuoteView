@@ -26,8 +26,8 @@ public sealed record TradeTick
 }
 
 /// <summary>
-/// Active side EastMoney tags each 逐笔 row with (details 方向 column): 1 主动买,
-/// 2 主动卖, 4 中性. Anything unrecognised reads as neutral.
+/// Active side EastMoney tags each 逐笔 row with (details 方向 column): 2 主动买,
+/// 1 主动卖, 4 中性. Anything unrecognised reads as neutral.
 /// </summary>
 public enum TradeSide
 {

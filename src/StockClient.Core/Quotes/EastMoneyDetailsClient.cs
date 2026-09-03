@@ -13,7 +13,7 @@ namespace StockClient.Core.Quotes;
 ///   https://push2.eastmoney.com/api/qt/stock/details/get?secid=1.600519&pos=-100
 ///
 /// Each <c>details</c> row is <c>时间,成交价,量(手),笔数,方向</c> with 方向
-/// 1 主动买 / 2 主动卖 / 4 中性. Covers 沪深 (and 北交所); other markets return
+/// 2 主动买 / 1 主动卖 / 4 中性. Covers 沪深 (and 北交所); other markets return
 /// empty. Same secid and retry discipline as <see cref="EastMoneyTrendClient"/>.
 /// </summary>
 public sealed class EastMoneyDetailsClient
@@ -66,7 +66,10 @@ public sealed class EastMoneyDetailsClient
             Price = Kline.Parse(c[1]),
             Volume = volume,
             Trades = int.TryParse(c[3], out var n) ? n : 0,
-            Side = c[4] switch { "1" => TradeSide.Buy, "2" => TradeSide.Sell, _ => TradeSide.Neutral },
+            // EastMoney details 方向: 2 主动买 / 1 主动卖 / 4 中性 — verified
+            // 2026-09-02 against price-direction and the quote's 外/内盘 (the
+            // one-line note in docs had 买/卖 swapped, hence the original bug).
+            Side = c[4] switch { "2" => TradeSide.Buy, "1" => TradeSide.Sell, _ => TradeSide.Neutral },
         };
     }
 

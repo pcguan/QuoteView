@@ -5,13 +5,14 @@ namespace StockClient.Tests;
 
 /// <summary>
 /// Parsing the 逐笔成交 rows EastMoney details/get returns — the shape probed live
-/// on 2026-09-02: <c>时间,成交价,量(手),笔数,方向</c>, 方向 1 买 / 2 卖 / 4 中性.
+/// on 2026-09-02: <c>时间,成交价,量(手),笔数,方向</c>, 方向 2 主动买 / 1 主动卖 /
+/// 4 中性 (verified against price direction and the quote's 外/内盘).
 /// </summary>
 public class EastMoneyDetailsClientTests
 {
     [Theory]
-    [InlineData("13:06:05,1295.14,45,23,2", 1295.14, 45L, 23, TradeSide.Sell)]
-    [InlineData("13:06:11,1295.19,1,1,1", 1295.19, 1L, 1, TradeSide.Buy)]
+    [InlineData("13:06:05,1295.14,45,23,2", 1295.14, 45L, 23, TradeSide.Buy)]
+    [InlineData("13:06:11,1295.19,1,1,1", 1295.19, 1L, 1, TradeSide.Sell)]
     [InlineData("13:06:29,1295.20,7,3,4", 1295.20, 7L, 3, TradeSide.Neutral)]
     public void Parses_a_well_formed_row(string row, double price, long vol, int trades, TradeSide side)
     {

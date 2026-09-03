@@ -77,7 +77,8 @@
 `trends` 每行:`时间,开,收,高,低,量,额,均价`。附 `preClose`、`trendsTotal`。
 
 ### 6. `push2.eastmoney.com/api/qt/stock/details/get` — 逐笔成交
-`details` 每行:`时间,成交价,量(手),笔数,方向`(1 买 / 2 卖 / 4 中性)。
+`details` 每行:`时间,成交价,量(手),笔数,方向`(**2 主动买 / 1 主动卖 / 4 中性**；
+2026-09-02 用价格方向与行情外/内盘实测校正，早先此处误记为「1买/2卖」）。
 
 ### 7. `push2his.eastmoney.com/api/qt/stock/fflow/kline/get` — 资金流
 `klines` 每行:`日期,主力净额,超大单净额,大单净额,中单净额,小单净额`(元)。
