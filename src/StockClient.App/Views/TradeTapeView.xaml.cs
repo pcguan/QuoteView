@@ -19,7 +19,10 @@ namespace StockClient.App.Views;
 /// </summary>
 public partial class TradeTapeView : UserControl
 {
-    private static readonly Brush BigRowBrush = Frozen("#3B2B10");
+    // 大单 keeps the side's hue but jumps to a vivid variant: 主动买 red → violet,
+    // 主动卖 green → cyan, so a large print reads as "big AND which side" at a glance.
+    private const string BigBuyHex = "#C77DFF";
+    private const string BigSellHex = "#2EE6D6";
 
     private ScrollViewer? _scroll;
 
@@ -43,18 +46,25 @@ public partial class TradeTapeView : UserControl
         var buy = Frozen(Tones.UpHex);
         var sell = Frozen(Tones.DownHex);
         var flat = Frozen(Tones.FlatHex);
+        var bigBuy = Frozen(BigBuyHex);
+        var bigSell = Frozen(BigSellHex);
 
         var rows = new List<Row>(ticks.Count);
         foreach (var t in ticks)   // chronological — earliest first
         {
             var big = bigYuan > 0 && t.Amount >= bigYuan;
+            var fg = t.Side switch
+            {
+                TradeSide.Buy => big ? bigBuy : buy,
+                TradeSide.Sell => big ? bigSell : sell,
+                _ => flat,
+            };
             rows.Add(new Row(
                 t.Time,
                 t.Price.ToString("F" + decimals),
                 t.Volume.ToString(),
-                t.Side switch { TradeSide.Buy => buy, TradeSide.Sell => sell, _ => flat },
-                big ? FontWeights.SemiBold : FontWeights.Normal,
-                big ? BigRowBrush : null));
+                fg,
+                big ? FontWeights.SemiBold : FontWeights.Normal));
         }
         // Replacing ItemsSource resets the viewport to the top, so restore the
         // reader's place AFTER the new rows lay out. Chronological order means
@@ -82,6 +92,5 @@ public partial class TradeTapeView : UserControl
     }
 
     /// <summary>One tape line, pre-shaped for the virtualized item template.</summary>
-    private sealed record Row(
-        string Time, string Price, string Volume, Brush Fg, FontWeight Weight, Brush? Background);
+    private sealed record Row(string Time, string Price, string Volume, Brush Fg, FontWeight Weight);
 }

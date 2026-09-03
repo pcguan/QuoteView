@@ -27,17 +27,20 @@
     </ItemsControl.ItemsPanel>
     <ItemsControl.ItemTemplate>
       <DataTemplate>
-        <Grid Background="{Binding Background}" Margin="0,1,0,1">
+        <!-- 16px right inset keeps 量 clear of the overlay scrollbar. Price sits
+             left-aligned right after the time; the star column opens the gap
+             between price and 量 (which the reader compares down the column). -->
+        <Grid Margin="0,1,16,1">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="58" />
+            <ColumnDefinition Width="56" />
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="46" />
+            <ColumnDefinition Width="52" />
           </Grid.ColumnDefinitions>
           <TextBlock Text="{Binding Time}" Foreground="#6E7686" FontSize="11" />
           <TextBlock Grid.Column="1" Text="{Binding Price}" Foreground="{Binding Fg}"
-                     FontSize="11" FontWeight="{Binding Weight}" TextAlignment="Right" Margin="6,0,0,0" />
+                     FontSize="11" FontWeight="{Binding Weight}" Margin="8,0,0,0" />
           <TextBlock Grid.Column="2" Text="{Binding Volume}" Foreground="{Binding Fg}"
-                     FontSize="11" FontWeight="{Binding Weight}" TextAlignment="Right" Margin="6,0,0,0" />
+                     FontSize="11" FontWeight="{Binding Weight}" TextAlignment="Right" />
         </Grid>
       </DataTemplate>
     </ItemsControl.ItemTemplate>
