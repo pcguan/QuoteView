@@ -26,17 +26,19 @@ public partial class TradeTapeView : UserControl
     private ScrollViewer? Scroll => _scroll ??= List.Template?.FindName("TapeScroll", List) as ScrollViewer;
 
     /// <param name="bigTradeWan">成交额 万元 threshold for the 大单 highlight; 0 disables.</param>
-    /// <param name="stickToNewest">Live tape: keep the newest (bottom) row in view
-    /// across refreshes unless the reader scrolled up. False = historical replay,
-    /// which parks at the open (top).</param>
+    /// <param name="newestFirst">Live tape: newest print at the top, holding the
+    /// reader's place as new prints arrive. False = historical replay, chronological
+    /// and parked at the open (top).</param>
     public void SetTicks(IReadOnlyList<TradeTick> ticks, int decimals, int bigTradeWan,
-        double prePrice = 0, bool stickToNewest = true)
+        double prePrice = 0, bool newestFirst = true)
     {
         var sv = Scroll;
         var oldOffset = sv?.VerticalOffset ?? 0;
-        var wasAtBottom = sv is null || sv.ScrollableHeight <= 0
-            || sv.VerticalOffset >= sv.ScrollableHeight - 4;
+        var oldCount = List.Items.Count;
+        var wasAtTop = oldOffset <= 4;
 
+        // Direction/colour are computed in TIME order (each print vs the one
+        // before it), then the list is flipped for display if newest-first.
         var rows = new List<Row>(ticks.Count);
         var carry = TradeColors.Flat;
         var prev = prePrice;
@@ -52,19 +54,23 @@ public partial class TradeTapeView : UserControl
                 priceFg,
                 TradeColors.Volume(t.Side, big)));
         }
-        // Replacing ItemsSource resets the viewport to the top, so restore the
-        // reader's place AFTER the new rows lay out. Chronological order means
-        // new rows only ever append at the bottom, so earlier rows keep their
-        // index — restoring the old offset holds the same trades in view.
+        if (newestFirst) rows.Reverse();   // newest print at the top
+
         List.ItemsSource = rows;
 
+        // Replacing ItemsSource resets the viewport to the top; restore the
+        // reader's place after the new rows lay out.
+        var delta = rows.Count - oldCount;
         Dispatcher.BeginInvoke(new Action(() =>
         {
             var s = Scroll;
             if (s is null) return;
-            if (!stickToNewest) s.ScrollToTop();          // historical replay parks at the open
-            else if (wasAtBottom) s.ScrollToBottom();     // live: follow the newest
-            else s.ScrollToVerticalOffset(oldOffset);     // live: reader scrolled up — stay put
+            if (!newestFirst) { s.ScrollToTop(); return; }   // historical replay parks at the open
+            // Newest-first live tape: sit at the top to follow the latest, or —
+            // when the reader has scrolled down into history — hold their place
+            // (new prints arrive at the top, so shift the offset by how many).
+            if (wasAtTop) s.ScrollToTop();
+            else s.ScrollToVerticalOffset(Math.Max(0, oldOffset + delta));
         }), DispatcherPriority.Background);
     }
 
