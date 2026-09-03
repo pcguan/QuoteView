@@ -739,7 +739,13 @@ def fetch_ticks(code):
     them exactly like the live tape."""
     market = "1" if code.startswith("SH") else "0"
     secid = f"{market}.{code[2:]}"
-    url = ("https://push2.eastmoney.com/api/qt/stock/details/get"
+    # push2delay, NOT push2: 东财's realtime push hosts (push2 / push2his /
+    # 82.push2) drop this box's egress IP with RemoteDisconnected for the details
+    # path (the client, on a China desktop, reaches push2 fine — this is a
+    # server-side reachability quirk). The delayed host serves the same full day
+    # and is reachable; after the close the delay is moot anyway (verified
+    # 2026-09-03: push2delay returns the whole session, 集合竞价→收盘).
+    url = ("https://push2delay.eastmoney.com/api/qt/stock/details/get"
            "?fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55"
            "&ut=fa5fd1943c7b386f172d6893dbfba10b&pos=-1000000"
            f"&secid={secid}")
