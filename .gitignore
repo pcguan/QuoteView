@@ -24,3 +24,6 @@ tools/Preview/obj/
 # Python bytecode cache (from local py_compile)
 __pycache__/
 *.pyc
+
+# 参考截图放项目根，不入库
+/*.png
