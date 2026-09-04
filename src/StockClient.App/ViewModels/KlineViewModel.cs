@@ -21,8 +21,9 @@ public sealed class KlineViewModel : ObservableObject
     // visible window has hundreds of candles of run-up for MA60 to be continuous.
     private const int CandleCount = 0;
 
-    /// <summary>Intraday re-poll cadence. The trend is minute-grained, so seconds is plenty.</summary>
-    private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(5);
+    /// <summary>Intraday re-poll cadence (trend line + 五档 + 逐笔). 3s matches the
+    /// 逐笔 feed's own refresh; the minute-grained trend just rides along.</summary>
+    private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(3);
 
     /// <summary>
     /// Candle re-poll cadence. Candles don't move — the running one isn't drawn —

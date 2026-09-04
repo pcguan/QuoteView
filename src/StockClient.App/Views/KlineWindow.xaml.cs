@@ -310,7 +310,7 @@ public partial class KlineWindow : Window
 
         // Adjustment doesn't apply to an intraday line; the hint changes to match.
         AdjustButtons.IsEnabled = !trend;
-        HintText.Text = trend ? "分时 · 每 5 秒刷新" : "滚轮缩放 · 拖动平移";
+        HintText.Text = trend ? "分时 · 每 3 秒刷新" : "滚轮缩放 · 拖动平移";
 
         RefreshPeriodStates();
         UpdateStatus();
