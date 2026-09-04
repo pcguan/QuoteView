@@ -136,7 +136,7 @@
                 <TextBlock Text="成交明细" FontSize="11" Foreground="#8B93A3" VerticalAlignment="Center" />
                 <TextBlock Text="●" FontSize="10" Foreground="#C77DFF" VerticalAlignment="Center" Margin="8,0,0,0"
                            ToolTip="大单主动买" />
-                <TextBlock Text="●" FontSize="10" Foreground="#2EE6D6" VerticalAlignment="Center" Margin="2,0,0,0"
+                <TextBlock Text="●" FontSize="10" Foreground="#22D3E8" VerticalAlignment="Center" Margin="2,0,0,0"
                            ToolTip="大单主动卖" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">

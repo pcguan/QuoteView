@@ -17,14 +17,18 @@ internal static class TradeColors
     public static readonly Brush Down = Frozen(Tones.DownHex);  // 绿 跌 / 内盘
     public static readonly Brush Flat = Frozen("#9AA4B2");      // 灰 首笔 / 中性
 
+    private static readonly Brush VolBuy = Frozen("#EF5350");      // 红 外盘小单
+    // A CLEAN green, deliberately NOT the teal 跌/DownHex (#26A69A) — that reads
+    // too close to the 青 big-sell below, so 内盘 小 vs 大 wasn't distinguishable.
+    private static readonly Brush VolSell = Frozen("#2ECC71");     // 绿 内盘小单
     private static readonly Brush VolBigBuy = Frozen("#C77DFF");   // 紫 外盘大单
-    private static readonly Brush VolBigSell = Frozen("#2EE6D6");  // 青 内盘大单
+    private static readonly Brush VolBigSell = Frozen("#22D3E8");  // 青 内盘大单
 
     /// <summary>手数 colour by side (外盘红/内盘绿), going vivid for 大单 (外盘紫/内盘青).</summary>
     public static Brush Volume(TradeSide side, bool big) => side switch
     {
-        TradeSide.Buy => big ? VolBigBuy : Up,
-        TradeSide.Sell => big ? VolBigSell : Down,
+        TradeSide.Buy => big ? VolBigBuy : VolBuy,
+        TradeSide.Sell => big ? VolBigSell : VolSell,
         _ => Flat,
     };
 
