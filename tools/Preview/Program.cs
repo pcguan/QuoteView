@@ -257,6 +257,11 @@ public static class Program
         detT.GetMethod("BuildRows", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
         detT.GetMethod("ApplyFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
         var detContent = (FrameworkElement)detWin.Content;
+        // WindowDimmer wrapped the content in a Grid whose last child is the dim
+        // scrim; force it to a dimmed level so this preview SHOWS the 变暗 effect
+        // (layout stays legible underneath). Other window previews leave it at 0.
+        if (detContent is System.Windows.Controls.Grid dimHost && dimHost.Children.Count > 0)
+            ((UIElement)dimHost.Children[dimHost.Children.Count - 1]).Opacity = 0.45;
         detWin.Content = null;
         Render(new Border
         {
