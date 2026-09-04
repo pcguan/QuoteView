@@ -69,7 +69,7 @@
                   VerticalAlignment="Center" Margin="14,0,0,0" Click="Reverse_Click" />
       </WrapPanel>
       <TextBlock x:Name="Legend" FontSize="11" Margin="0,6,0,0">
-        <Run Text="■" Foreground="#2EE6D6" /><Run Text=" 大单内盘(主动卖)   " Foreground="#8B93A3" /><Run Text="■" Foreground="#C77DFF" /><Run Text=" 大单外盘(主动买)" Foreground="#8B93A3" />
+        <Run Text="手数 " Foreground="#8B93A3" /><Run Text="■" Foreground="#EF5350" /><Run Text="外盘 " Foreground="#8B93A3" /><Run Text="■" Foreground="#26A69A" /><Run Text="内盘　大单 " Foreground="#8B93A3" /><Run Text="■" Foreground="#C77DFF" /><Run Text="外盘 " Foreground="#8B93A3" /><Run Text="■" Foreground="#2EE6D6" /><Run Text="内盘" Foreground="#8B93A3" />
       </TextBlock>
     </StackPanel>
 
