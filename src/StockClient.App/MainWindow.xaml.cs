@@ -57,6 +57,7 @@ public partial class MainWindow : FluentWindow
     public MainWindow()
     {
         InitializeComponent();
+        Views.WindowDimmer.Attach(this);
 
         // A background-update relaunch must not surface: start minimized and
         // unactivated — the stealth panel (if it was up) re-opens from Loaded,

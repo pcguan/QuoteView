@@ -57,6 +57,7 @@ public partial class ColumnSettingsWindow : Window
     public ColumnSettingsWindow(DataGrid grid)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
         _grid = grid;
 
         // String headers only — the delete column's header is not a real column name.

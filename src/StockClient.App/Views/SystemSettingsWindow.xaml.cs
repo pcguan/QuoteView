@@ -18,6 +18,7 @@ public partial class SystemSettingsWindow : Window
     public SystemSettingsWindow(GroupConfig root, Action save, Action onChanged, int tab)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
 
         PanelHost.Content = new StealthSettingsView(root, save, onChanged);
         (AppPrefs.AutoUpdateMode switch

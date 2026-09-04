@@ -76,6 +76,7 @@ public partial class StealthFieldsWindow : Window
     public StealthFieldsWindow(StealthConfig editing, Action apply)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
         _editing = editing;
         _apply = apply;
         BuildChips();

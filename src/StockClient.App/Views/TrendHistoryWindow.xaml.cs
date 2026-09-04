@@ -24,6 +24,7 @@ public partial class TrendHistoryWindow : Window
         ContractRepository contracts, AccountSession session, string code)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
 
         History.Init(vm, cache, contracts, session);
         // Selected once the view is loaded: SelectContract kicks off the async

@@ -18,7 +18,7 @@ public static class AppPrefs
         int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
         string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
         int UpdateDelayHours = 0, bool StealthIntroShown = false,
-        int BigTradeWan = 100);
+        int BigTradeWan = 100, double WindowOpacity = 1.0);
 
     private static Doc _doc = Load();
 
@@ -107,6 +107,19 @@ public static class AppPrefs
     }
 
     /// <summary>The one-time stealth-panel gesture intro balloon has been shown.</summary>
+    /// <summary>所有普通窗口的透明度(Shift+滚轮调),记住并跨窗口共享。0.2..1.0。</summary>
+    public static double WindowOpacity
+    {
+        get => Math.Clamp(_doc.WindowOpacity <= 0 ? 1.0 : _doc.WindowOpacity, 0.2, 1.0);
+        set
+        {
+            var v = Math.Clamp(value, 0.2, 1.0);
+            if (Math.Abs(_doc.WindowOpacity - v) < 1e-6) return;
+            _doc = _doc with { WindowOpacity = v };
+            Save();
+        }
+    }
+
     /// <summary>成交明细里认定「大单」的成交额门槛,单位万元;0 = 不高亮。1..99999 万。</summary>
     public static int BigTradeWan
     {

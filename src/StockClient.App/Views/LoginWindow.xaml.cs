@@ -20,6 +20,7 @@ public partial class LoginWindow : Window
     public LoginWindow(AccountSession session)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
         _session = session;
 
         UserBox.Text = session.Username ?? "";

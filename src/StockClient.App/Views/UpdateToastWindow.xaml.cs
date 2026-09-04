@@ -22,6 +22,7 @@ public partial class UpdateToastWindow : Window
     public UpdateToastWindow(string displayName, string notes)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
 
         TitleText.Text = $"发现新版本 {displayName}";
         NotesText.Text = string.IsNullOrWhiteSpace(notes) ? "已准备好更新。" : notes.Trim();

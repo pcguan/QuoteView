@@ -42,6 +42,7 @@ public partial class TickDetailWindow : Window
         int decimals, int bigTradeWan)
     {
         InitializeComponent();
+        WindowDimmer.Attach(this);
 
         _contract = contract;
         _quote = quote;
