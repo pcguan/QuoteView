@@ -396,6 +396,10 @@ public partial class TrendHistoryView : UserControl
             ("成交额", s is null ? "--" : Big(s.Amount), Flat),
             ("外盘", s is null ? "--" : Big(s.Outer), Up),
             ("内盘", s is null ? "--" : Big(s.Inner), Down),
+            ("主力净流入", s?.MainInflow is { } mi ? (mi > 0 ? "+" : "") + Big(mi) : "--",
+                s?.MainInflow is { } m2 ? (m2 > 0 ? Up : m2 < 0 ? Down : Flat) : Flat),
+            ("主力占比", s?.MainPct is { } mp ? mp.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%" : "--",
+                s?.MainPct is { } m3 ? (m3 > 0 ? Up : m3 < 0 ? Down : Flat) : Flat),
         };
 
         var panel = new StackPanel();

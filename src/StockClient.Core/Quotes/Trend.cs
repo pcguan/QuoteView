@@ -42,4 +42,11 @@ public sealed record TrendDaySummary
     public double Volume { get; init; }
     public double Outer { get; init; }
     public double Inner { get; init; }
+
+    /// <summary>主力净流入净额, 元 (EastMoney fflow). Null on snapshots archived
+    /// before this was captured.</summary>
+    public double? MainInflow { get; init; }
+
+    /// <summary>主力净占比, %. Null on older snapshots.</summary>
+    public double? MainPct { get; init; }
 }

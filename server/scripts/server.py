@@ -1142,6 +1142,7 @@ def sweep_once():
     missing = [c for c in all_codes if not os.path.exists(trend_path(c, day))]
     if not missing:
         enrich_summaries(day, all_codes)
+        enrich_fflow(day, all_codes)
         return
 
     # 节假日判定只认指数探针的会话日期。探针拿不到就照常抓——宁可多抓一轮，
@@ -1195,6 +1196,7 @@ def sweep_once():
         save_state(st)
     log(f"sweep {day}: done={done} failed={failed} stale={stale}")
     enrich_summaries(day, all_codes)
+    enrich_fflow(day, all_codes)
 
 
 def sweep_ticks_once():
@@ -1309,6 +1311,82 @@ def enrich_summaries(day, codes):
         except Exception:  # noqa: BLE001
             pass
     log(f"enrich {day}: summaries added to {done}/{len(todo)} snapshots")
+
+
+def fetch_fflow(code, day):
+    """(主力净流入净额 元, 主力净占比 %) for `day` from EastMoney's fund-flow day
+    line, or (None, None). On push2his (reachable here, unlike the realtime
+    ulist.np fund-flow the desktop uses). Row = date,f52…f57… — f52 is 主力净流入,
+    f57 主力净占比."""
+    market = "1" if code.startswith("SH") else "0"
+    secid = f"{market}.{code[2:]}"
+    url = ("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+           "?lmt=0&klt=101&fields1=f1,f2,f3,f7"
+           "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
+           f"&secid={secid}")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; QuoteViewServer/1.0)",
+        "Referer": "https://quote.eastmoney.com/",
+    })
+    for _ in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                doc = json.load(r)
+            for row in reversed((doc.get("data") or {}).get("klines") or []):
+                c = row.split(",")
+                if c and c[0] == day:
+                    return float(c[1]), (float(c[6]) if len(c) > 6 else 0.0)
+            return None, None
+        except Exception:  # noqa: BLE001
+            time.sleep(1)
+    return None, None
+
+
+def enrich_fflow(day, codes):
+    """Adds 主力净流入 to each day's summary that has one but no MainInflow yet.
+    Per-code (push2his fflow), throttled; a failure just retries next tick. The
+    summary must already exist (enrich_summaries first) — this only fills the one
+    extra field, so it re-runs cheaply until every snapshot has it."""
+    todo = []
+    for c in codes:
+        if not os.path.exists(trend_path(c, day)):
+            continue
+        try:
+            with open(trend_path(c, day)) as f:
+                txt = f.read(300000)
+        except OSError:
+            continue
+        if '"Summary"' in txt and '"MainInflow"' not in txt:
+            todo.append(c)
+    if not todo:
+        return
+
+    done = streak = 0
+    for c in todo:
+        inflow, pct = fetch_fflow(c, day)
+        if inflow is None:
+            streak += 1
+            if streak >= 5:
+                log(f"fflow {day}: {streak} consecutive misses, backing off (done={done})")
+                return
+            time.sleep(FETCH_GAP_S)
+            continue
+        streak = 0
+        try:
+            with open(trend_path(c, day)) as f:
+                doc = json.load(f)
+            if isinstance(doc.get("Summary"), dict):
+                doc["Summary"]["MainInflow"] = inflow
+                doc["Summary"]["MainPct"] = pct
+                tmp = trend_path(c, day) + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(doc, f, ensure_ascii=False)
+                os.replace(tmp, trend_path(c, day))
+                done += 1
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(FETCH_GAP_S)
+    log(f"fflow {day}: 主力净流入 added to {done}/{len(todo)} snapshots")
 
 
 # ---------------------------------------------------------------- 资讯

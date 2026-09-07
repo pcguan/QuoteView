@@ -153,12 +153,14 @@ public static class Program
         var mainWithSummary = fakeSeries with
         {
             Summary = new StockClient.Core.Quotes.TrendDaySummary
-                { Percent = -6.07, Amount = 83.44e8, Volume = 111.99e4, Outer = 51.70e4, Inner = 60.29e4 },
+                { Percent = -6.07, Amount = 83.44e8, Volume = 111.99e4, Outer = 51.70e4, Inner = 60.29e4,
+                  MainInflow = -3.19e8, MainPct = -1.21 },
         };
         var cmpWithSummary = cmpSeries with
         {
             Summary = new StockClient.Core.Quotes.TrendDaySummary
-                { Percent = 1.20, Amount = 65.02e8, Volume = 88.10e4, Outer = 45.00e4, Inner = 43.10e4 },
+                { Percent = 1.20, Amount = 65.02e8, Volume = 88.10e4, Outer = 45.00e4, Inner = 43.10e4,
+                  MainInflow = 3.68e8, MainPct = 6.11 },
         };
 
         var history3 = new StockClient.App.Views.TrendHistoryView { Width = 1050, Height = 560 };
