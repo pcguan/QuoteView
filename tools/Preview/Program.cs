@@ -219,7 +219,20 @@ public static class Program
         }
         kvmT.GetProperty("Ticks")!.SetValue(kvm, tape);
 
-        var kwin = new StockClient.App.Views.KlineWindow(kvm, new[] { kContract },
+        var kGroups = new[]
+        {
+            new StockClient.App.Views.KlineWindow.ContractGroup("自选", new[]
+            {
+                kContract,
+                new StockClient.Core.Contracts.Contract { Code = "SZ000001", Name = "平安银行" },
+                new StockClient.Core.Contracts.Contract { Code = "SH601318", Name = "中国平安" },
+            }),
+            new StockClient.App.Views.KlineWindow.ContractGroup("科技", new[]
+            {
+                new StockClient.Core.Contracts.Contract { Code = "SZ300750", Name = "宁德时代" },
+            }),
+        };
+        var kwin = new StockClient.App.Views.KlineWindow(kvm, kGroups,
             c => new StockClient.App.ViewModels.KlineViewModel(c, kRepo, tRepo,
                 System.Windows.Threading.Dispatcher.CurrentDispatcher, null,
                 new StockClient.Core.Quotes.EastMoneyDetailsClient(http)));
@@ -244,6 +257,11 @@ public static class Program
         kvmT.GetField("_live", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(kvm, fakeQuote);
         typeof(StockClient.App.Views.KlineWindow)
             .GetMethod("RenderDepth", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(kwin, null);
+
+        // Fake status so the 数据源·数量·刷新时间 hint renders — this is what the
+        // layout fix must keep from being covered by the period/adjust buttons.
+        if (kwin.FindName("StatusText") is System.Windows.Controls.TextBlock st)
+            st.Text = "东财延时 · 240 根 · 刷新 15:03:05";
 
         var kContent = (FrameworkElement)kwin.Content;
         kwin.Content = null;

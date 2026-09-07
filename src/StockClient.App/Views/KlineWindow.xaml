@@ -14,20 +14,41 @@
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" Margin="0,0,0,10">
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <ComboBox x:Name="GroupBox" Width="116" FontSize="14" VerticalAlignment="Center"
-                  DisplayMemberPath="Name" MaxDropDownHeight="440"
-                  SelectionChanged="Group_Changed" ToolTip="先选分组" />
-        <ui:TextBox x:Name="FilterBox" Width="120" FontSize="13" VerticalAlignment="Center"
-                    Margin="8,0,0,0" PlaceholderText="过滤"
-                    TextChanged="Filter_TextChanged"
-                    ToolTip="按名称或代码过滤右侧合约列表；清空显示全部" />
-        <ComboBox x:Name="ContractBox" Width="184" FontSize="14" VerticalAlignment="Center"
-                  Margin="8,0,0,0" MaxDropDownHeight="440"
-                  SelectionChanged="Contract_Changed" ToolTip="选合约" />
+    <!-- 表头两行:第一行 选择器(左) + 周期/复权/恢复(右);第二行 数据源·数量·刷新时间
+         等状态提示单独占一行。920 宽一行塞不下"选择器+状态+这排按钮",挤在一行状态会被
+         按钮压住甚至裁没,所以把状态挪到第二行,横向不再和按钮抢位。 -->
+    <StackPanel Grid.Row="0" Margin="0,0,0,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" MinWidth="8" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+          <ComboBox x:Name="GroupBox" Width="108" FontSize="14" VerticalAlignment="Center"
+                    DisplayMemberPath="Name" MaxDropDownHeight="440"
+                    SelectionChanged="Group_Changed" ToolTip="先选分组" />
+          <ui:TextBox x:Name="FilterBox" Width="104" FontSize="13" VerticalAlignment="Center"
+                      Margin="8,0,0,0" PlaceholderText="过滤"
+                      TextChanged="Filter_TextChanged"
+                      ToolTip="按名称或代码过滤右侧合约列表；清空显示全部" />
+          <ComboBox x:Name="ContractBox" Width="176" FontSize="14" VerticalAlignment="Center"
+                    Margin="8,0,0,0" MaxDropDownHeight="440"
+                    SelectionChanged="Contract_Changed" ToolTip="选合约" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <StackPanel x:Name="PeriodButtons" Orientation="Horizontal" Margin="0,0,16,0" />
+          <StackPanel x:Name="AdjustButtons" Orientation="Horizontal" Margin="0,0,16,0" />
+          <Button Content="恢复默认" FontSize="12" Padding="11,3" Click="Reset_Click"
+                  ToolTip="回到最近 80 根，并显示全部均线" />
+        </StackPanel>
+      </Grid>
+
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,7,0,0">
         <Border Background="#1E2534" BorderBrush="#2C3547" BorderThickness="1"
-                CornerRadius="6" Padding="8,3" Margin="12,0,0,0">
+                CornerRadius="6" Padding="8,3">
           <TextBlock x:Name="StatusText" FontSize="11" Foreground="#8B93A3"
                      VerticalAlignment="Center" />
         </Border>
@@ -35,14 +56,7 @@
                    VerticalAlignment="Center" Margin="12,0,0,0"
                    ToolTip="快捷键：Esc 关闭 · 1/2/3/4 分时·日K·周K·月K · ←→ 逐根平移 · PgUp/PgDn 翻页 · +/- 缩放 · Home/End 跳到最早/最新" />
       </StackPanel>
-
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-        <StackPanel x:Name="PeriodButtons" Orientation="Horizontal" Margin="0,0,16,0" />
-        <StackPanel x:Name="AdjustButtons" Orientation="Horizontal" Margin="0,0,16,0" />
-        <Button Content="恢复默认" FontSize="12" Padding="11,3" Click="Reset_Click"
-                ToolTip="回到最近 80 根，并显示全部均线" />
-      </StackPanel>
-    </Grid>
+    </StackPanel>
 
     <!-- 每日实时信息(分时模式显示):现价 + 今开/昨收/最高/最低/涨跌停/换手/量比/
          成交量额/市盈净/市值/振幅/内外盘。数据来自 1s 实时行情。 -->
