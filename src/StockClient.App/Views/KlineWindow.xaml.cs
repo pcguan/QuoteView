@@ -243,12 +243,18 @@ public partial class KlineWindow : Window
                          TopTurnover, TopVolRatio, TopVolume, TopAmount, TopPe, TopPb,
                          TopTotalCap, TopFloatCap, TopAmplitude, TopInner, TopOuter })
                 t.Text = "-";
-            TopPrice.Foreground = TopChange.Foreground = TopPercent.Foreground = NeutralBrush;
+            TopPrice.Foreground = TopChange.Foreground = TopPercent.Foreground =
+                TopOpen.Foreground = TopHigh.Foreground = TopLow.Foreground = NeutralBrush;
             return;
         }
 
         var dec = Decimals(q);
         var mood = q.Percent > 0 ? UpBrush : q.Percent < 0 ? DownBrush : NeutralBrush;
+
+        // 今开/最高/最低 colour by whether they're above or below 昨收, like the feed.
+        Brush VsPrev(double v) => q.Yesterday > 0 && v > 0
+            ? (v > q.Yesterday ? UpBrush : v < q.Yesterday ? DownBrush : NeutralBrush)
+            : NeutralBrush;
 
         TopPrice.Text = q.Now > 0 ? q.Now.ToString("F" + dec) : "-";
         TopPrice.Foreground = mood;
@@ -257,9 +263,12 @@ public partial class KlineWindow : Window
         TopChange.Foreground = TopPercent.Foreground = mood;
 
         TopOpen.Text = Px(q.Open, dec);
+        TopOpen.Foreground = VsPrev(q.Open);
         TopPrev.Text = Px(q.Yesterday, dec);
         TopHigh.Text = Px(q.High, dec);
+        TopHigh.Foreground = VsPrev(q.High);
         TopLow.Text = Px(q.Low, dec);
+        TopLow.Foreground = VsPrev(q.Low);
         TopLimitUp.Text = Px(q.LimitUp, dec);
         TopLimitDown.Text = Px(q.LimitDown, dec);
         TopTurnover.Text = q.TurnoverRate is { } tr ? tr.ToString("F2") + "%" : "-";
