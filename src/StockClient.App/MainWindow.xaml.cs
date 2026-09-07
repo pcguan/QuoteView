@@ -777,22 +777,37 @@ public partial class MainWindow : FluentWindow
         new(contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp),
             new EastMoneyDetailsClient(_klineHttp));
 
-    /// <summary>Every watched contract (union across groups), current one first —
-    /// the chart window's in-place switcher list.</summary>
-    private IReadOnlyList<Contract> WatchedContracts(Contract current)
+    /// <summary>The watch list grouped for the chart window's 分组→合约 pickers:
+    /// one entry per group with its resolved contracts. If the charted contract
+    /// isn't in any group (opened from a bare live-quote code), it gets a leading
+    /// "当前" group so the picker can still show and re-select it.</summary>
+    private IReadOnlyList<Views.KlineWindow.ContractGroup> WatchedGroups(Contract current)
     {
-        var seen = new HashSet<string> { current.Code.ToUpperInvariant() };
-        var list = new List<Contract> { current };
+        var currentUp = current.Code.ToUpperInvariant();
+        var currentInSome = false;
+        var groups = new List<Views.KlineWindow.ContractGroup>();
+
         if (_quotes is not null)
             foreach (var group in _quotes.Groups)
+            {
+                var seen = new HashSet<string>();
+                var list = new List<Contract>();
                 foreach (var code in group.Model.Codes)
                 {
                     var up = code.ToUpperInvariant();
                     if (!seen.Add(up)) continue;
+                    if (up == currentUp) currentInSome = true;
                     list.Add(_vm.Repository.Find(up)
                              ?? new Contract { Code = up, Name = _quotes.RowName(up) ?? up });
                 }
-        return list;
+                if (list.Count > 0)
+                    groups.Add(new Views.KlineWindow.ContractGroup(group.Model.Name, list));
+            }
+
+        if (!currentInSome)
+            groups.Insert(0, new Views.KlineWindow.ContractGroup("当前", new[] { current }));
+
+        return groups;
     }
 
     private void OpenKline(Contract contract)
@@ -803,7 +818,7 @@ public partial class MainWindow : FluentWindow
         // which surfaced the main window every time a chart was clicked. Tracked
         // instead, and closed when the main window closes.
         var window = new Views.KlineWindow(
-            MakeKlineVm(contract), WatchedContracts(contract), MakeKlineVm);
+            MakeKlineVm(contract), WatchedGroups(contract), MakeKlineVm);
         _klineWindows.Add(window);
         window.Closed += (_, _) => _klineWindows.Remove(window);
         window.Show();

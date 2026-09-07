@@ -33,10 +33,12 @@ public partial class KlineWindow : Window
 
     private KlineViewModel _vm;
     private readonly Func<Contract, KlineViewModel> _factory;
-    private readonly ContractItem[] _items;
-    private bool _switching;
+    private readonly ContractGroup[] _groups;
+    private ContractItem[] _contractItems = Array.Empty<ContractItem>();
+    private System.ComponentModel.ICollectionView? _contractView;
+    private bool _syncing;   // programmatic group/contract/text change in progress
 
-    public KlineWindow(KlineViewModel vm, IReadOnlyList<Contract> contracts,
+    public KlineWindow(KlineViewModel vm, IReadOnlyList<ContractGroup> groups,
         Func<Contract, KlineViewModel> factory)
     {
         InitializeComponent();
@@ -45,8 +47,8 @@ public partial class KlineWindow : Window
         WindowMinimizeGesture.Attach(this);
 
         _factory = factory;
-        _items = contracts.Select(c => new ContractItem(c)).ToArray();
-        ContractBox.ItemsSource = _items;
+        _groups = groups.ToArray();
+        GroupBox.ItemsSource = _groups;
         _vm = vm;   // before BuildToggles / Bind, both of which read it
 
         BuildPeriodButtons();
@@ -71,11 +73,7 @@ public partial class KlineWindow : Window
         _vm.PropertyChanged += OnVmPropertyChanged;
 
         Title = _vm.Title;
-        _switching = true;   // set the picker without re-triggering a switch
-        ContractBox.SelectedItem = _items.FirstOrDefault(
-            i => string.Equals(i.Contract.Code, _vm.Contract.Code, StringComparison.OrdinalIgnoreCase));
-        _switching = false;
-
+        SelectCurrent();
         ApplyMode();
     }
 
@@ -90,6 +88,36 @@ public partial class KlineWindow : Window
         _vm.Dispose();
     }
 
+    /// <summary>Point the two pickers at <see cref="_vm"/>'s contract: its group,
+    /// then the contract inside it. Guarded so neither programmatic selection
+    /// re-triggers a switch or a filter.</summary>
+    private void SelectCurrent()
+    {
+        _syncing = true;
+        var group = _groups.FirstOrDefault(
+                        g => g.Contracts.Any(c => SameCode(c.Code, _vm.Contract.Code)))
+                    ?? _groups.FirstOrDefault();
+        GroupBox.SelectedItem = group;
+        PopulateContracts(group);
+        ContractBox.SelectedItem = _contractItems.FirstOrDefault(
+            i => SameCode(i.Contract.Code, _vm.Contract.Code));
+        _syncing = false;
+    }
+
+    /// <summary>Refill the contract list for a group behind a fresh collection
+    /// view, and clear the filter box so the new group shows in full.</summary>
+    private void PopulateContracts(ContractGroup? group)
+    {
+        _contractItems = (group?.Contracts ?? Array.Empty<Contract>())
+            .Select(c => new ContractItem(c)).ToArray();
+        _contractView = System.Windows.Data.CollectionViewSource.GetDefaultView(_contractItems);
+        ContractBox.ItemsSource = _contractView;
+        FilterBox.Text = string.Empty;   // Filter_TextChanged no-ops under _syncing
+    }
+
+    private static bool SameCode(string a, string b) =>
+        string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e) => Dispatcher.Invoke(() =>
     {
         if (e.PropertyName == nameof(KlineViewModel.IsTrend)) ApplyMode();
@@ -97,12 +125,44 @@ public partial class KlineWindow : Window
             UpdateStatus();
     });
 
+    /// <summary>Pick a group: refill the contract list. If it holds the current
+    /// contract, keep that selected; otherwise leave the box empty and drop it
+    /// open to invite a pick —选分组再选合约, not "silently chart the first one".</summary>
+    private void Group_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncing || GroupBox.SelectedItem is not ContractGroup group) return;
+
+        _syncing = true;
+        PopulateContracts(group);
+        var cur = _contractItems.FirstOrDefault(i => SameCode(i.Contract.Code, _vm.Contract.Code));
+        ContractBox.SelectedItem = cur;
+        _syncing = false;
+
+        if (cur is null) ContractBox.IsDropDownOpen = true;   // invite a pick
+    }
+
+    /// <summary>Substring-filter the current group's contract list by name or code
+    /// as the user types — so a big group doesn't mean scrolling forever. Empty
+    /// text shows the whole group again.</summary>
+    private void Filter_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncing || _contractView is null) return;
+
+        var q = FilterBox.Text.Trim();
+        _contractView.Filter = q.Length == 0
+            ? null
+            : o => o is ContractItem it
+                   && (it.Contract.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+                       || it.Contract.Code.Contains(q, StringComparison.OrdinalIgnoreCase));
+        if (q.Length > 0) ContractBox.IsDropDownOpen = true;
+    }
+
     /// <summary>Switch the charted contract in place — no need to go back to the
     /// panel and right-click another. Keeps the current mode (分时 vs 日/周/月K).</summary>
     private void Contract_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (_switching || ContractBox.SelectedItem is not ContractItem item) return;
-        if (string.Equals(item.Contract.Code, _vm.Contract.Code, StringComparison.OrdinalIgnoreCase)) return;
+        if (_syncing || ContractBox.SelectedItem is not ContractItem item) return;
+        if (SameCode(item.Contract.Code, _vm.Contract.Code)) return;
 
         var wasTrend = _vm.IsTrend;
         var period = _vm.Period;
@@ -111,7 +171,7 @@ public partial class KlineWindow : Window
         Unbind();
         _vm = _factory(item.Contract);
         _vm.Adjust = adjust;   // keeps the 复权 choice; ReloadAsync below supersedes any it fires
-        Bind();
+        Bind();                // Bind → SelectCurrent re-points both pickers, clearing the filter
 
         // Keep the same view. ShowKline(Day) on a fresh Day-default vm wouldn't
         // reload (no change), so the day case reloads directly.
@@ -127,6 +187,9 @@ public partial class KlineWindow : Window
         public override string ToString() =>
             Contract.Name.Length > 0 ? $"{Contract.Name}  {Contract.Code}" : Contract.Code;
     }
+
+    /// <summary>A group and the contracts under it, feeding the 分组→合约 pickers.</summary>
+    public sealed record ContractGroup(string Name, IReadOnlyList<Contract> Contracts);
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Chart.ResetView();
 
