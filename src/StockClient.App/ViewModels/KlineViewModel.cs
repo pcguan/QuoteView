@@ -297,11 +297,11 @@ public sealed class KlineViewModel : ObservableObject
         }
     }
 
-    /// <summary>Newest tick time already shown, and how many stale snapshots we've
-    /// skipped in a row — the monotonic guard against the tape jumping backward.</summary>
-    private string _lastTickTime = "";
-    private int _regressStreak;
-    private const int MaxRegressSkips = 3;
+    /// <summary>Merges every poll's snapshot so no print is lost to CDN-edge
+    /// inconsistency — a snapshot jumping ahead but missing a middle print, or
+    /// lagging behind, no longer makes the tape flicker or skip (see
+    /// <see cref="TapeAccumulator"/>). One per contract = one per view model.</summary>
+    private readonly TapeAccumulator _tape = new();
 
     /// <summary>
     /// One 成交明细 poll for the tape beside the book, on the same trend cadence.
@@ -317,22 +317,7 @@ public sealed class KlineViewModel : ObservableObject
             var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
             if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
 
-            // Monotonic guard: drop a snapshot whose newest print is EARLIER than
-            // the one already shown. Two overlapping 3s polls can land out of order
-            // (the older request finishing last), and the CDN-fronted feed can
-            // briefly serve a staler edge — either makes the tape jump backward a
-            // few seconds. A sustained regression (真的切到延时主机 / 隔日开盘) is
-            // let through after a few skips so the tape can never freeze.
-            var newest = snap.Ticks[^1].Time;
-            if (string.CompareOrdinal(newest, _lastTickTime) < 0 && _regressStreak < MaxRegressSkips)
-            {
-                _regressStreak++;
-                return;
-            }
-            _regressStreak = 0;
-            _lastTickTime = newest;
-
-            Ticks = snap.Ticks;
+            Ticks = _tape.Add(snap.Ticks);
             TickPrePrice = snap.PrePrice;
             TicksUpdated?.Invoke();
         }
