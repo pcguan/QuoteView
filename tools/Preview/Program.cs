@@ -225,8 +225,10 @@ public static class Program
         var fakeQuote = new StockClient.Core.Quotes.Quote
         {
             Code = "SH600519", Name = "贵州茅台", Now = 11.60, Yesterday = 11.50,
+            Change = 0.10, Percent = 0.87,
             Open = 11.52, High = 11.71, Low = 11.48, Time = "14:59:57",
             Volume = 802500, Amount = 1.777e9, TurnoverRate = 17.74, VolumeRatio = 1.09,
+            PeTtm = 45.60, Pb = 4.12, TotalCap = 1.157e10, FloatCap = 1.154e10,
             LimitUp = 12.65, LimitDown = 10.35, OuterVolume = 396600, InnerVolume = 405800,
             Depth = new StockClient.Core.Quotes.QuoteDepth
             {

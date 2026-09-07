@@ -186,6 +186,7 @@ public partial class KlineWindow : Window
             Decimals(live));
 
         RenderStats(live);
+        RenderTopStats(live);
     }
 
     /// <summary>Fills the numeric stat rows from the quote; "--" where a field
@@ -228,6 +229,55 @@ public partial class KlineWindow : Window
         OuterText.Text = q.OuterVolume is { } o and > 0 ? Compact(o) + "手" : "--";
         InnerText.Text = q.InnerVolume is { } inn and > 0 ? Compact(inn) + "手" : "--";
     }
+
+    /// <summary>Fills the top 每日实时信息 header (现价 + 今开/昨收/最高/最低/涨跌停/
+    /// 换手/量比/成交量额/市盈净/市值/振幅/内外盘) from the quote; "-" where a field
+    /// isn't served (non-A markets).</summary>
+    private void RenderTopStats(Quote? q)
+    {
+        if (q is null)
+        {
+            TopPrice.Text = "-";
+            TopChange.Text = TopPercent.Text = "";
+            foreach (var t in new[] { TopOpen, TopPrev, TopHigh, TopLow, TopLimitUp, TopLimitDown,
+                         TopTurnover, TopVolRatio, TopVolume, TopAmount, TopPe, TopPb,
+                         TopTotalCap, TopFloatCap, TopAmplitude, TopInner, TopOuter })
+                t.Text = "-";
+            TopPrice.Foreground = TopChange.Foreground = TopPercent.Foreground = NeutralBrush;
+            return;
+        }
+
+        var dec = Decimals(q);
+        var mood = q.Percent > 0 ? UpBrush : q.Percent < 0 ? DownBrush : NeutralBrush;
+
+        TopPrice.Text = q.Now > 0 ? q.Now.ToString("F" + dec) : "-";
+        TopPrice.Foreground = mood;
+        TopChange.Text = Signed(q.Change, dec);
+        TopPercent.Text = Signed(q.Percent, 2) + "%";
+        TopChange.Foreground = TopPercent.Foreground = mood;
+
+        TopOpen.Text = Px(q.Open, dec);
+        TopPrev.Text = Px(q.Yesterday, dec);
+        TopHigh.Text = Px(q.High, dec);
+        TopLow.Text = Px(q.Low, dec);
+        TopLimitUp.Text = Px(q.LimitUp, dec);
+        TopLimitDown.Text = Px(q.LimitDown, dec);
+        TopTurnover.Text = q.TurnoverRate is { } tr ? tr.ToString("F2") + "%" : "-";
+        TopVolRatio.Text = q.VolumeRatio is { } vr ? vr.ToString("F2") : "-";
+        TopVolume.Text = q.Volume is { } v and > 0 ? Compact(v) + "手" : "-";
+        TopAmount.Text = q.Amount is { } a and > 0 ? Compact(a) : "-";
+        TopPe.Text = q.PeTtm is { } pe ? pe.ToString("F2") : "-";
+        TopPb.Text = q.Pb is { } pb ? pb.ToString("F2") : "-";
+        TopTotalCap.Text = q.TotalCap is { } tc and > 0 ? Compact(tc) : "-";
+        TopFloatCap.Text = q.FloatCap is { } fc and > 0 ? Compact(fc) : "-";
+        TopAmplitude.Text = q.High > 0 && q.Low > 0 && q.Yesterday > 0
+            ? ((q.High - q.Low) / q.Yesterday * 100).ToString("F2") + "%" : "-";
+        TopInner.Text = q.InnerVolume is { } inn2 and > 0 ? Compact(inn2) + "手" : "-";
+        TopOuter.Text = q.OuterVolume is { } o and > 0 ? Compact(o) + "手" : "-";
+    }
+
+    private static string Px(double? v, int dec) => v is { } x and > 0 ? x.ToString("F" + dec) : "-";
+    private static string Signed(double v, int dec) => (v >= 0 ? "+" : "") + v.ToString("F" + dec);
 
     /// <summary>万/亿 short form for 手 counts and 元 amounts.</summary>
     private static string Compact(double v) =>
@@ -299,6 +349,8 @@ public partial class KlineWindow : Window
         // the pane) gives the width back to the chart.
         DepthPane.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         DepthColumn.Width = trend ? new GridLength(DepthWidth) : new GridLength(0);
+        // 每日实时信息 header — only in 分时 (the 1s quote it reads is polled there).
+        TopStats.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         if (trend) RenderDepth();
 
         // 成交明细 rides alongside the book, and only where EastMoney serves it (沪深).

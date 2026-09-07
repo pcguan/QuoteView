@@ -9,6 +9,7 @@
   <Grid Margin="12">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
     </Grid.RowDefinitions>
 
@@ -34,7 +35,43 @@
       </StackPanel>
     </Grid>
 
-    <Border Grid.Row="1" Background="#0F1420" BorderBrush="#222A38"
+    <!-- 每日实时信息(分时模式显示):现价 + 今开/昨收/最高/最低/涨跌停/换手/量比/
+         成交量额/市盈净/市值/振幅/内外盘。数据来自 1s 实时行情。 -->
+    <Border x:Name="TopStats" Grid.Row="1" Visibility="Collapsed"
+            BorderBrush="#222A38" BorderThickness="0,0,0,1" Margin="0,0,0,10" Padding="0,0,0,8">
+      <StackPanel Orientation="Horizontal">
+        <StackPanel Margin="0,0,22,0" VerticalAlignment="Center">
+          <TextBlock x:Name="TopPrice" FontSize="24" FontWeight="SemiBold" Foreground="#DCE4EE" />
+          <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+            <TextBlock x:Name="TopChange" FontSize="12" Foreground="#DCE4EE" />
+            <TextBlock x:Name="TopPercent" FontSize="12" Foreground="#DCE4EE" Margin="8,0,0,0" />
+          </StackPanel>
+        </StackPanel>
+        <UniformGrid Columns="6" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="今开" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopOpen" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="昨收" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopPrev" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="最高" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopHigh" Foreground="#EF5350" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="最低" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopLow" Foreground="#26A69A" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="涨停" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopLimitUp" Foreground="#EF5350" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="跌停" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopLimitDown" Foreground="#26A69A" FontSize="11" /></StackPanel>
+
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="换手" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopTurnover" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="量比" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopVolRatio" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="成交量" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopVolume" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="成交额" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopAmount" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="市盈" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopPe" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="市净" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopPb" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="总市值" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopTotalCap" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="流通" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopFloatCap" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="振幅" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopAmplitude" Foreground="#DCE4EE" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="内盘" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopInner" Foreground="#26A69A" FontSize="11" /></StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="外盘" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopOuter" Foreground="#EF5350" FontSize="11" /></StackPanel>
+        </UniformGrid>
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="2" Background="#0F1420" BorderBrush="#222A38"
             BorderThickness="1" CornerRadius="6">
       <Grid>
         <Grid.ColumnDefinitions>
