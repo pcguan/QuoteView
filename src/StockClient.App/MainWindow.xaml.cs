@@ -567,6 +567,13 @@ public partial class MainWindow : FluentWindow
                 var localPanel = new Dictionary<string, bool>();
                 foreach (var g in config.Groups) localPanel[g.Name] = g.InPanel;
 
+                // The active group is a per-machine cursor too. New ids are minted
+                // below, so carry the cursor across by name — otherwise every
+                // login/auto-update restart snaps the panel back to the first
+                // group instead of the one it was last showing.
+                var localActiveName =
+                    config.Groups.FirstOrDefault(g => g.Id == config.ActiveGroupId)?.Name;
+
                 config.Groups = remote.Groups
                     .Select(g => new Group
                     {
@@ -576,7 +583,11 @@ public partial class MainWindow : FluentWindow
                         InPanel = !localPanel.TryGetValue(g.Name, out var p) || p,
                     })
                     .ToList();
-                config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
+                config.ActiveGroupId =
+                    (localActiveName is null
+                        ? null
+                        : config.Groups.FirstOrDefault(g => g.Name == localActiveName)?.Id)
+                    ?? config.Groups.FirstOrDefault()?.Id;
                 config.Owner = username;
                 store.Save(config);
                 changed = true;
@@ -619,6 +630,8 @@ public partial class MainWindow : FluentWindow
 
         var localPanel = new Dictionary<string, bool>();
         foreach (var g in config.Groups) localPanel[g.Name] = g.InPanel;
+        var localActiveName =
+            config.Groups.FirstOrDefault(g => g.Id == config.ActiveGroupId)?.Name;
 
         config.Groups = r.Groups.Select(g => new Group
         {
@@ -627,7 +640,11 @@ public partial class MainWindow : FluentWindow
             Codes = g.Codes.ToList(),
             InPanel = !localPanel.TryGetValue(g.Name, out var p) || p,
         }).ToList();
-        config.ActiveGroupId = config.Groups.FirstOrDefault()?.Id;
+        config.ActiveGroupId =
+            (localActiveName is null
+                ? null
+                : config.Groups.FirstOrDefault(g => g.Name == localActiveName)?.Id)
+            ?? config.Groups.FirstOrDefault()?.Id;
         config.GroupsUpdatedAt = r.At;
         store.Save(config);
 

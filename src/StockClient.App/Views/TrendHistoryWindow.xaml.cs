@@ -26,6 +26,7 @@ public partial class TrendHistoryWindow : Window
         InitializeComponent();
         WindowDimmer.Attach(this);
         WindowPlacement.Attach(this, "trendhistory");
+        WindowMinimizeGesture.Attach(this);
 
         History.Init(vm, cache, contracts, session);
         // Selected once the view is loaded: SelectContract kicks off the async

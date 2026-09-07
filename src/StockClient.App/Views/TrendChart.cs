@@ -79,7 +79,14 @@ public sealed class TrendChart : FrameworkElement
     public void SetSeries(TrendSeries series)
     {
         _series = series;
-        _hoverIndex = -1;
+        // The intraday view re-feeds this every few seconds. Blanking the
+        // crosshair each time yanked it out from under a stationary pointer, so
+        // keep it while the mouse is still over the chart (a later point simply
+        // extends the series, same index = same minute) and drop it only when
+        // the pointer is elsewhere — e.g. a contract switch, where the mouse is
+        // on the dropdown, not the plot.
+        if (!IsMouseOver) _hoverIndex = -1;
+        else if (_hoverIndex >= Points.Count) _hoverIndex = Points.Count - 1;
         InvalidateVisual();
     }
 

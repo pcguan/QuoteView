@@ -42,6 +42,7 @@ public partial class KlineWindow : Window
         InitializeComponent();
         WindowDimmer.Attach(this);
         WindowPlacement.Attach(this, "kline");
+        WindowMinimizeGesture.Attach(this);
 
         _factory = factory;
         _items = contracts.Select(c => new ContractItem(c)).ToArray();

@@ -190,7 +190,11 @@ public sealed class KlineChart : FrameworkElement
 
         _candles = candles;
         _mas = movingAverages;
-        _hoverIndex = -1;
+        // This refresh keeps the zoom/pan window, so keep the readout crosshair
+        // too while the pointer sits on the chart — only clear it once the mouse
+        // has left. _hoverIndex is a visible-slot index; the draw path guards a
+        // stale slot (see the >= _bars.Count check in the readout).
+        if (!IsMouseOver) _hoverIndex = -1;
 
         _viewCount = Math.Clamp(_viewCount, Math.Min(MinView, _candles.Count), _candles.Count);
         var last = Math.Max(0, _candles.Count - _viewCount);
