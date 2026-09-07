@@ -1,9 +1,11 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using StockClient.App.ViewModels;
+using StockClient.Core.Contracts;
 using StockClient.Core.Quotes;
 
 namespace StockClient.App.Views;
@@ -29,38 +31,100 @@ public partial class KlineWindow : Window
         (KlineAdjust.Hfq, "后复权"),
     };
 
-    private readonly KlineViewModel _vm;
+    private KlineViewModel _vm;
+    private readonly Func<Contract, KlineViewModel> _factory;
+    private readonly ContractItem[] _items;
+    private bool _switching;
 
-    public KlineWindow(KlineViewModel vm)
+    public KlineWindow(KlineViewModel vm, IReadOnlyList<Contract> contracts,
+        Func<Contract, KlineViewModel> factory)
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
         WindowPlacement.Attach(this, "kline");
 
-        _vm = vm;
-        TitleText.Text = _vm.Title;
-        Title = _vm.Title;
+        _factory = factory;
+        _items = contracts.Select(c => new ContractItem(c)).ToArray();
+        ContractBox.ItemsSource = _items;
+        _vm = vm;   // before BuildToggles / Bind, both of which read it
 
         BuildPeriodButtons();
         BuildToggles(AdjustButtons, Adjusts.Select(a => (object)a.Adjust).ToArray(),
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
+        InitTape();
 
+        Bind();
+        Loaded += async (_, _) => await _vm.ReloadAsync();
+        Closed += (_, _) => Unbind();
+    }
+
+    /// <summary>Wires the current <see cref="_vm"/> to the view and reflects it in
+    /// the contract picker / title.</summary>
+    private void Bind()
+    {
         _vm.Loaded += OnKlineLoaded;
         _vm.LiveUpdated += OnLiveUpdated;
         _vm.Refreshed += OnKlineRefreshed;
         _vm.TrendLoaded += OnTrendLoaded;
         _vm.TicksUpdated += OnTicksLoaded;
-        InitTape();
-        _vm.PropertyChanged += (_, e) => Dispatcher.Invoke(() =>
-        {
-            if (e.PropertyName == nameof(KlineViewModel.IsTrend)) ApplyMode();
-            else if (e.PropertyName is nameof(KlineViewModel.Loading) or nameof(KlineViewModel.Error))
-                UpdateStatus();
-        });
+        _vm.PropertyChanged += OnVmPropertyChanged;
+
+        Title = _vm.Title;
+        _switching = true;   // set the picker without re-triggering a switch
+        ContractBox.SelectedItem = _items.FirstOrDefault(
+            i => string.Equals(i.Contract.Code, _vm.Contract.Code, StringComparison.OrdinalIgnoreCase));
+        _switching = false;
 
         ApplyMode();
-        Loaded += async (_, _) => await _vm.ReloadAsync();
-        Closed += (_, _) => _vm.Dispose();
+    }
+
+    private void Unbind()
+    {
+        _vm.Loaded -= OnKlineLoaded;
+        _vm.LiveUpdated -= OnLiveUpdated;
+        _vm.Refreshed -= OnKlineRefreshed;
+        _vm.TrendLoaded -= OnTrendLoaded;
+        _vm.TicksUpdated -= OnTicksLoaded;
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+        _vm.Dispose();
+    }
+
+    private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e) => Dispatcher.Invoke(() =>
+    {
+        if (e.PropertyName == nameof(KlineViewModel.IsTrend)) ApplyMode();
+        else if (e.PropertyName is nameof(KlineViewModel.Loading) or nameof(KlineViewModel.Error))
+            UpdateStatus();
+    });
+
+    /// <summary>Switch the charted contract in place — no need to go back to the
+    /// panel and right-click another. Keeps the current mode (分时 vs 日/周/月K).</summary>
+    private void Contract_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_switching || ContractBox.SelectedItem is not ContractItem item) return;
+        if (string.Equals(item.Contract.Code, _vm.Contract.Code, StringComparison.OrdinalIgnoreCase)) return;
+
+        var wasTrend = _vm.IsTrend;
+        var period = _vm.Period;
+        var adjust = _vm.Adjust;
+
+        Unbind();
+        _vm = _factory(item.Contract);
+        _vm.Adjust = adjust;   // keeps the 复权 choice; ReloadAsync below supersedes any it fires
+        Bind();
+
+        // Keep the same view. ShowKline(Day) on a fresh Day-default vm wouldn't
+        // reload (no change), so the day case reloads directly.
+        if (wasTrend) _vm.ShowTrend();
+        else if (period != KlinePeriod.Day) _vm.ShowKline(period);
+        else _ = _vm.ReloadAsync();
+        RefreshPeriodStates();
+    }
+
+    /// <summary>One contract row in the picker.</summary>
+    private sealed record ContractItem(Contract Contract)
+    {
+        public override string ToString() =>
+            Contract.Name.Length > 0 ? $"{Contract.Name}  {Contract.Code}" : Contract.Code;
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Chart.ResetView();

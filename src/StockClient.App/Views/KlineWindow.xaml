@@ -15,8 +15,9 @@
 
     <Grid Grid.Row="0" Margin="0,0,0,10">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold"
-                   Foreground="#EDF1F7" VerticalAlignment="Center" />
+        <ComboBox x:Name="ContractBox" Width="220" FontSize="14" VerticalAlignment="Center"
+                  SelectionChanged="Contract_Changed"
+                  ToolTip="切换合约（不用回面板重新右键）" />
         <Border Background="#1E2534" BorderBrush="#2C3547" BorderThickness="1"
                 CornerRadius="6" Padding="8,3" Margin="12,0,0,0">
           <TextBlock x:Name="StatusText" FontSize="11" Foreground="#8B93A3"

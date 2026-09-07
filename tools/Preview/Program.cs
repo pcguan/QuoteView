@@ -219,7 +219,10 @@ public static class Program
         }
         kvmT.GetProperty("Ticks")!.SetValue(kvm, tape);
 
-        var kwin = new StockClient.App.Views.KlineWindow(kvm);
+        var kwin = new StockClient.App.Views.KlineWindow(kvm, new[] { kContract },
+            c => new StockClient.App.ViewModels.KlineViewModel(c, kRepo, tRepo,
+                System.Windows.Threading.Dispatcher.CurrentDispatcher, null,
+                new StockClient.Core.Quotes.EastMoneyDetailsClient(http)));
 
         // Inject a fake quote so the stat rows (委比/委差, 涨跌停, 总手… 外/内盘) and
         // the 5-level book render populated instead of "--".

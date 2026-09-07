@@ -756,18 +756,37 @@ public partial class MainWindow : FluentWindow
         window.Show();
     }
 
+    private ViewModels.KlineViewModel MakeKlineVm(Contract contract) =>
+        new(contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp),
+            new EastMoneyDetailsClient(_klineHttp));
+
+    /// <summary>Every watched contract (union across groups), current one first —
+    /// the chart window's in-place switcher list.</summary>
+    private IReadOnlyList<Contract> WatchedContracts(Contract current)
+    {
+        var seen = new HashSet<string> { current.Code.ToUpperInvariant() };
+        var list = new List<Contract> { current };
+        if (_quotes is not null)
+            foreach (var group in _quotes.Groups)
+                foreach (var code in group.Model.Codes)
+                {
+                    var up = code.ToUpperInvariant();
+                    if (!seen.Add(up)) continue;
+                    list.Add(_vm.Repository.Find(up)
+                             ?? new Contract { Code = up, Name = _quotes.RowName(up) ?? up });
+                }
+        return list;
+    }
+
     private void OpenKline(Contract contract)
     {
         Probe.Log($"OpenKline {contract.Code} {contract.Name} secid={contract.EastMoneySecId}");
 
-        var vm = new ViewModels.KlineViewModel(
-            contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp),
-            new EastMoneyDetailsClient(_klineHttp));
-
         // No Owner: an owned window drags its owner to the front when activated,
         // which surfaced the main window every time a chart was clicked. Tracked
         // instead, and closed when the main window closes.
-        var window = new Views.KlineWindow(vm);
+        var window = new Views.KlineWindow(
+            MakeKlineVm(contract), WatchedContracts(contract), MakeKlineVm);
         _klineWindows.Add(window);
         window.Closed += (_, _) => _klineWindows.Remove(window);
         window.Show();
