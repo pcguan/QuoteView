@@ -143,7 +143,12 @@ public partial class KlineWindow : Window
 
     /// <summary>Substring-filter the current group's contract list by name or code
     /// as the user types — so a big group doesn't mean scrolling forever. Empty
-    /// text shows the whole group again.</summary>
+    /// text shows the whole group again.
+    ///
+    /// It deliberately does NOT open the dropdown: a ComboBox's dropdown grabs the
+    /// keyboard, which fought the user still typing here. The filter just narrows
+    /// the list; opening it (click, or ↓/Enter in this box) shows the narrowed
+    /// result.</summary>
     private void Filter_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (_syncing || _contractView is null) return;
@@ -154,7 +159,19 @@ public partial class KlineWindow : Window
             : o => o is ContractItem it
                    && (it.Contract.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
                        || it.Contract.Code.Contains(q, StringComparison.OrdinalIgnoreCase));
-        if (q.Length > 0) ContractBox.IsDropDownOpen = true;
+
+        // Filtering the charted contract out of view blanks the box; when the
+        // filter clears again, put it back so the box shows what's on screen.
+        if (q.Length == 0)
+        {
+            var cur = _contractItems.FirstOrDefault(i => SameCode(i.Contract.Code, _vm.Contract.Code));
+            if (!ReferenceEquals(ContractBox.SelectedItem, cur))
+            {
+                _syncing = true;
+                ContractBox.SelectedItem = cur;
+                _syncing = false;
+            }
+        }
     }
 
     /// <summary>Switch the charted contract in place — no need to go back to the
