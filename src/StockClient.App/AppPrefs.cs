@@ -18,7 +18,11 @@ public static class AppPrefs
         int PanelShadeRestore = 0, bool UpdateToast = true, string AutoUpdateMode = "",
         string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
         int UpdateDelayHours = 0, bool StealthIntroShown = false,
-        int BigTradeWan = 100, double WindowOpacity = 1.0);
+        int BigTradeWan = 100, double WindowOpacity = 1.0,
+        Dictionary<string, WinPlace>? Placements = null);
+
+    /// <summary>A window's remembered restore bounds + maximized state, per key.</summary>
+    public sealed record WinPlace(double L, double T, double W, double H, bool Max);
 
     private static Doc _doc = Load();
 
@@ -118,6 +122,20 @@ public static class AppPrefs
             _doc = _doc with { WindowOpacity = v };
             Save();
         }
+    }
+
+    /// <summary>A window's remembered placement, or null if never saved.</summary>
+    public static WinPlace? Placement(string key) =>
+        _doc.Placements is { } d && d.TryGetValue(key, out var p) ? p : null;
+
+    public static void SavePlacement(string key, WinPlace place)
+    {
+        var d = _doc.Placements is null
+            ? new Dictionary<string, WinPlace>()
+            : new Dictionary<string, WinPlace>(_doc.Placements);
+        d[key] = place;
+        _doc = _doc with { Placements = d };
+        Save();
     }
 
     /// <summary>成交明细里认定「大单」的成交额门槛,单位万元;0 = 不高亮。1..99999 万。</summary>

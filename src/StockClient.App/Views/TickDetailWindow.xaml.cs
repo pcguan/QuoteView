@@ -43,6 +43,7 @@ public partial class TickDetailWindow : Window
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
+        WindowPlacement.Attach(this, "tickdetail");
 
         _contract = contract;
         _quote = quote;

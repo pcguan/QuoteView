@@ -35,6 +35,7 @@ public partial class KlineWindow : Window
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
+        WindowPlacement.Attach(this, "kline");
 
         _vm = vm;
         TitleText.Text = _vm.Title;
