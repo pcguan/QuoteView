@@ -50,7 +50,13 @@ public partial class KlineWindow : Window
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
-        WindowPlacement.Attach(this, "kline");
+        // Placement is per-contract, not one shared "kline" slot, so each chart
+        // reopens where that contract's chart last sat instead of all stacking.
+        // Restore for the contract we open with; save under whatever contract is
+        // showing at close (an in-place switch leaves the window put and simply
+        // re-homes the new contract here).
+        WindowPlacement.Restore(this, PlaceKey(vm.Contract.Code));
+        Closing += (_, _) => WindowPlacement.Save(this, PlaceKey(_vm.Contract.Code));
         WindowMinimizeGesture.Attach(this);
 
         _factory = factory;
@@ -143,6 +149,10 @@ public partial class KlineWindow : Window
 
     private static bool SameCode(string a, string b) =>
         string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Per-contract placement key, so each contract's chart remembers its
+    /// own position/size independently.</summary>
+    private static string PlaceKey(string code) => "kline:" + code.ToUpperInvariant();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e) => Dispatcher.Invoke(() =>
     {
