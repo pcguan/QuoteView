@@ -56,10 +56,23 @@ public class TapeAccumulatorTests
     {
         var acc = new TapeAccumulator();
         acc.Add(new[] { T("15:29:50", 10.0) });
-        var r = acc.Add(new[] { T("09:15:03", 11.0) });   // next session's open, >60s earlier
+        var r = acc.Add(new[] { T("09:15:03", 11.0) });   // next session's open, hours earlier
 
         Assert.Single(r);
         Assert.Equal("09:15:03", r[0].Time);
+    }
+
+    [Fact]
+    public void A_minutes_stale_snapshot_merges_instead_of_blanking_the_tape()
+    {
+        var acc = new TapeAccumulator();
+        acc.Add(new[] { T("13:05:00", 10.0), T("13:05:03", 10.1) });
+        // A CDN edge briefly serves a snapshot a few minutes old. It must NOT reset
+        // the tape back to those minutes-old prints (the "jumps to a few minutes
+        // ago, then recovers" flicker) — merge it, keeping the newer prints.
+        var r = acc.Add(new[] { T("13:02:10", 9.9) });
+
+        Assert.Equal(new[] { "13:02:10", "13:05:00", "13:05:03" }, Times(r));
     }
 
     [Fact]

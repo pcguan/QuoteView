@@ -9,16 +9,27 @@ namespace StockClient.Core.Quotes;
 /// snapshot by (time, price) instead — a print reported by ANY edge is kept, and
 /// a growing current-second row takes its largest reported volume. Merge only
 /// adds/updates; it never removes, so the tape can't jump backward or lose a
-/// middle print. A big backward jump (new session, or a genuinely much-delayed
-/// source) is treated as a reset rather than merging two sessions together.
+/// middle print. Only a DAY-SCALE backward jump (the next session opening hours
+/// earlier in seconds-of-day) resets, rather than merging two sessions together;
+/// a small backward jump — a delayed edge briefly serving a snapshot minutes old
+/// — is merged harmlessly instead, since it only re-adds prints we already have
+/// (or fills a gap) and never moves the newest.
 ///
 /// One accumulator per contract (the chart window is single-contract). Pure and
 /// unit-tested; the view model just feeds it each snapshot.
 /// </summary>
 public sealed class TapeAccumulator
 {
-    /// <summary>Backward jump beyond this many seconds = a reset, not edge jitter.</summary>
-    private const int ResetGapSecs = 60;
+    /// <summary>
+    /// Backward jump beyond this = a new session (day rollover), not edge jitter or
+    /// a stale snapshot. Day-scale on purpose: a CDN edge occasionally serves a
+    /// snapshot a few MINUTES old, and resetting on that blanked the tape back to
+    /// those minutes-old prints until the next poll — a jarring backward jump.
+    /// 2h sits below the shortest real rollover (~3.5h even for a half-day close)
+    /// and well above any plausible stale edge, so only a genuine session change
+    /// clears the tape.
+    /// </summary>
+    private const int ResetGapSecs = 2 * 60 * 60;
 
     private readonly Dictionary<(string Time, double Price), (TradeTick Tick, long Seq)> _acc = new();
     private long _seq;
