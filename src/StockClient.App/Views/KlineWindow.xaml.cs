@@ -210,6 +210,8 @@ public partial class KlineWindow : Window
 
     private void Reset_Click(object sender, RoutedEventArgs e) => Chart.ResetView();
 
+    private void TapeTop_Click(object sender, RoutedEventArgs e) => Tape.ScrollToTop();
+
     /// <summary>
     /// Window-level shortcuts. Handled in the PREVIEW pass so the arrow keys never
     /// reach the period/adjust toggles, where WPF would spend them on directional

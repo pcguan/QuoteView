@@ -198,6 +198,9 @@
                            ToolTip="大单主动买" />
                 <TextBlock Text="●" FontSize="10" Foreground="#22D3E8" VerticalAlignment="Center" Margin="2,0,0,0"
                            ToolTip="大单主动卖" />
+                <Button x:Name="TapeTopButton" Content="↑ 回最新" FontSize="10" Padding="7,1"
+                        Margin="12,0,0,0" VerticalAlignment="Center" Click="TapeTop_Click"
+                        ToolTip="把列表滚回顶部，回到最新一笔成交" />
               </StackPanel>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <TextBlock Text="大单≥" FontSize="10" Foreground="#5F6672" VerticalAlignment="Center" />

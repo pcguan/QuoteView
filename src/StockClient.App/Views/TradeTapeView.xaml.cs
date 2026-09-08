@@ -76,6 +76,11 @@ public partial class TradeTapeView : UserControl
 
     public void Clear() => List.ItemsSource = null;
 
+    /// <summary>Snap back to the top — the newest print on a live (newest-first)
+    /// tape. After this the tape is "at top" again, so it resumes following the
+    /// newest as fresh prints arrive.</summary>
+    public void ScrollToTop() => Scroll?.ScrollToTop();
+
     /// <summary>One tape line, pre-shaped for the virtualized item template.</summary>
     private sealed record Row(string Time, string Price, string Volume, Brush PriceFg, Brush VolFg);
 }
