@@ -15,11 +15,18 @@ public partial class App : Application
     /// update, so the main window starts minimized and unactivated.</summary>
     public static bool StartBackground { get; private set; }
 
+    /// <summary>Set by "--updated": this launch is an auto-update relaunch (silent
+    /// or instant — the updater always passes it), never a normal manual start.
+    /// The case where the last session's windows should be restored rather than
+    /// left to a deliberate fresh foreground launch.</summary>
+    public static bool WasUpdated { get; private set; }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         StartBackground = e.Args.Contains("--background");
+        WasUpdated = e.Args.Contains("--updated");
 
         // A background poll failure should surface in the UI, not kill the app.
         DispatcherUnhandledException += OnDispatcherUnhandledException;

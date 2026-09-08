@@ -38,8 +38,15 @@ public partial class KlineWindow : Window
     private System.ComponentModel.ICollectionView? _contractView;
     private bool _syncing;   // programmatic group/contract/text change in progress
 
+    /// <summary>The current contract + view, for persisting/reopening the window.</summary>
+    public string Code => _vm.Contract.Code;
+    public bool IsTrendView => _vm.IsTrend;
+    public KlinePeriod PeriodValue => _vm.Period;
+    public KlineAdjust AdjustValue => _vm.Adjust;
+
     public KlineWindow(KlineViewModel vm, IReadOnlyList<ContractGroup> groups,
-        Func<Contract, KlineViewModel> factory)
+        Func<Contract, KlineViewModel> factory,
+        (bool Trend, KlinePeriod Period, KlineAdjust Adjust)? initialView = null)
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
@@ -50,6 +57,10 @@ public partial class KlineWindow : Window
         _groups = groups.ToArray();
         GroupBox.ItemsSource = _groups;
         _vm = vm;   // before BuildToggles / Bind, both of which read it
+        // Restored view: set 复权 up front so BuildToggles builds the row checked
+        // on the right one (it reads _vm.Adjust once, at build time). The setter
+        // may fire a reload; the mode applied on Loaded supersedes it.
+        if (initialView is { } iv0) _vm.Adjust = iv0.Adjust;
 
         BuildPeriodButtons();
         BuildToggles(AdjustButtons, Adjusts.Select(a => (object)a.Adjust).ToArray(),
@@ -57,7 +68,22 @@ public partial class KlineWindow : Window
         InitTape();
 
         Bind();
-        Loaded += async (_, _) => await _vm.ReloadAsync();
+        if (initialView is { } iv)
+        {
+            // Reopen in the exact view the window was persisted with (复权 already
+            // set above). ShowTrend/ShowKline supersede the default Day load.
+            Loaded += (_, _) =>
+            {
+                if (iv.Trend) _vm.ShowTrend();
+                else if (iv.Period != KlinePeriod.Day) _vm.ShowKline(iv.Period);
+                else _ = _vm.ReloadAsync();
+                RefreshPeriodStates();
+            };
+        }
+        else
+        {
+            Loaded += async (_, _) => await _vm.ReloadAsync();
+        }
         Closed += (_, _) => Unbind();
     }
 

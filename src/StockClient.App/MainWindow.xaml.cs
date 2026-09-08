@@ -53,6 +53,10 @@ public partial class MainWindow : FluentWindow
     // otherwise an ownerless window would keep the process alive.
     private readonly List<Views.KlineWindow> _klineWindows = new();
     private readonly List<Views.TrendHistoryWindow> _historyWindows = new();
+    // During app shutdown the tracked chart windows are closed one by one; the
+    // flag stops each close from rewriting the persisted "open charts" list down
+    // to empty, so the set captured at shutdown survives to the next launch.
+    private bool _shuttingDown;
 
     public MainWindow()
     {
@@ -222,6 +226,21 @@ public partial class MainWindow : FluentWindow
             // without this an idle-time auto-update restart would swallow the
             // ticker someone left on the desk.
             if (AppPrefs.PanelOpen && Operational) EnterStealth();
+
+            // After an auto-update restart a panel left hidden (shade 0) came back
+            // invisible AND unwakeable — the ghost double-click that normally
+            // revives it proved unreliable after the relaunch, leaving only the
+            // hotkey. Bring it back at the brightness it had before it was hidden
+            // so it's simply visible again. (No-op if it wasn't hidden.)
+            if (App.WasUpdated && _stealth is { } panel)
+                Dispatcher.BeginInvoke(new Action(() => panel.RestoreBrightness("post-update restart")),
+                    System.Windows.Threading.DispatcherPriority.Loaded);
+
+            // Reopen the charts from the last session on an auto-update relaunch
+            // (silent or instant), so an update doesn't quietly drop the windows
+            // someone was watching. Not on a deliberate manual launch — that's a
+            // fresh start, not a restore.
+            if (App.WasUpdated && Operational) RestoreOpenKlines();
         };
 
         // Double-clicking a live-quote row opens its chart; the view forwards the
@@ -273,6 +292,12 @@ public partial class MainWindow : FluentWindow
             _stealth?.Close();
             _systemSettings?.Close();
             _updateToast?.Close();
+
+            // Snapshot the open charts (with their latest view) before tearing
+            // them down, then flag shutdown so each window's close doesn't blank
+            // that snapshot — it's what a background restart reopens.
+            SaveOpenKlines();
+            _shuttingDown = true;
 
             // ToArray: each Close removes itself from the list via its Closed handler.
             foreach (var window in _klineWindows.ToArray()) window.Close();
@@ -810,7 +835,8 @@ public partial class MainWindow : FluentWindow
         return groups;
     }
 
-    private void OpenKline(Contract contract)
+    private void OpenKline(Contract contract,
+        (bool Trend, KlinePeriod Period, KlineAdjust Adjust)? initialView = null)
     {
         Probe.Log($"OpenKline {contract.Code} {contract.Name} secid={contract.EastMoneySecId}");
 
@@ -818,10 +844,35 @@ public partial class MainWindow : FluentWindow
         // which surfaced the main window every time a chart was clicked. Tracked
         // instead, and closed when the main window closes.
         var window = new Views.KlineWindow(
-            MakeKlineVm(contract), WatchedGroups(contract), MakeKlineVm);
+            MakeKlineVm(contract), WatchedGroups(contract), MakeKlineVm, initialView);
         _klineWindows.Add(window);
-        window.Closed += (_, _) => _klineWindows.Remove(window);
+        window.Closed += (_, _) =>
+        {
+            _klineWindows.Remove(window);
+            if (!_shuttingDown) SaveOpenKlines();   // a user close forgets that chart
+        };
         window.Show();
+        SaveOpenKlines();
+    }
+
+    /// <summary>Persist the set of open chart windows (contract + current view) so a
+    /// background / auto-update restart can bring them back where the user left off.</summary>
+    private void SaveOpenKlines() =>
+        AppPrefs.OpenKlines = _klineWindows
+            .Select(w => new AppPrefs.KlineWin(w.Code, w.IsTrendView, (int)w.PeriodValue, (int)w.AdjustValue))
+            .ToList();
+
+    /// <summary>Reopen the charts saved from the last session — only on an
+    /// unattended (background / auto-update) start, so a deliberate fresh launch
+    /// isn't buried under old charts. Each opens in the view it was closed in.</summary>
+    private void RestoreOpenKlines()
+    {
+        foreach (var k in AppPrefs.OpenKlines)
+        {
+            var contract = _vm.Repository.Find(k.Code)
+                           ?? new Contract { Code = k.Code, Name = _quotes?.RowName(k.Code) ?? k.Code };
+            OpenKline(contract, (k.Trend, (KlinePeriod)k.Period, (KlineAdjust)k.Adjust));
+        }
     }
 
     /// <summary>Walks up from the double-clicked element to its DataGridRow's item.</summary>

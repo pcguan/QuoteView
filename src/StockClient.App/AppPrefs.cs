@@ -19,10 +19,15 @@ public static class AppPrefs
         string ProxyMode = "", string ProxyAddress = "", string ApiBase = "",
         int UpdateDelayHours = 0, bool StealthIntroShown = false,
         int BigTradeWan = 100, double WindowOpacity = 1.0,
-        Dictionary<string, WinPlace>? Placements = null);
+        Dictionary<string, WinPlace>? Placements = null,
+        List<KlineWin>? OpenKlines = null);
 
     /// <summary>A window's remembered restore bounds + maximized state, per key.</summary>
     public sealed record WinPlace(double L, double T, double W, double H, bool Max);
+
+    /// <summary>An open K-line window to reopen next background/auto-update start:
+    /// its contract plus the view it was showing (Period/Adjust are the enum ints).</summary>
+    public sealed record KlineWin(string Code, bool Trend, int Period, int Adjust);
 
     private static Doc _doc = Load();
 
@@ -125,6 +130,14 @@ public static class AppPrefs
     }
 
     /// <summary>A window's remembered placement, or null if never saved.</summary>
+    /// <summary>The K-line windows open at the last (clean) shutdown, to reopen on
+    /// the next background/auto-update start. Empty list = none; persisted as-is.</summary>
+    public static IReadOnlyList<KlineWin> OpenKlines
+    {
+        get => _doc.OpenKlines ?? new List<KlineWin>();
+        set { _doc = _doc with { OpenKlines = new List<KlineWin>(value) }; Save(); }
+    }
+
     public static WinPlace? Placement(string key) =>
         _doc.Placements is { } d && d.TryGetValue(key, out var p) ? p : null;
 
