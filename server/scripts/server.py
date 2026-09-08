@@ -682,7 +682,12 @@ def fetch_eastmoney(code):
     """(series, data_day) from EastMoney trends2, or (None, None)."""
     market = "1" if code.startswith("SH") else "0"
     secid = f"{market}.{code[2:]}"
-    url = ("https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+    # push2delay, NOT push2his: 东财 drops this box's egress on the realtime hosts
+    # (push2/push2his → RemoteDisconnected), and this box shares the LAN's public IP
+    # with the desktop client — hammering the realtime hosts here kept the whole
+    # IP flagged, blocking push2 for the client too. push2delay serves the same
+    # archival data (a few minutes' delay is irrelevant for a day's 分时/归档).
+    url = ("https://push2delay.eastmoney.com/api/qt/stock/trends2/get"
            "?fields1=f1,f2,f3,f4,f5,f6,f7,f8"
            "&fields2=f51,f52,f53,f54,f55,f56,f57,f58"
            "&ut=fa5fd1943c7b386f172d6893dbfba10b&iscr=0&ndays=1"
@@ -869,7 +874,10 @@ def kline_body(secid, klt, fqt, lmt):
     if meta and time.time() - meta.get("at", 0) < KLINE_TTL_S:
         return meta["body"]
 
-    url = ("https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    # push2delay, NOT push2his (see fetch_eastmoney): keep this box off 东财's
+    # realtime hosts so the LAN's shared IP isn't flagged. Daily kline is settled
+    # data; the delay host serves it identically.
+    url = ("https://push2delay.eastmoney.com/api/qt/stock/kline/get"
            "?fields1=f1,f2,f3,f4,f5,f6"
            "&fields2=f51,f52,f53,f54,f55,f56,f57"
            f"&klt={klt}&fqt={fqt}&secid={secid}&end=20500101&lmt={lmt}")
@@ -1315,12 +1323,14 @@ def enrich_summaries(day, codes):
 
 def fetch_fflow(code, day):
     """(主力净流入净额 元, 主力净占比 %) for `day` from EastMoney's fund-flow day
-    line, or (None, None). On push2his (reachable here, unlike the realtime
-    ulist.np fund-flow the desktop uses). Row = date,f52…f57… — f52 is 主力净流入,
-    f57 主力净占比."""
+    line, or (None, None). push2delay, NOT push2his: the realtime hosts drop this
+    box's egress (RemoteDisconnected → the archive silently ran done=0), and this
+    box shares the LAN's public IP with the desktop client, so that failing
+    traffic kept the shared IP flagged. Daily fund-flow is settled data; the delay
+    host serves it fine. Row = date,f52…f57… — f52 is 主力净流入, f57 主力净占比."""
     market = "1" if code.startswith("SH") else "0"
     secid = f"{market}.{code[2:]}"
-    url = ("https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+    url = ("https://push2delay.eastmoney.com/api/qt/stock/fflow/daykline/get"
            "?lmt=0&klt=101&fields1=f1,f2,f3,f7"
            "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65"
            f"&secid={secid}")
