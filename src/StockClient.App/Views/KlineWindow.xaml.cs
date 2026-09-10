@@ -74,10 +74,17 @@ public partial class KlineWindow : Window
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
         InitTape();
 
-        // Second-precision wall clock, shown top-right of the 分时 chart (handy for
-        // eyeballing how far the data lags the current time). Ticks every second
-        // regardless of the 3s data refresh.
-        _clockTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        // Second-precision wall clock in the 分时 stat row (handy for eyeballing how
+        // far the data lags the current time). Poll at 200ms, NOT a 1s tick: a 1s
+        // timer flips the second ~however-far-past-the-boundary the window opened —
+        // the "clock updates late" lag. Re-reading DateTime.Now every 200ms flips it
+        // within 200ms of the real boundary and never drifts; setting the same
+        // string is a no-op, so the extra ticks cost nothing. Normal priority (not
+        // the parameterless ctor's Background) keeps it punctual under chart/tape
+        // rendering.
+        _clockTimer = new System.Windows.Threading.DispatcherTimer(
+            System.Windows.Threading.DispatcherPriority.Normal)
+        { Interval = TimeSpan.FromMilliseconds(200) };
         _clockTimer.Tick += (_, _) => ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
         ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
         _clockTimer.Start();
