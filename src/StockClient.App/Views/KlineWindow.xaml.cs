@@ -552,8 +552,8 @@ public partial class KlineWindow : Window
         DepthPane.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         DepthColumn.Width = trend ? new GridLength(DepthWidth) : new GridLength(0);
         // 每日实时信息 header — only in 分时 (the 1s quote it reads is polled there).
+        // The clock lives inside TopStats now, so its visibility rides along.
         TopStats.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
-        ClockText.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         if (trend) RenderDepth();
 
         // 成交明细 rides alongside the book, and only where EastMoney serves it (沪深).

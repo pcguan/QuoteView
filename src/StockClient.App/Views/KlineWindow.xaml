@@ -91,6 +91,12 @@
           <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="内盘" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopInner" Foreground="#26A69A" FontSize="11" /></StackPanel>
           <StackPanel Orientation="Horizontal" Margin="0,2,14,2"><TextBlock Text="外盘" Foreground="#8B93A3" FontSize="11" Width="54" /><TextBlock x:Name="TopOuter" Foreground="#EF5350" FontSize="11" /></StackPanel>
         </UniformGrid>
+
+        <!-- 秒级实时时钟:占用跌停/市净列右侧的空地,放大显示,便于对比数据时间看延迟。
+             随 TopStats 一起只在分时显示。 -->
+        <TextBlock x:Name="ClockText" VerticalAlignment="Center" Margin="14,0,8,0"
+                   FontSize="20" FontFamily="Consolas" Foreground="#B4BECC"
+                   ToolTip="当前本机时间（秒）" />
       </StackPanel>
     </Border>
 
@@ -109,11 +115,6 @@
         <TextBlock x:Name="Overlay" Grid.Column="0" Text="加载中…" FontSize="13" Foreground="#8B93A3"
                    HorizontalAlignment="Center" VerticalAlignment="Center"
                    Visibility="Collapsed" />
-        <!-- 分时实时时钟:右上角,秒级跳,只在分时显示;不挡鼠标(十字光标/拖动照常)。 -->
-        <TextBlock x:Name="ClockText" Grid.Column="0" Visibility="Collapsed"
-                   HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,12,0"
-                   FontSize="13" FontFamily="Consolas" Foreground="#8B93A3"
-                   IsHitTestVisible="False" ToolTip="当前本机时间（秒）" />
 
         <Border x:Name="DepthPane" Grid.Column="1" Visibility="Collapsed"
                 BorderBrush="#222A38" BorderThickness="1,0,0,0" Padding="10,8">
