@@ -74,18 +74,23 @@ public partial class KlineWindow : Window
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
         InitTape();
 
-        // Second-precision wall clock in the 分时 stat row (handy for eyeballing how
-        // far the data lags the current time). Poll at 200ms, NOT a 1s tick: a 1s
-        // timer flips the second ~however-far-past-the-boundary the window opened —
-        // the "clock updates late" lag. Re-reading DateTime.Now every 200ms flips it
-        // within 200ms of the real boundary and never drifts; setting the same
-        // string is a no-op, so the extra ticks cost nothing. Normal priority (not
-        // the parameterless ctor's Background) keeps it punctual under chart/tape
-        // rendering.
+        // Second clock in the 分时 stat row (handy for eyeballing how far the data
+        // lags the current time). It flips ON the boundary, not a poll-interval
+        // late: each tick re-aims the next interval at just past the coming whole
+        // second (1000ms − current ms, +10 so it lands AFTER the boundary and reads
+        // the new second, never a hair before). DispatcherTimer never fires early,
+        // so this self-corrects every second — no drift, and the flip lands within
+        // timer resolution (~15ms) of the boundary, below what the eye catches.
+        // Render priority keeps it prompt under chart/tape rendering.
         _clockTimer = new System.Windows.Threading.DispatcherTimer(
-            System.Windows.Threading.DispatcherPriority.Normal)
-        { Interval = TimeSpan.FromMilliseconds(200) };
-        _clockTimer.Tick += (_, _) => ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
+            System.Windows.Threading.DispatcherPriority.Render);
+        _clockTimer.Tick += (_, _) =>
+        {
+            var now = DateTime.Now;
+            ClockText.Text = now.ToString("HH:mm:ss");
+            _clockTimer.Interval = TimeSpan.FromMilliseconds(1010 - now.Millisecond);
+        };
+        _clockTimer.Interval = TimeSpan.FromMilliseconds(10);
         ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
         _clockTimer.Start();
 
