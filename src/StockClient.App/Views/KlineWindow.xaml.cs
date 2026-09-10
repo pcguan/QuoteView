@@ -37,6 +37,7 @@ public partial class KlineWindow : Window
     private ContractItem[] _contractItems = Array.Empty<ContractItem>();
     private System.ComponentModel.ICollectionView? _contractView;
     private bool _syncing;   // programmatic group/contract/text change in progress
+    private readonly System.Windows.Threading.DispatcherTimer _clockTimer;
 
     /// <summary>The current contract + view, for persisting/reopening the window.</summary>
     public string Code => _vm.Contract.Code;
@@ -73,6 +74,14 @@ public partial class KlineWindow : Window
             Adjusts.Select(a => a.Label).ToArray(), () => _vm.Adjust, a => _vm.Adjust = (KlineAdjust)a);
         InitTape();
 
+        // Second-precision wall clock, shown top-right of the 分时 chart (handy for
+        // eyeballing how far the data lags the current time). Ticks every second
+        // regardless of the 3s data refresh.
+        _clockTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _clockTimer.Tick += (_, _) => ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
+        ClockText.Text = DateTime.Now.ToString("HH:mm:ss");
+        _clockTimer.Start();
+
         Bind();
         if (initialView is { } iv)
         {
@@ -90,7 +99,7 @@ public partial class KlineWindow : Window
         {
             Loaded += async (_, _) => await _vm.ReloadAsync();
         }
-        Closed += (_, _) => Unbind();
+        Closed += (_, _) => { _clockTimer.Stop(); Unbind(); };
     }
 
     /// <summary>Wires the current <see cref="_vm"/> to the view and reflects it in
@@ -544,6 +553,7 @@ public partial class KlineWindow : Window
         DepthColumn.Width = trend ? new GridLength(DepthWidth) : new GridLength(0);
         // 每日实时信息 header — only in 分时 (the 1s quote it reads is polled there).
         TopStats.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
+        ClockText.Visibility = trend ? Visibility.Visible : Visibility.Collapsed;
         if (trend) RenderDepth();
 
         // 成交明细 rides alongside the book, and only where EastMoney serves it (沪深).
