@@ -32,17 +32,26 @@ public sealed record QuoteExtra
 }
 
 /// <summary>
-/// EastMoney batch real-time (ulist.np) for the A-share fund-flow and 涨速 fields
-/// Tencent doesn't carry. One batched request for all secids — a secondary,
-/// slower poll beside the primary Tencent quote, only run when those columns are
-/// on (see <see cref="EastMoneyExtraPoller"/>).
+/// EastMoney batch (ulist.np) for the A-share fund-flow and 涨速 fields Tencent
+/// doesn't carry. One batched request for all secids — a secondary, slower poll
+/// beside the primary Tencent quote, only run when those columns are on (see
+/// <see cref="EastMoneyExtraPoller"/>).
 ///
 /// A-shares only: 涨速/资金流 don't exist for HK/US/KR. Rows are matched back by
 /// secid (f13.f12), which disambiguates SZ from BJ — both report f13=0.
+///
+/// push2delay, NOT the realtime push2: 东财 drops push2 on many egress IPs
+/// (RemoteDisconnected), so on those boxes the whole batch came back empty and
+/// 主力净流入 showed blank for a group — worse on big groups whose one request is
+/// likelier to be dropped. 主力净流入 is a settled DAILY total, so push2delay's
+/// few-minute lag doesn't matter, and it's reachable everywhere (涨速 rides along
+/// a touch delayed, an acceptable trade for the column actually showing up). It
+/// also keeps the client off the realtime hosts, whose failed 5s polls were part
+/// of what kept a shared home IP flagged.
 /// </summary>
 public sealed class EastMoneyQuoteClient
 {
-    private const string Host = "push2.eastmoney.com";
+    private const string Host = "push2delay.eastmoney.com";
     private const string Referer = "https://quote.eastmoney.com/";
     private const string Fields = "f12,f13,f22,f62,f66,f72,f78,f84,f184";
 
