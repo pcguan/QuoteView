@@ -40,18 +40,18 @@ public sealed record QuoteExtra
 /// A-shares only: 涨速/资金流 don't exist for HK/US/KR. Rows are matched back by
 /// secid (f13.f12), which disambiguates SZ from BJ — both report f13=0.
 ///
-/// push2delay, NOT the realtime push2: 东财 drops push2 on many egress IPs
-/// (RemoteDisconnected), so on those boxes the whole batch came back empty and
-/// 主力净流入 showed blank for a group — worse on big groups whose one request is
-/// likelier to be dropped. 主力净流入 is a settled DAILY total, so push2delay's
-/// few-minute lag doesn't matter, and it's reachable everywhere (涨速 rides along
-/// a touch delayed, an acceptable trade for the column actually showing up). It
-/// also keeps the client off the realtime hosts, whose failed 5s polls were part
-/// of what kept a shared home IP flagged.
+/// This IS meant to be realtime (涨速 and the running 主力净流入 both move
+/// intraday), so it hits the realtime push2 FIRST. But 东财 drops push2 on many
+/// egress IPs (RemoteDisconnected → the whole batch comes back empty, blanking a
+/// group's columns, worst on big groups whose one request is likelier dropped),
+/// so it falls back to push2delay per poll rather than showing nothing: realtime
+/// where push2 is reachable, a few minutes stale but present where it isn't.
 /// </summary>
 public sealed class EastMoneyQuoteClient
 {
-    private const string Host = "push2delay.eastmoney.com";
+    // Realtime first, delayed as a never-blank fallback (see the DetailsClient,
+    // which does the same for 逐笔).
+    private static readonly string[] Hosts = { "push2.eastmoney.com", "push2delay.eastmoney.com" };
     private const string Referer = "https://quote.eastmoney.com/";
     private const string Fields = "f12,f13,f22,f62,f66,f72,f78,f84,f184";
 
@@ -67,10 +67,33 @@ public sealed class EastMoneyQuoteClient
         if (targets.Count == 0) return result;
 
         var bySecId = targets.ToDictionary(t => t.SecId, t => t.Code, StringComparer.OrdinalIgnoreCase);
+        var secids = string.Join(",", targets.Select(t => t.SecId));
+
+        foreach (var host in Hosts)
+        {
+            try
+            {
+                var got = await FetchFromAsync(host, secids, bySecId, cancellationToken);
+                if (got.Count > 0) return got;   // push2 answered (realtime); skip the delayed host
+            }
+            catch (OperationCanceledException) { throw; }
+            catch
+            {
+                // push2 dropped this egress (or a transient error) — try push2delay.
+            }
+        }
+
+        return result;   // both empty/failed — leave the columns as they were
+    }
+
+    private async Task<Dictionary<string, QuoteExtra>> FetchFromAsync(
+        string host, string secids, IReadOnlyDictionary<string, string> bySecId,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, QuoteExtra>(StringComparer.OrdinalIgnoreCase);
 
         var url =
-            $"https://{Host}/api/qt/ulist.np/get?fltt=2&invt=2" +
-            $"&fields={Fields}&secids={string.Join(",", targets.Select(t => t.SecId))}";
+            $"https://{host}/api/qt/ulist.np/get?fltt=2&invt=2&fields={Fields}&secids={secids}";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Referrer = new Uri(Referer);
