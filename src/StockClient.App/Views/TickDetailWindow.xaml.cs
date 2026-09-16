@@ -44,6 +44,7 @@ public partial class TickDetailWindow : Window
         InitializeComponent();
         WindowDimmer.Attach(this);
         WindowPlacement.Attach(this, "tickdetail");
+        WindowMinimizeGesture.Attach(this);   // double-click a blank area to minimize
 
         _contract = contract;
         _quote = quote;
