@@ -38,6 +38,7 @@ public partial class KlineWindow : Window
     private System.ComponentModel.ICollectionView? _contractView;
     private bool _syncing;   // programmatic group/contract/text change in progress
     private readonly System.Windows.Threading.DispatcherTimer _clockTimer;
+    private readonly List<TickDetailWindow> _detailWindows = new();
 
     /// <summary>The current contract + view, for persisting/reopening the window.</summary>
     public string Code => _vm.Contract.Code;
@@ -111,7 +112,12 @@ public partial class KlineWindow : Window
         {
             Loaded += async (_, _) => await _vm.ReloadAsync();
         }
-        Closed += (_, _) => { _clockTimer.Stop(); Unbind(); };
+        Closed += (_, _) =>
+        {
+            _clockTimer.Stop();
+            foreach (var w in _detailWindows.ToArray()) w.Close();
+            Unbind();
+        };
     }
 
     /// <summary>Wires the current <see cref="_vm"/> to the view and reflects it in
@@ -539,8 +545,15 @@ public partial class KlineWindow : Window
     private void More_Click(object sender, RoutedEventArgs e)
     {
         if (_vm.Details is null) return;
-        new TickDetailWindow(_vm.Contract, _vm.Live, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan)
-        { Owner = this }.Show();
+        // NOT Owner-bound: an owned popup minimizes and closes with the chart
+        // window, which is the "why does 成交明细 shrink with the K线图" surprise —
+        // the reader wanted it to stand on its own. Tracked instead, and closed
+        // when this window closes so it doesn't orphan.
+        var win = new TickDetailWindow(
+            _vm.Contract, _vm.Live, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan);
+        _detailWindows.Add(win);
+        win.Closed += (_, _) => _detailWindows.Remove(win);
+        win.Show();
     }
 
     private void OnTrendLoaded() => Dispatcher.Invoke(() =>
