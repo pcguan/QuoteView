@@ -24,6 +24,13 @@ public sealed class KlineViewModel : ObservableObject
     /// <summary>Intraday re-poll cadence (trend line + 五档 + 逐笔). 3s matches the
     /// 逐笔 feed's own refresh; the minute-grained trend just rides along.</summary>
     private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(3);
+    // 逐笔 tape polls on its OWN faster, Normal-priority timer (not the 3s Background
+    // trend tick): the details CDN serves an inconsistent tail across edges, so the
+    // tape only advances on a poll that happens to hit a fresh edge — at 3s (and
+    // starved behind rendering) fresh polls landed only every several seconds, so
+    // the tape sat still then dumped a batch. 1s hits a fresh edge far more often,
+    // keeping the tape flowing in small steps.
+    private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// Candle re-poll cadence. Candles don't move — the running one isn't drawn —
@@ -45,6 +52,7 @@ public sealed class KlineViewModel : ObservableObject
     private readonly EastMoneyDetailsClient? _details;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
+    private readonly DispatcherTimer _detailTimer;
     private readonly DispatcherTimer _klineTimer;
 
     private CancellationTokenSource? _cts;
@@ -78,6 +86,14 @@ public sealed class KlineViewModel : ObservableObject
             Interval = TrendInterval,
         };
         _trendTimer.Tick += (_, _) => _ = LoadTrendAsync();
+
+        // Normal priority (not Background): the 逐笔 poll must fire on time, not get
+        // starved behind chart/tape rendering, or the tape gaps grow.
+        _detailTimer = new DispatcherTimer(DispatcherPriority.Normal, dispatcher)
+        {
+            Interval = DetailInterval,
+        };
+        _detailTimer.Tick += (_, _) => _ = PollDetailsAsync();
 
         _klineTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
         {
@@ -216,7 +232,9 @@ public sealed class KlineViewModel : ObservableObject
 
         IsTrend = true;
         _trendTimer.Start();
+        if (HasTape) _detailTimer.Start();   // only 沪深 have a 逐笔 tape to poll
         _ = LoadTrendAsync();
+        _ = PollDetailsAsync();   // fill the tape at once rather than waiting a tick (self-guards)
     }
 
     private void LeaveTrend()
@@ -224,6 +242,7 @@ public sealed class KlineViewModel : ObservableObject
         if (!IsTrend) return;
         IsTrend = false;
         _trendTimer.Stop();
+        _detailTimer.Stop();
     }
 
     /// <summary>
@@ -245,8 +264,7 @@ public sealed class KlineViewModel : ObservableObject
             Error = "";
         }
 
-        _ = PollLiveAsync();
-        _ = PollDetailsAsync();
+        _ = PollLiveAsync();   // 逐笔 rides its own faster _detailTimer now
 
         try
         {
@@ -441,6 +459,7 @@ public sealed class KlineViewModel : ObservableObject
     public void Dispose()
     {
         _trendTimer.Stop();
+        _detailTimer.Stop();
         _klineTimer.Stop();
         _cts?.Cancel();
     }
