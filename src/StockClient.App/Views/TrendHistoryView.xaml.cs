@@ -132,7 +132,12 @@ public partial class TrendHistoryView : UserControl
         var remote = await _session.DatesAsync(item.Code);
         if (request != _datesRequest) return;
 
-        var dates = local.Concat(remote).Distinct().OrderByDescending(d => d).ToArray();
+        // Drop weekend dates: A/HK/US/KR never trade Sat/Sun, so any such entry is
+        // a stale local cache file mislabeled with a non-trading calendar day (see
+        // TrendRepository) — hide it whether it's already on disk or not.
+        var dates = local.Concat(remote).Distinct()
+            .Where(d => d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            .OrderByDescending(d => d).ToArray();
         DateBox.ItemsSource = dates;
 
         if (dates.Length == 0)
