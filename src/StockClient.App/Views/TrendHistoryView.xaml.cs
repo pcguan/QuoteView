@@ -132,11 +132,15 @@ public partial class TrendHistoryView : UserControl
         var remote = await _session.DatesAsync(item.Code);
         if (request != _datesRequest) return;
 
-        // Drop weekend dates: A/HK/US/KR never trade Sat/Sun, so any such entry is
-        // a stale local cache file mislabeled with a non-trading calendar day (see
-        // TrendRepository) — hide it whether it's already on disk or not.
+        // Drop non-trading dates: any such entry is a stale local cache file
+        // mislabeled with a non-trading calendar day (see TrendRepository). A-share
+        // uses the 深交所 calendar (weekends + holidays); other markets fall back to
+        // a weekday check.
+        var aShare = StockClient.Core.Contracts.TradingCalendar.IsAShareCode(item.Code);
         var dates = local.Concat(remote).Distinct()
-            .Where(d => d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            .Where(d => aShare
+                ? StockClient.Core.Contracts.TradingCalendar.IsAShareTradingDay(d)
+                : d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
             .OrderByDescending(d => d).ToArray();
         DateBox.ItemsSource = dates;
 

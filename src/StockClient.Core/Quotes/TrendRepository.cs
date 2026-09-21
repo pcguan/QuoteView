@@ -79,14 +79,14 @@ public sealed class TrendRepository
         if (series is null || series.Points.Count == 0) return cached?.Series;
 
         _cache[contract.Code] = new Entry(date, DateTime.UtcNow, series, settled);
-        // Never persist under a weekend date. TradingDate is the market-tz CALENDAR
-        // day (no holiday calendar by design), so on Sat/Sun it's a non-trading
-        // date while the fetch returns the LAST session's trend — saving that under
-        // the weekend date spawned a bogus "today" entry in 历史分时 (its content
-        // being the prior Friday). Weekends are the common non-trading case and are
-        // known without a calendar; holidays remain the accepted gap.
-        var tradingDay = date.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday);
-        if (settled && tradingDay) _disk?.Save(series, date);
+        // Never persist under a NON-trading date. TradingDate is the market-tz
+        // CALENDAR day, so on a weekend/holiday it's a non-trading date while the
+        // fetch returns the LAST session's trend — saving that under it spawned a
+        // bogus "today" entry in 历史分时 (its content being the prior Friday). The
+        // A-share calendar (深交所, weekends + holidays + 调休) settles this; other
+        // markets fall back to a weekday check.
+        if (settled && Contracts.TradingCalendar.IsTradingDay(contract.Market, date))
+            _disk?.Save(series, date);
 
         return series;
     }

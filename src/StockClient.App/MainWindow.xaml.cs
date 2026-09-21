@@ -87,6 +87,11 @@ public partial class MainWindow : FluentWindow
         _klineHttp = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
         _klineHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
+        // A-share trading calendar (weekends + holidays): cached copy up front for
+        // an instant, correct answer, then refreshed from 深交所 in the background.
+        Services.TradingCalendarService.LoadCached();
+        _ = Services.TradingCalendarService.RefreshAsync(_klineHttp);
+
         var appVersion = System.Reflection.Assembly.GetExecutingAssembly()
             .GetName().Version?.ToString(3) ?? "";
         _session = new AccountSession(new AccountClient(
