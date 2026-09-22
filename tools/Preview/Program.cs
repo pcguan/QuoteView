@@ -127,6 +127,28 @@ public static class Program
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history2 },
             @"C:\work\preview-history.png");
 
+        // Intraday, only ~1.5h filled (09:30→11:02): the time axis must stay on the
+        // fixed 9:30/10:30/11:30/14:00/15:00 grid across the whole width, not bunch
+        // arbitrary clocks on the left the way the points.Count split used to.
+        var ptsPartial = new List<StockClient.Core.Quotes.TrendPoint>();
+        for (var i = 0; i < 92; i++)
+        {
+            var t = new DateTime(2026, 8, 24, 9, 30, 0).AddMinutes(i);
+            ptsPartial.Add(new StockClient.Core.Quotes.TrendPoint
+            {
+                Time = t.ToString("yyyy-MM-dd HH:mm"),
+                Price = Math.Round(100 + 3 * Math.Sin(i / 24.0) + i * 0.004, 2),
+                AvgPrice = Math.Round(100 + 1.5 * Math.Sin(i / 40.0), 2),
+                Volume = 5000 + 4000 * Math.Abs(Math.Sin(i / 9.0)),
+            });
+        }
+        var partialSeries = new StockClient.Core.Quotes.TrendSeries
+            { Code = "SH600519", Name = "贵州茅台", PreClose = 100.5, Points = ptsPartial };
+        var trendPartial = new StockClient.App.Views.TrendHistoryView { Width = 980, Height = 430 };
+        ((StockClient.App.Views.TrendChart)chartField.GetValue(trendPartial)!).SetSeries(partialSeries);
+        Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = trendPartial },
+            @"C:\work\preview-trend-partial.png");
+
         // 5) The login dialog, form state.
         var session = new StockClient.App.Services.AccountSession(
             new StockClient.Core.Quotes.AccountClient(new System.Net.Http.HttpClient()),

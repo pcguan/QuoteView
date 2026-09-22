@@ -370,16 +370,46 @@ public sealed class TrendChart : FrameworkElement
     private void DrawTimeAxis(
         DrawingContext dc, double step, double bottom, IReadOnlyList<TrendPoint> points)
     {
+        // Labels sit on the FIXED session grid (spanning ExpectedSlots), not on the
+        // fraction of points collected so far. Using points.Count put the ticks at
+        // arbitrary clocks (9:52, 10:37, …) bunched in the filled part whenever the
+        // day was only partly done; projecting from the open keeps them regular
+        // (9:30 / 10:30 / 11:30 / 14:00 / 15:00) across the whole width all day.
+        var slots = ExpectedSlots(points);
+        var open = ParseClock(points[0].Clock);
         const int ticks = 4;
         for (var t = 0; t <= ticks; t++)
         {
-            var i = (int)Math.Round((double)(points.Count - 1) * t / ticks);
-            i = Math.Clamp(i, 0, points.Count - 1);
-
-            var text = Label(points[i].Clock, AxisText);
-            var tx = Math.Clamp(X(i, step) - text.Width / 2, 0, ActualWidth - text.Width);
+            var slot = (int)Math.Round((double)(slots - 1) * t / ticks);
+            var text = Label(SlotToClock(slot, slots, open), AxisText);
+            var tx = Math.Clamp(X(slot, step) - text.Width / 2, 0, ActualWidth - text.Width);
             dc.DrawText(text, new Point(tx, bottom + 4));
         }
+    }
+
+    /// <summary>Minutes since midnight for an "HH:mm" clock, or -1 if unparseable.</summary>
+    private static int ParseClock(string clock) =>
+        clock.Length >= 5
+        && int.TryParse(clock.AsSpan(0, 2), out var h)
+        && int.TryParse(clock.AsSpan(3, 2), out var m)
+            ? h * 60 + m : -1;
+
+    /// <summary>Wall-clock label for a fixed-grid slot, projected from the open so
+    /// ticks stay regular before the day has filled. A-share (241 slots) and HK
+    /// (331) resume at 13:00 after lunch; other sessions (US/KR, 391) run straight
+    /// through. US night sessions wrap past midnight, hence the mod.</summary>
+    private static string SlotToClock(int slot, int slots, int open)
+    {
+        if (open < 0) return "";
+        const int afternoon = 13 * 60;   // 13:00 lunch resume (A-share & HK)
+        var min = slots switch
+        {
+            241 => slot <= 120 ? open + slot : afternoon + (slot - 120),   // 9:30-11:30 / 13:00-15:00
+            331 => slot <= 150 ? open + slot : afternoon + (slot - 150),   // 9:30-12:00 / 13:00-16:00
+            _ => open + slot,                                              // continuous
+        };
+        min = ((min % 1440) + 1440) % 1440;
+        return $"{min / 60:D2}:{min % 60:D2}";
     }
 
     private void DrawCrosshair(
