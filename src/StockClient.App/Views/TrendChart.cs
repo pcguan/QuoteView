@@ -390,10 +390,17 @@ public sealed class TrendChart : FrameworkElement
         var y = priceToY(p.Price);
         dc.DrawLine(CrosshairPen, new Point(PadLeft, y), new Point(ActualWidth - PadRight, y));
 
-        DrawReadout(dc, p);
+        DrawReadout(dc, p, cx);
     }
 
-    private void DrawReadout(DrawingContext dc, TrendPoint p)
+    // Keep the readout on the side AWAY from the cursor, so it never sits over the
+    // point being read. It used to be pinned top-left and covered a top-left hover.
+    private double ReadoutLeft(double cx, double totalWidth) =>
+        cx <= ActualWidth / 2
+            ? Math.Max(PadLeft + 6, ActualWidth - PadRight - totalWidth - 6)
+            : PadLeft + 6;
+
+    private void DrawReadout(DrawingContext dc, TrendPoint p, double cx)
     {
         var main = ReadoutLines(p, _series!.PreClose);
 
@@ -415,7 +422,7 @@ public sealed class TrendChart : FrameworkElement
             var width = Math.Max(keyWidth + valWidth + 22,
                 Math.Max(headMain.Width, headCmp.Width) + 16);
 
-            var x = PadLeft + 6;
+            var x = ReadoutLeft(cx, width + 8 + width);
             DrawReadoutBox(dc, x, headMain, main, width, keyWidth);
             DrawReadoutBox(dc, x + width + 8, headCmp, other, width, keyWidth);
             return;
@@ -424,7 +431,8 @@ public sealed class TrendChart : FrameworkElement
         var rowHeight = main[0].Key.Height + 3;
         var kw = main.Max(t => t.Key.Width);
         var vw = main.Max(t => t.Val.Width);
-        var box = new Rect(PadLeft + 6, PadTop + 6, kw + vw + 22, rowHeight * main.Length + 10);
+        var w = kw + vw + 22;
+        var box = new Rect(ReadoutLeft(cx, w), PadTop + 6, w, rowHeight * main.Length + 10);
         dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
 
         var yy = box.Top + 5;
