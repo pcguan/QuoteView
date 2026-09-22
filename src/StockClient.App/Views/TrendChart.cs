@@ -33,9 +33,9 @@ public sealed class TrendChart : FrameworkElement
     private static readonly Brush ReadoutBorder = Frozen("#33405C");
     private static readonly Pen ReadoutBorderPen = FrozenPen(ReadoutBorder, 1);
 
-    private const double PadLeft = 8;
-    private const double PadRight = 62;
-    private const double PadTop = 22;
+    private const double PadLeft = 54;    // left axis: price
+    private const double PadRight = 54;   // right axis: 涨跌幅 %
+    private const double PadTop = 22;      // top: hover readout row
     private const double PadBottom = 22;
     private const double VolumeFraction = 0.26;
     private const double GapFraction = 0.04;
@@ -291,11 +291,16 @@ public sealed class TrendChart : FrameworkElement
             var y = priceToY(price);
             dc.DrawLine(GridPen, new Point(PadLeft, y), new Point(ActualWidth - PadRight, y));
 
-            // Right axis: price, coloured by its side of the previous close. The
-            // exact % is in the crosshair readout.
+            // Both axes coloured by their side of the previous close: LEFT = price,
+            // RIGHT = 涨跌幅 % vs 昨收 (东财-style twin axes).
             var brush = price >= pre ? UpBrush : DownBrush;
-            var text = Label(FormatPrice(price), brush);
-            dc.DrawText(text, new Point(ActualWidth - PadRight + 5, y - text.Height / 2));
+            var priceText = Label(FormatPrice(price), brush);
+            dc.DrawText(priceText, new Point(PadLeft - 5 - priceText.Width, y - priceText.Height / 2));
+
+            var pct = pre > 0 ? (price / pre - 1) * 100 : 0;
+            var pctText = Label(
+                pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", brush);
+            dc.DrawText(pctText, new Point(ActualWidth - PadRight + 5, y - pctText.Height / 2));
         }
 
         // Emphasised previous-close baseline.
@@ -390,7 +395,52 @@ public sealed class TrendChart : FrameworkElement
         var y = priceToY(p.Price);
         dc.DrawLine(CrosshairPen, new Point(PadLeft, y), new Point(ActualWidth - PadRight, y));
 
-        DrawReadout(dc, p, cx);
+        // Compare mode keeps the twin per-day boxes; the single day uses 东财-style
+        // axis tags (price left, 涨跌幅 right) plus a one-line readout across the top.
+        if (_compare is { Points.Count: > 0 })
+        {
+            DrawReadout(dc, p, cx);
+            return;
+        }
+
+        var pre = _series!.PreClose;
+        var brush = p.Price >= pre ? UpBrush : DownBrush;
+        DrawAxisTag(dc, y, FormatPrice(p.Price), brush, left: true);
+        var pct = pre > 0 ? (p.Price / pre - 1) * 100 : 0;
+        DrawAxisTag(dc, y,
+            pct.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + "%", brush, left: false);
+        DrawTopRow(dc, p, pre);
+    }
+
+    /// <summary>A filled value chip on an axis at the crosshair's y — price on the
+    /// left, 涨跌幅 on the right.</summary>
+    private void DrawAxisTag(DrawingContext dc, double y, string text, Brush brush, bool left)
+    {
+        var t = Label(text, brush);
+        var w = t.Width + 8;
+        var h = t.Height + 4;
+        var cy = Math.Clamp(y, h / 2, ActualHeight - h / 2);
+        var boxLeft = left ? PadLeft - w : ActualWidth - PadRight;
+        var box = new Rect(boxLeft, cy - h / 2, w, h);
+        dc.DrawRectangle(ReadoutBg, new Pen(brush, 1), box);
+        dc.DrawText(t, new Point(box.Left + 4, box.Top + 2));
+    }
+
+    /// <summary>The hover data as one horizontal line across the top (时间 价 均价
+    /// 涨跌幅 量) — replaces the old floating box for the single-day view.</summary>
+    private void DrawTopRow(DrawingContext dc, TrendPoint p, double pre)
+    {
+        var limit = ActualWidth - PadRight;
+        var x = (double)PadLeft;
+        const double y = 3;
+        foreach (var (key, val) in ReadoutLines(p, pre))
+        {
+            if (x + key.Width + 4 + val.Width > limit) break;
+            dc.DrawText(key, new Point(x, y));
+            x += key.Width + 4;
+            dc.DrawText(val, new Point(x, y));
+            x += val.Width + 14;
+        }
     }
 
     // Keep the readout on the side AWAY from the cursor, so it never sits over the
@@ -425,22 +475,6 @@ public sealed class TrendChart : FrameworkElement
             var x = ReadoutLeft(cx, width + 8 + width);
             DrawReadoutBox(dc, x, headMain, main, width, keyWidth);
             DrawReadoutBox(dc, x + width + 8, headCmp, other, width, keyWidth);
-            return;
-        }
-
-        var rowHeight = main[0].Key.Height + 3;
-        var kw = main.Max(t => t.Key.Width);
-        var vw = main.Max(t => t.Val.Width);
-        var w = kw + vw + 22;
-        var box = new Rect(ReadoutLeft(cx, w), PadTop + 6, w, rowHeight * main.Length + 10);
-        dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
-
-        var yy = box.Top + 5;
-        foreach (var (key, val) in main)
-        {
-            dc.DrawText(key, new Point(box.Left + 8, yy));
-            dc.DrawText(val, new Point(box.Right - 8 - val.Width, yy));
-            yy += rowHeight;
         }
     }
 

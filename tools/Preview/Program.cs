@@ -117,7 +117,13 @@ public static class Program
         var history2 = new StockClient.App.Views.TrendHistoryView { Width = 980, Height = 430 };
         var chartField = typeof(StockClient.App.Views.TrendHistoryView)
             .GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        ((StockClient.App.Views.TrendChart)chartField.GetValue(history2)!).SetSeries(fakeSeries);
+        var chart2 = (StockClient.App.Views.TrendChart)chartField.GetValue(history2)!;
+        chart2.SetSeries(fakeSeries);
+        // Hover so the single-day 东财-style readout (top row + left price / right %
+        // axis tags) renders.
+        typeof(StockClient.App.Views.TrendChart)
+            .GetField("_hoverIndex", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(chart2, 40);
         Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history2 },
             @"C:\work\preview-history.png");
 
