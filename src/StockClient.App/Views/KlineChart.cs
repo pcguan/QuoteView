@@ -674,11 +674,18 @@ public sealed class KlineChart : FrameworkElement
         var y = priceToY(bar.Close);
         dc.DrawLine(CrosshairPen, new Point(PadLeft, y), new Point(ActualWidth - PadRight, y));
 
-        DrawReadout(dc, _hoverIndex);
+        DrawReadout(dc, _hoverIndex, cx);
     }
 
+    // Keep the readout on the side AWAY from the cursor so it never sits over the
+    // candles being read: cursor in the left half → box top-right, else top-left.
+    private double ReadoutLeft(double cx, double width) =>
+        cx <= ActualWidth / 2
+            ? Math.Max(PadLeft + 6, ActualWidth - PadRight - width - 6)
+            : PadLeft + 6;
+
     /// <summary>OHLC + change box for the hovered bar, pinned top-left.</summary>
-    private void DrawReadout(DrawingContext dc, int index)
+    private void DrawReadout(DrawingContext dc, int index, double cx)
     {
         var bar = _bars[index];
 
@@ -718,7 +725,7 @@ public sealed class KlineChart : FrameworkElement
         var boxWidth = keyWidth + valWidth + 22;
         var boxHeight = rowHeight * texts.Length + 10;
 
-        var box = new Rect(PadLeft + 6, PadTop + 6, boxWidth, boxHeight);
+        var box = new Rect(ReadoutLeft(cx, boxWidth), PadTop + 6, boxWidth, boxHeight);
         dc.DrawRectangle(ReadoutBg, ReadoutBorderPen, box);
 
         var y = box.Top + 5;
