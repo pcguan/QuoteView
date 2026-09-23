@@ -344,7 +344,8 @@ public partial class TickDetailWindow : Window
         CountText.Text = _all.Count == 0
             ? _emptyHint
             : $"共 {_all.Count} 笔 · 筛选 {total} 笔";
-        PageText.Text = $"第 {_page + 1}/{pages} 页";
+        PageInput.Text = (_page + 1).ToString();
+        PageTotalText.Text = $"/ {pages} 页";
 
         FirstButton.IsEnabled = PrevButton.IsEnabled = _page > 0;
         NextButton.IsEnabled = LastButton.IsEnabled = _page < pages - 1;
@@ -364,6 +365,23 @@ public partial class TickDetailWindow : Window
     private void Prev_Click(object sender, RoutedEventArgs e) { _page--; RenderPage(); }
     private void Next_Click(object sender, RoutedEventArgs e) { _page++; RenderPage(); }
     private void Last_Click(object sender, RoutedEventArgs e) { _page = int.MaxValue; RenderPage(); }
+
+    private void PageInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        e.Handled = true;
+        if (int.TryParse(PageInput.Text.Trim(), out var n)) { _page = n - 1; RenderPage(); }
+        else PageInput.Text = (_page + 1).ToString();   // reject non-numeric, restore
+    }
+
+    /// <summary>Wheel over the tables pages instead of scrolling (there is no scroll).</summary>
+    private void Table_Wheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.Delta == 0) return;
+        _page += e.Delta > 0 ? -1 : 1;   // wheel up = previous page
+        RenderPage();                     // clamps _page
+        e.Handled = true;
+    }
 
     /// <summary>One detail row. <see cref="Vol"/> backs filtering (not shown).</summary>
     public sealed record TickRow(

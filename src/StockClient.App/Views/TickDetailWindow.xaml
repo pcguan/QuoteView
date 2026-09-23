@@ -99,7 +99,7 @@
          what fits on screen across both columns (left = first half, right = second),
          computed from the height; navigate by the pager below. Header row shares the
          row template's 3-* column layout so 列名/列数据 line up. -->
-    <Grid Grid.Row="4" ClipToBounds="True">
+    <Grid Grid.Row="4" ClipToBounds="True" Background="Transparent" PreviewMouseWheel="Table_Wheel">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="*" />
@@ -136,8 +136,12 @@
     <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
       <Button x:Name="FirstButton" Content="首页" FontSize="12" Padding="10,3" Click="First_Click" />
       <Button x:Name="PrevButton" Content="上一页" FontSize="12" Padding="10,3" Margin="6,0,0,0" Click="Prev_Click" />
-      <TextBlock x:Name="PageText" FontSize="12" Foreground="#EDF1F7" VerticalAlignment="Center"
-                 Margin="12,0,12,0" MinWidth="96" TextAlignment="Center" />
+      <TextBlock Text="第" FontSize="12" Foreground="#EDF1F7" VerticalAlignment="Center" Margin="12,0,4,0" />
+      <TextBox x:Name="PageInput" FontSize="12" Width="46" VerticalAlignment="Center"
+               VerticalContentAlignment="Center" TextAlignment="Center" KeyDown="PageInput_KeyDown"
+               ToolTip="输入页码回车跳转" />
+      <TextBlock x:Name="PageTotalText" FontSize="12" Foreground="#EDF1F7" VerticalAlignment="Center"
+                 Margin="4,0,12,0" MinWidth="48" />
       <Button x:Name="NextButton" Content="下一页" FontSize="12" Padding="10,3" Click="Next_Click" />
       <Button x:Name="LastButton" Content="尾页" FontSize="12" Padding="10,3" Margin="6,0,0,0" Click="Last_Click" />
     </StackPanel>

@@ -378,9 +378,11 @@ public sealed class KlineViewModel : ObservableObject
         if (_tapeSeeded || _tapeCache is null || !HasTape) return;
         _tapeSeeded = true;
 
-        var (day, settled) = _clock.KlineDay(_contract.Market);
-        if (settled) return;
-
+        // Show today's cached tape at once — during the live session AND after the
+        // close: the day's tape is already on disk, so a (re)open should display it
+        // instantly instead of waiting on a fresh 东财 poll (which can be flaky or
+        // blocked). Keyed by the trading day, so a stale day is a different file.
+        var (day, _) = _clock.KlineDay(_contract.Market);
         var snap = _tapeCache.TryLoad(_contract.Code, day);
         if (snap is null) return;
 
@@ -397,8 +399,11 @@ public sealed class KlineViewModel : ObservableObject
     {
         if (_tapeCache is null || Ticks.Count == 0) return;
 
-        var (day, settled) = _clock.KlineDay(_contract.Market);
-        if (settled) return;
+        // Persist through the close too, so a post-close restart can seed it. Gated
+        // to real trading days (not the old !settled), so a non-trading day's stale
+        // feed is never written under today's key.
+        var (day, _) = _clock.KlineDay(_contract.Market);
+        if (!TradingCalendar.IsTradingDay(_contract.Market, day)) return;
 
         var now = DateTimeOffset.UtcNow;
         if (!force && now - _lastTapeSave < TapeSaveInterval) return;
