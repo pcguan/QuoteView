@@ -42,6 +42,29 @@ public_size() {
   curl -sI "$NAS_URL/$1" | tr -d '\r' | awk 'tolower($1)=="content-length:"{print $2}' | tail -1
 }
 
+# corp-win is reached through a slow, shaped WAN forwarder that silently STALLS on
+# any sustained pull past a few MB — data just stops mid-stream and scp then reports
+# "Connection closed". Small files slip under it; the ~7.6MB exe stalled step 4 on
+# nearly every release (measured: unthrottled wedged at 3–6MB, and no fixed rate is
+# immune — 100KB/s completed once then stalled at 2.9MB next try). sftp's `reget`
+# resumes from the partial, so a short-timeout retry loop walks the file across the
+# stalls a few MB at a time until it is whole. Fresh connection per attempt (no
+# ControlMaster) so a wedged channel can't persist; Windows sftp-server needs an
+# absolute /C:/… path (leading slash + drive letter).
+pull_resumable() {  # $1 remote /C:/… path, $2 local path, $3 expected bytes
+  local remote="$1" local="$2" want="$3" got attempt
+  rm -f "$local"
+  for attempt in $(seq 1 25); do
+    got=$(stat -c%s "$local" 2>/dev/null || echo 0)
+    [ "$got" -ge "$want" ] && return 0
+    printf 'reget %s %s\n' "$remote" "$local" \
+      | timeout 25 sftp -q -o ControlMaster=no -o ControlPath=none \
+          -o ServerAliveInterval=5 corp-win >/dev/null 2>&1
+  done
+  got=$(stat -c%s "$local" 2>/dev/null || echo 0)
+  [ "$got" -ge "$want" ]
+}
+
 # ---------------------------------------------------------------- 回退（撤回）
 if [ "${1:-}" = "--rollback" ]; then
   VER="${2:?用法: tools/release.sh --rollback <回退到的版本> <坏版本> [说明]}"
@@ -136,8 +159,12 @@ ssh corp-win "cd C:\\work\\stock\\src\\StockClient.App && dotnet publish -c Rele
 ssh corp-win "powershell -c \"\$f=Get-Item C:\\work\\stock\\dist\\QuoteView.exe; @{version=\$f.VersionInfo.FileVersion; size=\$f.Length; sha256=(Get-FileHash \$f.FullName -Algorithm SHA256).Hash.ToLower()} | ConvertTo-Json -Compress | Set-Content C:\\work\\stock\\dist\\build.json\""
 
 step "4/8 产物回传 + 清理"
-scp -q corp-win:C:/work/stock/dist/QuoteView.exe "release/QuoteView-$VER.exe"
+# build.json is tiny (scp never stalls on it) and its .size is the target the
+# resumable exe pull walks toward across the forwarder's mid-stream stalls.
 scp -q corp-win:C:/work/stock/dist/build.json release/build.json
+WANT=$(jq -r .size release/build.json)
+pull_resumable /C:/work/stock/dist/QuoteView.exe "release/QuoteView-$VER.exe" "$WANT" \
+  || { echo "exe 回传到 $WANT 字节前反复中断 — 中止"; exit 1; }
 ssh corp-win "rmdir /s /q C:\\work\\stock\\dist"
 SIZE=$(jq -r .size release/build.json)
 SHA=$(jq -r .sha256 release/build.json)
