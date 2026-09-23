@@ -79,7 +79,10 @@ public sealed class KlineRepository
                 if (json is not null)
                 {
                     var fromServer = EastMoneyKlineClient.ParseSeries(json, contract, period, adjust);
-                    if (fromServer.Candles.Count > 0)
+                    // The server serves a 5-min-TTL / stale-on-upstream-failure copy,
+                    // so after the close it can lack today's candle — skip it then and
+                    // fall through to the direct chain, which has it.
+                    if (fromServer.Candles.Count > 0 && HasTodaysCandle(fromServer, period, date, settled))
                         return Store(fromServer with { Source = "服务端" }, date, settled);
                 }
             }
@@ -96,13 +99,29 @@ public sealed class KlineRepository
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            // A cache that only needed the closing candle added still draws the
-            // whole history. Better that than swapping it for Tencent's fallback,
-            // which has no BJ/KR history at all and would wipe the history.
-            if (cached is not null) return (cached, Label(cached));
+            // 东财 failed. Reaching here means the cache (if any) is stale — a fresh
+            // one already returned above — so after the close it is MISSING today's
+            // candle. Tencent carries today's close for 沪深/港/美, so prefer it
+            // over the stale cache (this is the whole point of the fallback after the
+            // bell; 东财's kline endpoint 404/掐断时 A股日K曾整片缺当天). Tencent has
+            // NO 北交所/韩股 history and would wipe the chart, so for those keep the
+            // cache instead.
+            if (contract.Market is not (Market.BJ or Market.KR))
+            {
+                try
+                {
+                    var series = await _tencent.FetchAsync(contract, period, adjust, cancellationToken);
+                    if (series.Candles.Count > 0)
+                        return Store(series with { Source = "腾讯(备用)" }, date, settled);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Tencent down too — fall back to whatever cache we have.
+                }
+            }
 
-            var series = await _tencent.FetchAsync(contract, period, adjust, cancellationToken);
-            return Store(series with { Source = "腾讯(备用)" }, date, settled);
+            if (cached is not null) return (cached, Label(cached));
+            throw;   // no cache, no usable fallback — surface it
         }
     }
 
@@ -120,6 +139,13 @@ public sealed class KlineRepository
     /// </summary>
     private bool IsFresh(KlineSeries cached, Market market, DateOnly date, bool settled) =>
         !settled || _clock.IsAfterClose(market, date, cached.FetchedAt);
+
+    /// <summary>After the close a DAILY series must carry today's candle to be
+    /// trusted — a source serving a stale copy (server 5-min TTL / upstream down)
+    /// lacks it. Week/month buckets have no "today" date, so only daily is checked.</summary>
+    private static bool HasTodaysCandle(KlineSeries series, KlinePeriod period, DateOnly date, bool settled) =>
+        !settled || period != KlinePeriod.Day
+        || (series.Candles.Count > 0 && series.Candles[^1].Date == date.ToString("yyyy-MM-dd"));
 
     private (KlineSeries, string) Store(KlineSeries series, DateOnly date, bool settled)
     {
