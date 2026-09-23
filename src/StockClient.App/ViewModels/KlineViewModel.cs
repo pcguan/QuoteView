@@ -60,6 +60,7 @@ public sealed class KlineViewModel : ObservableObject
     private DateTimeOffset _lastTapeSave;
     private int _tapeDecimals = 2;
     private bool _tapeSeeded;
+    private int _pollLogN;   // TEMP: log the first N detail polls after ShowTrend to diagnose startup lag
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _detailTimer;
@@ -243,6 +244,8 @@ public sealed class KlineViewModel : ObservableObject
 
         IsTrend = true;
         SeedTapeFromCache();   // show today's cached tape at once — a blocked first poll isn't blank
+        _pollLogN = 0;
+        StockClient.App.Probe.Log($"ShowTrend {_contract.Code} seed={Ticks.Count} hasTape={HasTape}");
         _trendTimer.Start();
         if (HasTape) _detailTimer.Start();   // only 沪深 have a 逐笔 tape to poll
         _ = LoadTrendAsync();
@@ -343,9 +346,13 @@ public sealed class KlineViewModel : ObservableObject
     {
         if (!HasTape || !IsTrend) return;
 
+        var sw = _pollLogN < 15 ? System.Diagnostics.Stopwatch.StartNew() : null;
         try
         {
             var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
+            if (sw is not null)
+                StockClient.App.Probe.Log(
+                    $"detail#{_pollLogN++} {_contract.Code} {sw.ElapsedMilliseconds}ms fetched={snap?.Ticks.Count ?? -1} total={Ticks.Count}");
             if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
 
             Ticks = _tape.Add(snap.Ticks);
@@ -354,8 +361,10 @@ public sealed class KlineViewModel : ObservableObject
             TicksUpdated?.Invoke();
             PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            if (sw is not null)
+                StockClient.App.Probe.Log($"detail#{_pollLogN++} {_contract.Code} EXC {sw.ElapsedMilliseconds}ms {ex.Message}");
             // Tape keeps its last state; not worth surfacing.
         }
     }

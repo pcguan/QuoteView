@@ -340,9 +340,11 @@ public partial class TickDetailWindow : Window
     private void BuildRows()
     {
         _rows = new List<TickRow>(_all.Count);
+        var prev = _prePrice;   // the first print's arrow is measured against 昨收
         foreach (var t in _all)
         {
-            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, _prePrice);
+            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, _prePrice, prev);
+            prev = t.Price;
             var big = TradeColors.IsBig(t, _bigTradeWan);
             _rows.Add(new TickRow(
                 t.Time,

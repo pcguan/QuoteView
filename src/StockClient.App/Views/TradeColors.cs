@@ -5,9 +5,10 @@ namespace StockClient.App.Views;
 
 /// <summary>
 /// The one 成交明细 colour scheme, shared by the live tape, the historical replay
-/// and the detail window (风格统一). Two independent axes, matching the reference:
-///   · 成交价 by up/down TICK direction — only 红涨 / 绿跌 (a flat print carries the
-///     last direction's colour so no third colour appears).
+/// and the detail window (风格统一). Independent axes, matching the reference:
+///   · 成交价 COLOUR vs 昨收: 红 above / 绿 below / 灰 equal — the whole column is
+///     measured against the day's baseline, not the previous print.
+///   · 成交价 ARROW vs the previous print: ↑ uptick / ↓ downtick / none if unchanged.
 ///   · 手数 by side: 外盘(主动买) 红, 内盘(主动卖) 绿, 中性 灰 — and when the print
 ///     is 大单 (成交额 ≥ 万元 threshold) the side goes vivid: 外盘 紫, 内盘 青.
 /// </summary>
@@ -36,15 +37,16 @@ internal static class TradeColors
     public static bool IsBig(TradeTick tick, int wan) => wan > 0 && tick.Amount >= wan * 10_000.0;
 
     /// <summary>
-    /// 成交价 look for one print, measured against the day's 昨收
-    /// (<paramref name="preClose"/>): above → 红↑, below → 绿↓, equal → 灰 (no arrow).
-    /// Independent of the previous print.
+    /// 成交价 look for one print. Two independent axes:
+    ///   · Colour vs the day's 昨收 (<paramref name="preClose"/>): 红 above / 绿 below / 灰 equal.
+    ///   · Arrow vs the PREVIOUS print (<paramref name="prevPrice"/>): ↑ uptick / ↓ downtick /
+    ///     none if unchanged (or no prior print).
     /// </summary>
-    public static (Brush Brush, string Arrow) PriceLook(double price, double preClose)
+    public static (Brush Brush, string Arrow) PriceLook(double price, double preClose, double prevPrice)
     {
-        if (preClose > 0 && price > preClose) return (Up, "↑");
-        if (preClose > 0 && price < preClose) return (Down, "↓");
-        return (Flat, "");
+        var brush = preClose <= 0 || price == preClose ? Flat : price > preClose ? Up : Down;
+        var arrow = prevPrice <= 0 || price == prevPrice ? "" : price > prevPrice ? "↑" : "↓";
+        return (brush, arrow);
     }
 
     private static Brush Frozen(string hex)
