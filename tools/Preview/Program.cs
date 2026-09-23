@@ -300,15 +300,10 @@ public static class Program
             Child = kContent,
         }, @"C:\work\preview-tape.png");
 
-        // 6d) The full-day 成交明细 detail window (filter + paging). Ticks injected;
-        // Loaded never fires (not shown) so no fetch happens.
-        var detContract = new StockClient.Core.Contracts.Contract { Code = "SH600519", Name = "贵州茅台" };
-        var detWin = new StockClient.App.Views.TickDetailWindow(
-            detContract, fakeQuote, new StockClient.Core.Quotes.EastMoneyDetailsClient(http), 2, 100);
-        var detT = typeof(StockClient.App.Views.TickDetailWindow);
-        detT.GetField("_all", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(detWin, tape);
-        detT.GetMethod("BuildRows", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
-        detT.GetMethod("ApplyFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(detWin, null);
+        // 6d) The full-day 成交明细 detail window (filter + paging). It reads the
+        // panel vm's in-memory tape (kvm.Ticks + _live, set above) in its ctor — no
+        // fetch, no separate request.
+        var detWin = new StockClient.App.Views.TickDetailWindow(kvm, 2, 100);
         var detContent = (FrameworkElement)detWin.Content;
         // WindowDimmer wrapped the content in a Grid whose last child is the dim
         // scrim; force it to a dimmed level so this preview SHOWS the 变暗 effect

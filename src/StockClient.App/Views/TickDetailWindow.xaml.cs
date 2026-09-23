@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using StockClient.App.ViewModels;
 using StockClient.Core.Contracts;
 using StockClient.Core.Quotes;
 
@@ -13,7 +14,13 @@ namespace StockClient.App.Views;
 /// (拿不到的字段填 -), 大单 filters by single-print 手数, 倒序 toggle, and paging.
 /// 成交价 is 红涨/绿跌 with ↑↓; 手数 is a soft neutral except 大单 (外盘紫 / 内盘青),
 /// the one scheme shared with the panel tape and the historical replay.
-/// Fetches its own copy (client-direct, 沪深); 刷新 re-pulls the ticks.
+///
+/// Reads the chart panel's already-polled in-memory tape (<see cref="KlineViewModel.Ticks"/>)
+/// rather than fetching its own copy: the panel is the single 逐笔 poller, so a
+/// second request here was redundant and an extra hit on the rate-limited details
+/// source — and a lone failed fetch used to blank the window. 刷新 re-reads the
+/// latest cached ticks (no request). Pinned to the vm it opened on, so a later
+/// contract switch in the chart leaves this window on its own contract.
 /// </summary>
 public partial class TickDetailWindow : Window
 {
@@ -25,9 +32,8 @@ public partial class TickDetailWindow : Window
         ("≥1000", 1000), ("≥2000", 2000), ("≥5000", 5000), ("≥10000", 10000),
     };
 
+    private readonly KlineViewModel _vm;
     private readonly Contract _contract;
-    private readonly Quote? _quote;
-    private readonly EastMoneyDetailsClient _details;
     private readonly int _bigTradeWan;
 
     private int _decimals;
@@ -38,26 +44,36 @@ public partial class TickDetailWindow : Window
     private long _minVolume;
     private int _page;
 
-    public TickDetailWindow(Contract contract, Quote? quote, EastMoneyDetailsClient details,
-        int decimals, int bigTradeWan)
+    public TickDetailWindow(KlineViewModel vm, int decimals, int bigTradeWan)
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
         WindowPlacement.Attach(this, "tickdetail");
         WindowMinimizeGesture.Attach(this);   // double-click a blank area to minimize
 
-        _contract = contract;
-        _quote = quote;
-        _details = details;
+        _vm = vm;
+        _contract = vm.Contract;
         _decimals = decimals > 0 ? decimals : 2;
         _bigTradeWan = bigTradeWan;
 
-        Title = $"成交明细 · {contract.Name} {contract.Code}";
-        TitleText.Text = $"{contract.Name}  {contract.Code}";
+        Title = $"成交明细 · {_contract.Name} {_contract.Code}";
+        TitleText.Text = $"{_contract.Name}  {_contract.Code}";
 
-        RenderStats(quote);
         BuildFilters();
-        Loaded += async (_, _) => await LoadAsync();
+        Reload();   // seed from the panel's already-polled tape — no own request
+
+        // Auto-fill only until the first tape actually arrives (a window opened the
+        // instant the panel switched contracts, before its first poll returned).
+        // Once there are rows the reader is paging through them, so further updates
+        // are left to 刷新 — pushing every second would yank the table out from
+        // under them.
+        _vm.TicksUpdated += OnVmTicks;
+        Closed += (_, _) => _vm.TicksUpdated -= OnVmTicks;
+    }
+
+    private void OnVmTicks()
+    {
+        if (_all.Count == 0) Dispatcher.Invoke(Reload);
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -146,33 +162,13 @@ public partial class TickDetailWindow : Window
 
     // --- data ------------------------------------------------------------------
 
-    private async Task LoadAsync()
+    /// <summary>Re-reads the panel's in-memory tape and re-renders. No request —
+    /// the chart panel keeps this tape warm on its own poll.</summary>
+    private void Reload()
     {
-        CountText.Text = "加载中…";
-        RefreshButton.IsEnabled = false;
-        try
-        {
-            var snap = await _details.FetchAsync(_contract, 100_000, CancellationToken.None);
-            if (snap is not null)
-            {
-                _all = snap.Ticks;
-                _prePrice = snap.PrePrice;
-                if (snap.Decimals > 0) _decimals = snap.Decimals;
-            }
-            else
-            {
-                _all = Array.Empty<TradeTick>();
-            }
-        }
-        catch (Exception)
-        {
-            _all = Array.Empty<TradeTick>();
-        }
-        finally
-        {
-            RefreshButton.IsEnabled = true;
-        }
-
+        _all = _vm.Ticks;
+        _prePrice = _vm.TickPrePrice;
+        RenderStats(_vm.Live);
         BuildRows();
         ApplyFilter();
     }
@@ -226,7 +222,7 @@ public partial class TickDetailWindow : Window
     private void Prev_Click(object sender, RoutedEventArgs e) { _page--; RenderPage(); }
     private void Next_Click(object sender, RoutedEventArgs e) { _page++; RenderPage(); }
     private void Last_Click(object sender, RoutedEventArgs e) { _page = int.MaxValue; RenderPage(); }
-    private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadAsync();
+    private void Refresh_Click(object sender, RoutedEventArgs e) => Reload();
 
     /// <summary>One detail row. <see cref="Vol"/> backs filtering (not shown).</summary>
     public sealed record TickRow(

@@ -549,8 +549,11 @@ public partial class KlineWindow : Window
         // window, which is the "why does 成交明细 shrink with the K线图" surprise —
         // the reader wanted it to stand on its own. Tracked instead, and closed
         // when this window closes so it doesn't orphan.
-        var win = new TickDetailWindow(
-            _vm.Contract, _vm.Live, _vm.Details, Decimals(_vm.Live), AppPrefs.BigTradeWan);
+        //
+        // Reads THIS vm's already-polled tape (no separate 逐笔 request — the panel
+        // is the single poller). Captured, not _vm, so a later contract switch here
+        // leaves the open detail window pinned to the contract it was opened for.
+        var win = new TickDetailWindow(_vm, Decimals(_vm.Live), AppPrefs.BigTradeWan);
         _detailWindows.Add(win);
         win.Closed += (_, _) => _detailWindows.Remove(win);
         win.Show();
