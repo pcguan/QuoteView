@@ -32,6 +32,11 @@ public sealed class KlineViewModel : ObservableObject
     // keeping the tape flowing in small steps.
     private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(1);
 
+    /// <summary>How often the running tape is flushed to <see cref="TapeCache"/>.
+    /// Coarser than the 1s poll — the accumulator already holds it in memory; disk
+    /// is only the crash/reopen/blocked-request fallback, not the live source.</summary>
+    private static readonly TimeSpan TapeSaveInterval = TimeSpan.FromSeconds(15);
+
     /// <summary>
     /// Candle re-poll cadence. Candles don't move — the running one isn't drawn —
     /// so this exists for one transition: a window left open across the close
@@ -50,6 +55,11 @@ public sealed class KlineViewModel : ObservableObject
     private readonly TrendRepository _trends;
     private readonly TencentQuoteClient? _quotes;
     private readonly EastMoneyDetailsClient? _details;
+    private readonly TapeCache? _tapeCache;      // today's 逐笔 persisted per contract
+    private readonly MarketClock _clock = new();
+    private DateTimeOffset _lastTapeSave;
+    private int _tapeDecimals = 2;
+    private bool _tapeSeeded;
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _detailTimer;
@@ -72,13 +82,14 @@ public sealed class KlineViewModel : ObservableObject
     public KlineViewModel(
         Contract contract, KlineRepository repo,
         TrendRepository trends, Dispatcher dispatcher, TencentQuoteClient? quotes = null,
-        EastMoneyDetailsClient? details = null)
+        EastMoneyDetailsClient? details = null, TapeCache? tapeCache = null)
     {
         _contract = contract;
         _repo = repo;
         _trends = trends;
         _quotes = quotes;
         _details = details;
+        _tapeCache = tapeCache;
         _dispatcher = dispatcher;
 
         _trendTimer = new DispatcherTimer(DispatcherPriority.Background, dispatcher)
@@ -231,6 +242,7 @@ public sealed class KlineViewModel : ObservableObject
         if (IsTrend) return;
 
         IsTrend = true;
+        SeedTapeFromCache();   // show today's cached tape at once — a blocked first poll isn't blank
         _trendTimer.Start();
         if (HasTape) _detailTimer.Start();   // only 沪深 have a 逐笔 tape to poll
         _ = LoadTrendAsync();
@@ -243,6 +255,7 @@ public sealed class KlineViewModel : ObservableObject
         IsTrend = false;
         _trendTimer.Stop();
         _detailTimer.Stop();
+        PersistTape(force: true);   // flush the latest tape before the poll stops
     }
 
     /// <summary>
@@ -337,12 +350,66 @@ public sealed class KlineViewModel : ObservableObject
 
             Ticks = _tape.Add(snap.Ticks);
             TickPrePrice = snap.PrePrice;
+            if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
             TicksUpdated?.Invoke();
+            PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
         }
         catch (Exception)
         {
             // Tape keeps its last state; not worth surfacing.
         }
+    }
+
+    /// <summary>Seeds the accumulator from today's on-disk tape so the window shows
+    /// data instantly on open and a blocked/failed first poll isn't blank. Only for
+    /// a live (unsettled) session today — after the close or on a non-trading day
+    /// there is no running "today" tape to restore (history comes from the server).</summary>
+    private void SeedTapeFromCache()
+    {
+        if (_tapeSeeded || _tapeCache is null || !HasTape) return;
+        _tapeSeeded = true;
+
+        var (day, settled) = _clock.KlineDay(_contract.Market);
+        if (settled) return;
+
+        var snap = _tapeCache.TryLoad(_contract.Code, day);
+        if (snap is null) return;
+
+        Ticks = _tape.Add(snap.Ticks);
+        if (snap.PrePrice > 0) TickPrePrice = snap.PrePrice;
+        if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
+        TicksUpdated?.Invoke();
+    }
+
+    /// <summary>Writes the merged running tape to disk (throttled unless forced),
+    /// guarded to a live, unsettled session so a stale or settled day is never
+    /// persisted under today's key.</summary>
+    private void PersistTape(bool force)
+    {
+        if (_tapeCache is null || Ticks.Count == 0) return;
+
+        var (day, settled) = _clock.KlineDay(_contract.Market);
+        if (settled) return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (!force && now - _lastTapeSave < TapeSaveInterval) return;
+        _lastTapeSave = now;
+
+        // Ticks is a fresh immutable array each poll, so it's a safe snapshot to
+        // serialize off-thread. Periodic writes go to a background thread to keep
+        // the ~hundreds-of-KB serialize off the UI; a forced flush (leave / dispose)
+        // stays synchronous so the latest tape is guaranteed on disk before we go.
+        var cache = _tapeCache;
+        var code = _contract.Code;
+        var snapshot = new TradeTickSnapshot
+        {
+            Code = code,
+            PrePrice = TickPrePrice,
+            Decimals = _tapeDecimals,
+            Ticks = Ticks,
+        };
+        if (force) cache.Save(code, day, snapshot);
+        else _ = Task.Run(() => cache.Save(code, day, snapshot));
     }
 
     public async Task ReloadAsync()
@@ -458,6 +525,7 @@ public sealed class KlineViewModel : ObservableObject
 
     public void Dispose()
     {
+        PersistTape(force: true);   // final flush before the window/contract goes away
         _trendTimer.Stop();
         _detailTimer.Stop();
         _klineTimer.Stop();

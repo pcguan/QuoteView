@@ -41,6 +41,7 @@ public partial class MainWindow : FluentWindow
     private readonly EastMoneyTrendClient _trendClient;
     private readonly TencentTrendClient _trendFallback;
     private readonly TrendCache _trendCache;
+    private readonly TapeCache _tapeCache;
     private readonly TrendRepository _trendRepo;
     private readonly AccountSession _session;
     private DispatcherTimer? _pingTimer;
@@ -137,6 +138,7 @@ public partial class MainWindow : FluentWindow
         // resets, which used to leave the panel thumbnail simply blank.
         _trendFallback = new TencentTrendClient(_klineHttp);
         _trendCache = new TrendCache();
+        _tapeCache = new TapeCache();
         _trendRepo = new TrendRepository(
             _trendClient, new MarketClock(), _trendFallback, _trendCache);
 
@@ -805,7 +807,7 @@ public partial class MainWindow : FluentWindow
 
     private ViewModels.KlineViewModel MakeKlineVm(Contract contract) =>
         new(contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp),
-            new EastMoneyDetailsClient(_klineHttp));
+            new EastMoneyDetailsClient(_klineHttp), _tapeCache);
 
     /// <summary>The watch list grouped for the chart window's 分组→合约 pickers:
     /// one entry per group with its resolved contracts. If the charted contract
