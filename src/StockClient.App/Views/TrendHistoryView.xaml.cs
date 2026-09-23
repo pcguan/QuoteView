@@ -21,6 +21,8 @@ public partial class TrendHistoryView : UserControl
     private TrendCache? _cache;
     private ContractRepository? _contracts;
     private AccountSession? _session;
+    private readonly List<TickDetailWindow> _detailWindows = new();
+    private bool _hostHooked;
 
     public TrendHistoryView() => InitializeComponent();
 
@@ -326,6 +328,33 @@ public partial class TrendHistoryView : UserControl
             _ = LoadTicksAsync(item.Code, date);
         else if (!on)
             Tape.Clear();
+    }
+
+    /// <summary>Pops the full 历史成交明细 into its own window (same window as the
+    /// live 更多, plus a date dropdown). Defaults to the currently selected day;
+    /// the window fetches its own archived-date list and ticks. Standalone and
+    /// tracked, closed when the history window closes so nothing orphans.</summary>
+    private void TapeMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || CodeBox.SelectedItem is not CodeItem item) return;
+
+        var contract = new Contract { Code = item.Code, Name = item.Name };
+        var initial = DateBox.SelectedItem is DateOnly d ? d : default;
+        var win = new TickDetailWindow(contract, _session, initial, AppPrefs.BigTradeWan);
+        _detailWindows.Add(win);
+        win.Closed += (_, _) => _detailWindows.Remove(win);
+        HookHostClose();
+        win.Show();
+    }
+
+    private void HookHostClose()
+    {
+        if (_hostHooked || Window.GetWindow(this) is not { } host) return;
+        _hostHooked = true;
+        host.Closed += (_, _) =>
+        {
+            foreach (var w in _detailWindows.ToArray()) w.Close();
+        };
     }
 
     /// <summary>

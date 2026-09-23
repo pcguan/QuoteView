@@ -1,7 +1,9 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using StockClient.App.Services;
 using StockClient.App.ViewModels;
 using StockClient.Core.Contracts;
 using StockClient.Core.Quotes;
@@ -32,11 +34,16 @@ public partial class TickDetailWindow : Window
         ("≥1000", 1000), ("≥2000", 2000), ("≥5000", 5000), ("≥10000", 10000),
     };
 
-    private readonly KlineViewModel _vm;
+    private readonly KlineViewModel? _vm;             // live mode: in-memory tape source
+    private readonly AccountSession? _session;        // historical mode: server tape source
+    private readonly bool _historical;
     private readonly Contract _contract;
     private readonly int _bigTradeWan;
+    private readonly DateOnly _initialDate;
+    private readonly string _emptyHint;
 
     private int _decimals;
+    private int _ticksRequest;                        // guards historical async loads
     private IReadOnlyList<TradeTick> _all = Array.Empty<TradeTick>();
     private double _prePrice;
     private List<TickRow> _rows = new();     // all, chronological, coloured
@@ -55,6 +62,7 @@ public partial class TickDetailWindow : Window
         _contract = vm.Contract;
         _decimals = decimals > 0 ? decimals : 2;
         _bigTradeWan = bigTradeWan;
+        _emptyHint = "无数据（仅沪深；非交易时段可能为空）";
 
         Title = $"成交明细 · {_contract.Name} {_contract.Code}";
         TitleText.Text = $"{_contract.Name}  {_contract.Code}";
@@ -74,6 +82,126 @@ public partial class TickDetailWindow : Window
     private void OnVmTicks()
     {
         if (_all.Count == 0) Dispatcher.Invoke(Reload);
+    }
+
+    /// <summary>Historical variant: the same window, but reading one archived
+    /// session's 成交明细 from the server, with a date dropdown to switch days.
+    /// 沪深 only. Opened from 历史分时对比's 更多 button.</summary>
+    public TickDetailWindow(Contract contract, AccountSession session, DateOnly initial, int bigTradeWan)
+    {
+        InitializeComponent();
+        WindowDimmer.Attach(this);
+        WindowPlacement.Attach(this, "tickdetail-hist");
+        WindowMinimizeGesture.Attach(this);
+
+        _historical = true;
+        _session = session;
+        _contract = contract;
+        _initialDate = initial;
+        _decimals = 2;
+        _bigTradeWan = bigTradeWan;
+        _emptyHint = "该日无归档，或未登录";
+
+        Title = $"历史成交明细 · {contract.Name} {contract.Code}";
+        TitleText.Text = $"{contract.Name}  {contract.Code}";
+
+        BuildFilters();
+        DateBox.Visibility = Visibility.Visible;
+        Loaded += async (_, _) => await LoadDatesAsync();
+    }
+
+    /// <summary>Fills the date dropdown from the server's archived-tape dates
+    /// (<see cref="AccountSession.TickDatesAsync"/>) and selects the day the history
+    /// view was on, else the newest.</summary>
+    private async Task LoadDatesAsync()
+    {
+        if (_session is null) return;
+        CountText.Text = "加载日期…";
+
+        IReadOnlyList<DateOnly> dates;
+        try { dates = await _session.TickDatesAsync(_contract.Code); }
+        catch { dates = Array.Empty<DateOnly>(); }
+
+        DateBox.ItemsSource = dates;
+        var pick = dates.Contains(_initialDate) ? _initialDate
+            : dates.Count > 0 ? dates[0] : (DateOnly?)null;
+        if (pick is { } d) DateBox.SelectedItem = d;   // fires DateBox_SelectionChanged → load
+        else CountText.Text = _session.IsSignedIn ? "无归档日期" : "登录后可取服务端归档";
+    }
+
+    private void DateBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DateBox.SelectedItem is DateOnly d) _ = LoadDateAsync(d);
+    }
+
+    /// <summary>Loads one archived day's tape from the server, guarded so a slow
+    /// answer for an old date can't overwrite a newer pick.</summary>
+    private async Task LoadDateAsync(DateOnly date)
+    {
+        if (_session is null) return;
+        var req = ++_ticksRequest;
+        CountText.Text = "加载中…";
+        RefreshButton.IsEnabled = false;
+
+        TradeTickSnapshot? snap = null;
+        try { snap = await _session.TicksAsync(_contract.Code, date); }
+        catch { /* leave snap null → empty state below */ }
+
+        if (req != _ticksRequest) return;   // superseded by a newer date pick
+        RefreshButton.IsEnabled = true;
+
+        if (snap is not null && snap.Ticks.Count > 0)
+        {
+            _all = snap.Ticks;
+            _prePrice = snap.PrePrice;
+            _decimals = snap.Decimals > 0 ? snap.Decimals : 2;
+            RenderStats(QuoteFromTicks(_contract, snap));
+        }
+        else
+        {
+            _all = Array.Empty<TradeTick>();
+            _prePrice = 0;
+            RenderStats(null);
+        }
+        BuildRows();
+        ApplyFilter();
+    }
+
+    /// <summary>A day-summary quote synthesized from the archived ticks so the
+    /// header shows 今开/最高/最低/现价/涨跌/量额/内外盘 (fields the ticks can prove);
+    /// the rest (涨停/换手/PE/市值…) have no tick source and stay "-".</summary>
+    private static Quote QuoteFromTicks(Contract contract, TradeTickSnapshot snap)
+    {
+        var ticks = snap.Ticks;
+        double open = ticks[0].Price, last = ticks[^1].Price, hi = open, lo = open;
+        double vol = 0, amt = 0, outer = 0, inner = 0;
+        foreach (var t in ticks)
+        {
+            if (t.Price > hi) hi = t.Price;
+            if (t.Price < lo) lo = t.Price;
+            vol += t.Volume;
+            amt += t.Amount;
+            if (t.Side == TradeSide.Buy) outer += t.Volume;
+            else if (t.Side == TradeSide.Sell) inner += t.Volume;
+        }
+        var pre = snap.PrePrice;
+        return new Quote
+        {
+            Code = contract.Code,
+            Name = contract.Name,
+            Now = last,
+            Yesterday = pre,
+            Open = open,
+            High = hi,
+            Low = lo,
+            Change = pre > 0 ? last - pre : 0,
+            Percent = pre > 0 ? (last / pre - 1) * 100 : 0,
+            Volume = vol,
+            Amount = amt,
+            OuterVolume = outer,
+            InnerVolume = inner,
+            Time = ticks[^1].Time,
+        };
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -166,7 +294,7 @@ public partial class TickDetailWindow : Window
     /// the chart panel keeps this tape warm on its own poll.</summary>
     private void Reload()
     {
-        _all = _vm.Ticks;
+        _all = _vm!.Ticks;
         _prePrice = _vm.TickPrePrice;
         RenderStats(_vm.Live);
         BuildRows();
@@ -210,7 +338,7 @@ public partial class TickDetailWindow : Window
         Grid.ItemsSource = _view.GetRange(_page * PageSize, Math.Min(PageSize, total - _page * PageSize));
 
         CountText.Text = _all.Count == 0
-            ? "无数据（仅沪深；非交易时段可能为空）"
+            ? _emptyHint
             : $"共 {_all.Count} 笔 · 筛选 {total} 笔";
         PageText.Text = $"第 {_page + 1}/{pages} 页";
 
@@ -222,7 +350,11 @@ public partial class TickDetailWindow : Window
     private void Prev_Click(object sender, RoutedEventArgs e) { _page--; RenderPage(); }
     private void Next_Click(object sender, RoutedEventArgs e) { _page++; RenderPage(); }
     private void Last_Click(object sender, RoutedEventArgs e) { _page = int.MaxValue; RenderPage(); }
-    private void Refresh_Click(object sender, RoutedEventArgs e) => Reload();
+    private void Refresh_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_historical) { Reload(); return; }
+        if (DateBox.SelectedItem is DateOnly d) _ = LoadDateAsync(d);
+    }
 
     /// <summary>One detail row. <see cref="Vol"/> backs filtering (not shown).</summary>
     public sealed record TickRow(

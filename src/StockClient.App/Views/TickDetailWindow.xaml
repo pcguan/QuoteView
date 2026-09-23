@@ -15,7 +15,7 @@
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <!-- Header: name/code + counts + refresh -->
+    <!-- Header: name/code + counts + (历史)日期 + refresh -->
     <Grid Grid.Row="0">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
         <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Foreground="#EDF1F7"
@@ -23,8 +23,14 @@
         <TextBlock x:Name="CountText" FontSize="11" Foreground="#8B93A3"
                    VerticalAlignment="Bottom" Margin="12,0,0,2" />
       </StackPanel>
-      <Button x:Name="RefreshButton" Content="刷新" FontSize="12" Padding="12,3"
-              HorizontalAlignment="Right" VerticalAlignment="Center" Click="Refresh_Click" />
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+        <ComboBox x:Name="DateBox" Width="132" FontSize="12" Margin="0,0,8,0"
+                  Visibility="Collapsed" SelectionChanged="DateBox_SelectionChanged"
+                  ItemStringFormat="yyyy-MM-dd"
+                  ToolTip="选择归档日期（服务端，仅沪深）" />
+        <Button x:Name="RefreshButton" Content="刷新" FontSize="12" Padding="12,3"
+                Click="Refresh_Click" />
+      </StackPanel>
     </Grid>
 
     <!-- 现价 + 涨跌 -->

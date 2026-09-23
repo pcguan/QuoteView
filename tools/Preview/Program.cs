@@ -318,6 +318,37 @@ public static class Program
             Child = detContent,
         }, @"C:\work\preview-tickdetail.png");
 
+        // 6d-2) The SAME window in HISTORICAL mode (历史分时对比 → 更多): identical
+        // layout plus the date dropdown in the header. Session is null! so the
+        // date-change handler is inert; ticks + a synthesized header are injected
+        // via reflection (Loaded never fires on reparented content, so no fetch).
+        var histWin = new StockClient.App.Views.TickDetailWindow(
+            kContract, null!, new DateOnly(2026, 9, 22), 100);
+        if (histWin.FindName("DateBox") is System.Windows.Controls.ComboBox histDates)
+        {
+            histDates.ItemsSource = new[]
+                { new DateOnly(2026, 9, 22), new DateOnly(2026, 9, 21), new DateOnly(2026, 9, 18) };
+            histDates.SelectedIndex = 0;   // fires handler → LoadDateAsync early-returns (null session)
+        }
+        var histT = typeof(StockClient.App.Views.TickDetailWindow);
+        var histSnap = new StockClient.Core.Quotes.TradeTickSnapshot
+            { Code = "SH600519", PrePrice = 11.5, Decimals = 2, Ticks = tape };
+        var histQuote = histT.GetMethod("QuoteFromTicks", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { kContract, histSnap });
+        histT.GetField("_all", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(histWin, tape);
+        histT.GetField("_prePrice", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(histWin, 11.5);
+        histT.GetMethod("RenderStats", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(histWin, new[] { histQuote });
+        histT.GetMethod("BuildRows", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(histWin, null);
+        histT.GetMethod("ApplyFilter", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(histWin, null);
+        var histContent = (FrameworkElement)histWin.Content;
+        histWin.Content = null;
+        Render(new Border
+        {
+            Width = 560, Height = 720,
+            Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
+            Child = histContent,
+        }, @"C:\work\preview-tickdetail-hist.png");
+
         // 6c) The history page with the 成交明细 side pane OPEN (P3 replay). A
         // fresh view (history3 is already parented above) with a chart series and
         // the tape injected via reflection.

@@ -39,6 +39,10 @@
                       Margin="18,0,0,0" Click="TapeToggle_Click"
                       ToolTip="显示该日的逐笔成交明细（服务端归档，仅沪深）" />
 
+        <Button x:Name="TapeMoreButton" Content="更多" FontSize="12" Padding="11,3"
+                Margin="6,0,0,0" Click="TapeMore_Click"
+                ToolTip="在独立窗口查看历史成交明细（可切换日期、筛选大单、分页）" />
+
         <TextBlock x:Name="Hint" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="11"
                    Foreground="{StaticResource Faint}"
                    Text="收盘后由服务端统一归档；对比线按各自昨收归一化。" />
