@@ -37,15 +37,12 @@ public partial class TradeTapeView : UserControl
         var oldCount = List.Items.Count;
         var wasAtTop = oldOffset <= 4;
 
-        // Direction/colour are computed in TIME order (each print vs the one
-        // before it), then the list is flipped for display if newest-first.
+        // 成交价 colour is measured against 昨收 (prePrice), not the previous print;
+        // the list is flipped for display if newest-first.
         var rows = new List<Row>(ticks.Count);
-        var carry = TradeColors.Flat;
-        var prev = prePrice;
         foreach (var t in ticks)   // chronological — earliest first
         {
-            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, prev, ref carry);
-            prev = t.Price;
+            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, prePrice);
             var big = TradeColors.IsBig(t, bigTradeWan);
             rows.Add(new Row(
                 t.Time,

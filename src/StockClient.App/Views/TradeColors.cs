@@ -36,15 +36,15 @@ internal static class TradeColors
     public static bool IsBig(TradeTick tick, int wan) => wan > 0 && tick.Amount >= wan * 10_000.0;
 
     /// <summary>
-    /// 成交价 look for one print given the previous print's price and the carried
-    /// colour. Uptick → 红↑, downtick → 绿↓; a flat print keeps the carried colour
-    /// with no arrow. <paramref name="carry"/> is updated to the chosen colour.
+    /// 成交价 look for one print, measured against the day's 昨收
+    /// (<paramref name="preClose"/>): above → 红↑, below → 绿↓, equal → 灰 (no arrow).
+    /// Independent of the previous print.
     /// </summary>
-    public static (Brush Brush, string Arrow) PriceLook(double price, double prev, ref Brush carry)
+    public static (Brush Brush, string Arrow) PriceLook(double price, double preClose)
     {
-        if (prev > 0 && price > prev) { carry = Up; return (Up, "↑"); }
-        if (prev > 0 && price < prev) { carry = Down; return (Down, "↓"); }
-        return (carry, "");
+        if (preClose > 0 && price > preClose) return (Up, "↑");
+        if (preClose > 0 && price < preClose) return (Down, "↓");
+        return (Flat, "");
     }
 
     private static Brush Frozen(string hex)

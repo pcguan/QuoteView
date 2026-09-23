@@ -313,7 +313,7 @@ public static class Program
         detWin.Content = null;
         Render(new Border
         {
-            Width = 560, Height = 720,
+            Width = 640, Height = 720,
             Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
             Child = detContent,
         }, @"C:\work\preview-tickdetail.png");
@@ -344,23 +344,10 @@ public static class Program
         histWin.Content = null;
         Render(new Border
         {
-            Width = 560, Height = 720,
+            Width = 640, Height = 720,
             Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x14, 0x20)),
             Child = histContent,
         }, @"C:\work\preview-tickdetail-hist.png");
-
-        // 6c) The history page with the 成交明细 side pane OPEN (P3 replay). A
-        // fresh view (history3 is already parented above) with a chart series and
-        // the tape injected via reflection.
-        var history4 = new StockClient.App.Views.TrendHistoryView { Width = 1180, Height = 560 };
-        FrameworkElement H4(string n) => (FrameworkElement)t3.GetField(n, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!;
-        ((StockClient.App.Views.TrendChart)t3.GetField("Chart", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).SetSeries(mainWithSummary);
-        ((System.Windows.Controls.ColumnDefinition)t3.GetField("TapeColumn", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).Width = new GridLength(300);
-        H4("TapePane").Visibility = Visibility.Visible;
-        ((System.Windows.Controls.TextBlock)H4("TapeTitle")).Text = "成交明细 · 08-24 · 42 笔";
-        ((StockClient.App.Views.TradeTapeView)t3.GetField("Tape", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(history4)!).SetTicks(tape, 2, 100, newestFirst: false);
-        Render(new Border { Background = new SolidColorBrush(Color.FromRgb(0x0B, 0x0F, 0x17)), Child = history4 },
-            @"C:\work\preview-hist-tape.png");
 
         // 7) Settings window with the template bar.
         var config2 = StealthConfig.CreateDefault();

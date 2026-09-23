@@ -14,19 +14,21 @@ namespace StockClient.App.Views;
 /// Standalone window listing a contract's WHOLE 逐笔成交 for the day, opened from
 /// the trend panel's 更多 button, styled to the reference: a 当日行情 header
 /// (拿不到的字段填 -), 大单 filters by single-print 手数, 倒序 toggle, and paging.
-/// 成交价 is 红涨/绿跌 with ↑↓; 手数 is a soft neutral except 大单 (外盘紫 / 内盘青),
+/// 成交价 is 红涨/绿跌 vs 昨收; 手数 is a soft neutral except 大单 (外盘紫 / 内盘青),
 /// the one scheme shared with the panel tape and the historical replay.
 ///
-/// Reads the chart panel's already-polled in-memory tape (<see cref="KlineViewModel.Ticks"/>)
-/// rather than fetching its own copy: the panel is the single 逐笔 poller, so a
-/// second request here was redundant and an extra hit on the rate-limited details
-/// source — and a lone failed fetch used to blank the window. 刷新 re-reads the
-/// latest cached ticks (no request). Pinned to the vm it opened on, so a later
-/// contract switch in the chart leaves this window on its own contract.
+/// Live mode reads the chart panel's already-polled in-memory tape
+/// (<see cref="KlineViewModel.Ticks"/>) rather than fetching its own copy — the
+/// panel is the single 逐笔 poller, so a second request here was redundant and an
+/// extra hit on the rate-limited details source. It AUTO-refreshes on every panel
+/// poll (~1s, no button, scroll preserved), so it stays as live as the panel tape.
+/// Pinned to the vm it opened on, so a later contract switch in the chart leaves
+/// this window on its own contract. Historical mode instead loads an archived day
+/// from the server and switches days via the date dropdown (static, no auto-poll).
 /// </summary>
 public partial class TickDetailWindow : Window
 {
-    private const int PageSize = 500;
+    private const int PageSize = 1000;   // shown across two columns (500 each) → half the page turns
 
     private static readonly (string Label, long Min)[] FilterDefs =
     {
@@ -70,19 +72,15 @@ public partial class TickDetailWindow : Window
         BuildFilters();
         Reload();   // seed from the panel's already-polled tape — no own request
 
-        // Auto-fill only until the first tape actually arrives (a window opened the
-        // instant the panel switched contracts, before its first poll returned).
-        // Once there are rows the reader is paging through them, so further updates
-        // are left to 刷新 — pushing every second would yank the table out from
-        // under them.
+        // Auto-refresh on EVERY panel poll (~1s), same cadence as the panel tape —
+        // still reads the in-memory cache (no extra request). Scroll position is
+        // preserved across the refresh (see Reload) so it flows instead of freezing
+        // until a manual click, which is what made it feel tens-of-seconds stale.
         _vm.TicksUpdated += OnVmTicks;
         Closed += (_, _) => _vm.TicksUpdated -= OnVmTicks;
     }
 
-    private void OnVmTicks()
-    {
-        if (_all.Count == 0) Dispatcher.Invoke(Reload);
-    }
+    private void OnVmTicks() => Dispatcher.Invoke(Reload);
 
     /// <summary>Historical variant: the same window, but reading one archived
     /// session's 成交明细 from the server, with a date dropdown to switch days.
@@ -141,14 +139,12 @@ public partial class TickDetailWindow : Window
         if (_session is null) return;
         var req = ++_ticksRequest;
         CountText.Text = "加载中…";
-        RefreshButton.IsEnabled = false;
 
         TradeTickSnapshot? snap = null;
         try { snap = await _session.TicksAsync(_contract.Code, date); }
         catch { /* leave snap null → empty state below */ }
 
         if (req != _ticksRequest) return;   // superseded by a newer date pick
-        RefreshButton.IsEnabled = true;
 
         if (snap is not null && snap.Ticks.Count > 0)
         {
@@ -290,27 +286,63 @@ public partial class TickDetailWindow : Window
 
     // --- data ------------------------------------------------------------------
 
-    /// <summary>Re-reads the panel's in-memory tape and re-renders. No request —
-    /// the chart panel keeps this tape warm on its own poll.</summary>
+    /// <summary>Re-reads the panel's in-memory tape and re-renders, preserving the
+    /// reader's scroll position. No request — the chart panel keeps this tape warm
+    /// on its own poll.</summary>
     private void Reload()
     {
+        var (atL, offL) = SnapScroll(GridL);
+        var (atR, offR) = SnapScroll(GridR);
+
         _all = _vm!.Ticks;
         _prePrice = _vm.TickPrePrice;
         RenderStats(_vm.Live);
         BuildRows();
-        ApplyFilter();
+        ApplyFilter();   // resets both grids' ItemsSource (and their scroll)
+
+        // Newest-first at the top stays pinned to the newest print; a reader who
+        // scrolled down into history holds their place instead of jumping.
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            RestoreScroll(GridL, atL, offL);
+            RestoreScroll(GridR, atR, offR);
+        }), System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private static (bool AtTop, double Offset) SnapScroll(DependencyObject grid)
+    {
+        var sv = FindScroll(grid);
+        return sv is null ? (true, 0) : (sv.VerticalOffset <= 4, sv.VerticalOffset);
+    }
+
+    private static void RestoreScroll(DependencyObject grid, bool atTop, double offset)
+    {
+        var sv = FindScroll(grid);
+        if (sv is null) return;
+        if (atTop) sv.ScrollToTop(); else sv.ScrollToVerticalOffset(offset);
+    }
+
+    /// <summary>A DataGrid's inner ScrollViewer, for preserving scroll on refresh.</summary>
+    private static ScrollViewer? FindScroll(DependencyObject? d)
+    {
+        if (d is null) return null;
+        if (d is ScrollViewer sv) return sv;
+        var n = VisualTreeHelper.GetChildrenCount(d);
+        for (var i = 0; i < n; i++)
+        {
+            var r = FindScroll(VisualTreeHelper.GetChild(d, i));
+            if (r is not null) return r;
+        }
+        return null;
     }
 
     /// <summary>Builds every row once, chronological, with price direction and 大单 colour.</summary>
     private void BuildRows()
     {
         _rows = new List<TickRow>(_all.Count);
-        var carry = TradeColors.Flat;
-        var prev = _prePrice;
         foreach (var t in _all)
         {
-            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, prev, ref carry);
-            prev = t.Price;
+            var (priceFg, arrow) = TradeColors.PriceLook(t.Price, _prePrice);
             var big = TradeColors.IsBig(t, _bigTradeWan);
             _rows.Add(new TickRow(
                 t.Time,
@@ -335,7 +367,12 @@ public partial class TickDetailWindow : Window
         var pages = Math.Max(1, (total + PageSize - 1) / PageSize);
         _page = Math.Clamp(_page, 0, pages - 1);
 
-        Grid.ItemsSource = _view.GetRange(_page * PageSize, Math.Min(PageSize, total - _page * PageSize));
+        var start = _page * PageSize;
+        var count = Math.Max(0, Math.Min(PageSize, total - start));
+        var pageRows = _view.GetRange(start, count);
+        var half = (pageRows.Count + 1) / 2;                       // left column takes the first half
+        GridL.ItemsSource = pageRows.GetRange(0, half);
+        GridR.ItemsSource = pageRows.GetRange(half, pageRows.Count - half);
 
         CountText.Text = _all.Count == 0
             ? _emptyHint
@@ -350,11 +387,6 @@ public partial class TickDetailWindow : Window
     private void Prev_Click(object sender, RoutedEventArgs e) { _page--; RenderPage(); }
     private void Next_Click(object sender, RoutedEventArgs e) { _page++; RenderPage(); }
     private void Last_Click(object sender, RoutedEventArgs e) { _page = int.MaxValue; RenderPage(); }
-    private void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_historical) { Reload(); return; }
-        if (DateBox.SelectedItem is DateOnly d) _ = LoadDateAsync(d);
-    }
 
     /// <summary>One detail row. <see cref="Vol"/> backs filtering (not shown).</summary>
     public sealed record TickRow(

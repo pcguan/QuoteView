@@ -35,13 +35,9 @@
                   DropDownClosed="CompareBox_DropDownClosed"
                   SelectionChanged="CompareBox_SelectionChanged" />
 
-        <ToggleButton x:Name="TapeToggle" Content="成交明细" FontSize="12" Padding="11,3"
-                      Margin="18,0,0,0" Click="TapeToggle_Click"
-                      ToolTip="显示该日的逐笔成交明细（服务端归档，仅沪深）" />
-
-        <Button x:Name="TapeMoreButton" Content="更多" FontSize="12" Padding="11,3"
-                Margin="6,0,0,0" Click="TapeMore_Click"
-                ToolTip="在独立窗口查看历史成交明细（可切换日期、筛选大单、分页）" />
+        <Button x:Name="TapeMoreButton" Content="成交明细" FontSize="12" Padding="11,3"
+                Margin="18,0,0,0" Click="TapeMore_Click"
+                ToolTip="在独立窗口查看该合约的历史成交明细（可切换日期、筛选大单、分页）" />
 
         <TextBlock x:Name="Hint" VerticalAlignment="Center" Margin="18,0,0,0" FontSize="11"
                    Foreground="{StaticResource Faint}"
@@ -51,13 +47,6 @@
 
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="8">
       <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="*" />
-          <!-- 成交明细 pane, widened only when toggled on. -->
-          <ColumnDefinition x:Name="TapeColumn" Width="0" />
-        </Grid.ColumnDefinitions>
-
-        <Grid Grid.Column="0">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" /><RowDefinition Height="*" />
           </Grid.RowDefinitions>
@@ -77,19 +66,6 @@
           <TextBlock x:Name="Empty" Grid.RowSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center"
                      FontSize="13" Foreground="{StaticResource Muted}" Visibility="Collapsed" />
         </Grid>
-
-        <Border x:Name="TapePane" Grid.Column="1" Visibility="Collapsed"
-                BorderBrush="#232B3B" BorderThickness="1,0,0,0" Margin="8,2,0,2" Padding="10,0,0,0">
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto" /><RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <TextBlock x:Name="TapeTitle" Grid.Row="0" Text="成交明细" FontSize="11"
-                       Foreground="{StaticResource Muted}" Margin="0,0,0,6" />
-            <views:TradeTapeView x:Name="Tape" Grid.Row="1" />
-          </Grid>
-        </Border>
-      </Grid>
     </Border>
   </Grid>
 </UserControl>

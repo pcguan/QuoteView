@@ -1,10 +1,27 @@
 <Window x:Class="StockClient.App.Views.TickDetailWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Width="560" Height="720" MinWidth="440" MinHeight="480"
+        Width="640" Height="720" MinWidth="520" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         Background="#0F1420" FontFamily="Microsoft YaHei"
         TextOptions.TextFormattingMode="Display">
+  <Window.Resources>
+    <!-- Shared cell looks so the two side-by-side tables stay identical. -->
+    <Style x:Key="TimeCell" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#8B93A3" />
+      <Setter Property="Margin" Value="8,0,0,0" />
+    </Style>
+    <Style x:Key="PriceCell" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{Binding PriceFg}" />
+      <Setter Property="TextAlignment" Value="Right" />
+      <Setter Property="Margin" Value="0,0,10,0" />
+    </Style>
+    <Style x:Key="VolCell" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{Binding VolFg}" />
+      <Setter Property="TextAlignment" Value="Right" />
+      <Setter Property="Margin" Value="0,0,10,0" />
+    </Style>
+  </Window.Resources>
   <Grid Margin="12">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
@@ -24,12 +41,11 @@
                    VerticalAlignment="Bottom" Margin="12,0,0,2" />
       </StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-        <ComboBox x:Name="DateBox" Width="132" FontSize="12" Margin="0,0,8,0"
+        <!-- 实时模式自动刷新（跟面板 tape 同步，无需按钮）；历史模式用日期下拉。 -->
+        <ComboBox x:Name="DateBox" Width="132" FontSize="12"
                   Visibility="Collapsed" SelectionChanged="DateBox_SelectionChanged"
                   ItemStringFormat="yyyy-MM-dd"
                   ToolTip="选择归档日期（服务端，仅沪深）" />
-        <Button x:Name="RefreshButton" Content="刷新" FontSize="12" Padding="12,3"
-                Click="Refresh_Click" />
       </StackPanel>
     </Grid>
 
@@ -79,41 +95,35 @@
       </TextBlock>
     </StackPanel>
 
-    <!-- Detail table: 时间 · 成交价 · 手数 -->
-    <DataGrid x:Name="Grid" Grid.Row="4" AutoGenerateColumns="False" IsReadOnly="True"
-              HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
-              CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
-              BorderBrush="#222A38" BorderThickness="1" FontSize="12"
-              EnableRowVirtualization="True" EnableColumnVirtualization="False">
-      <DataGrid.Columns>
-        <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="170">
-          <DataGridTextColumn.ElementStyle>
-            <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="#8B93A3" />
-              <Setter Property="Margin" Value="8,0,0,0" />
-            </Style>
-          </DataGridTextColumn.ElementStyle>
-        </DataGridTextColumn>
-        <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="165">
-          <DataGridTextColumn.ElementStyle>
-            <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="{Binding PriceFg}" />
-              <Setter Property="TextAlignment" Value="Right" />
-              <Setter Property="Margin" Value="0,0,16,0" />
-            </Style>
-          </DataGridTextColumn.ElementStyle>
-        </DataGridTextColumn>
-        <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="165">
-          <DataGridTextColumn.ElementStyle>
-            <Style TargetType="TextBlock">
-              <Setter Property="Foreground" Value="{Binding VolFg}" />
-              <Setter Property="TextAlignment" Value="Right" />
-              <Setter Property="Margin" Value="0,0,16,0" />
-            </Style>
-          </DataGridTextColumn.ElementStyle>
-        </DataGridTextColumn>
-      </DataGrid.Columns>
-    </DataGrid>
+    <!-- Detail table in TWO columns for density (item 5): left holds the first
+         half of the page, right the second — newspaper reading, ~2× rows on screen
+         and half the page turns. Both tables share the cell styles above. -->
+    <Grid Grid.Row="4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <DataGrid x:Name="GridL" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
+                HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
+                CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
+                BorderBrush="#222A38" BorderThickness="1" FontSize="12" EnableRowVirtualization="True">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="92" ElementStyle="{StaticResource TimeCell}" />
+          <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="86" ElementStyle="{StaticResource PriceCell}" />
+          <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="84" ElementStyle="{StaticResource VolCell}" />
+        </DataGrid.Columns>
+      </DataGrid>
+      <DataGrid x:Name="GridR" Grid.Column="1" Margin="8,0,0,0" AutoGenerateColumns="False" IsReadOnly="True"
+                HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
+                CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
+                BorderBrush="#222A38" BorderThickness="1" FontSize="12" EnableRowVirtualization="True">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="92" ElementStyle="{StaticResource TimeCell}" />
+          <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="86" ElementStyle="{StaticResource PriceCell}" />
+          <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="84" ElementStyle="{StaticResource VolCell}" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Grid>
 
     <!-- Pagination -->
     <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,10,0,0">
