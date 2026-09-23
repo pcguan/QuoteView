@@ -353,13 +353,13 @@ public sealed class TrendChart : FrameworkElement
                 new Rect(PadLeft - 6, laneTop, 3, Math.Max(0, laneBottom - laneTop)));
 
         var width = Math.Max(1, step * 0.7);
-        var brush = UpBrush;
         for (var i = 0; i < points.Count; i++)
         {
             var p = points[i];
             var prev = i > 0 ? points[i - 1].Price : pre;
-            if (p.Price > prev) brush = UpBrush;
-            else if (p.Price < prev) brush = DownBrush;
+            // 涨或平 → 红,跌 → 绿(东财分时量柱惯例:平盘分钟归红,而不是沿用上一根的颜色
+            // ——尾盘低波动有大量平盘分钟,沿用旧色会整片偏绿,与东财对不上)。
+            var brush = p.Price >= prev ? UpBrush : DownBrush;
 
             var x = X(i, step);
             var y = volumeToY(p.Volume);
