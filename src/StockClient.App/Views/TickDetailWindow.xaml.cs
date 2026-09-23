@@ -28,7 +28,8 @@ namespace StockClient.App.Views;
 /// </summary>
 public partial class TickDetailWindow : Window
 {
-    private const int PageSize = 1000;   // shown across two columns (500 each) → half the page turns
+    private const double RowHeight = 21;   // matches TickRowTemplate's row height
+    private int _rowsPerCol = 18;          // recomputed from the table height (Table_SizeChanged)
 
     private static readonly (string Label, long Min)[] FilterDefs =
     {
@@ -291,49 +292,11 @@ public partial class TickDetailWindow : Window
     /// on its own poll.</summary>
     private void Reload()
     {
-        var (atL, offL) = SnapScroll(GridL);
-        var (atR, offR) = SnapScroll(GridR);
-
         _all = _vm!.Ticks;
         _prePrice = _vm.TickPrePrice;
         RenderStats(_vm.Live);
         BuildRows();
-        ApplyFilter();   // resets both grids' ItemsSource (and their scroll)
-
-        // Newest-first at the top stays pinned to the newest print; a reader who
-        // scrolled down into history holds their place instead of jumping.
-        Dispatcher.BeginInvoke(new Action(() =>
-        {
-            RestoreScroll(GridL, atL, offL);
-            RestoreScroll(GridR, atR, offR);
-        }), System.Windows.Threading.DispatcherPriority.Background);
-    }
-
-    private static (bool AtTop, double Offset) SnapScroll(DependencyObject grid)
-    {
-        var sv = FindScroll(grid);
-        return sv is null ? (true, 0) : (sv.VerticalOffset <= 4, sv.VerticalOffset);
-    }
-
-    private static void RestoreScroll(DependencyObject grid, bool atTop, double offset)
-    {
-        var sv = FindScroll(grid);
-        if (sv is null) return;
-        if (atTop) sv.ScrollToTop(); else sv.ScrollToVerticalOffset(offset);
-    }
-
-    /// <summary>A DataGrid's inner ScrollViewer, for preserving scroll on refresh.</summary>
-    private static ScrollViewer? FindScroll(DependencyObject? d)
-    {
-        if (d is null) return null;
-        if (d is ScrollViewer sv) return sv;
-        var n = VisualTreeHelper.GetChildrenCount(d);
-        for (var i = 0; i < n; i++)
-        {
-            var r = FindScroll(VisualTreeHelper.GetChild(d, i));
-            if (r is not null) return r;
-        }
-        return null;
+        ApplyFilter();
     }
 
     /// <summary>Builds every row once, chronological, with price direction and 大单 colour.</summary>
@@ -365,16 +328,18 @@ public partial class TickDetailWindow : Window
 
     private void RenderPage()
     {
+        var per = _rowsPerCol;
+        var pageSize = per * 2;
         var total = _view.Count;
-        var pages = Math.Max(1, (total + PageSize - 1) / PageSize);
+        var pages = Math.Max(1, (total + pageSize - 1) / pageSize);
         _page = Math.Clamp(_page, 0, pages - 1);
 
-        var start = _page * PageSize;
-        var count = Math.Max(0, Math.Min(PageSize, total - start));
+        var start = _page * pageSize;
+        var count = Math.Max(0, Math.Min(pageSize, total - start));
         var pageRows = _view.GetRange(start, count);
-        var half = (pageRows.Count + 1) / 2;                       // left column takes the first half
-        GridL.ItemsSource = pageRows.GetRange(0, half);
-        GridR.ItemsSource = pageRows.GetRange(half, pageRows.Count - half);
+        var leftN = Math.Min(per, pageRows.Count);                 // fill the left column first
+        GridL.ItemsSource = pageRows.GetRange(0, leftN);
+        GridR.ItemsSource = pageRows.GetRange(leftN, pageRows.Count - leftN);
 
         CountText.Text = _all.Count == 0
             ? _emptyHint
@@ -383,6 +348,16 @@ public partial class TickDetailWindow : Window
 
         FirstButton.IsEnabled = PrevButton.IsEnabled = _page > 0;
         NextButton.IsEnabled = LastButton.IsEnabled = _page < pages - 1;
+    }
+
+    /// <summary>Recompute how many rows fit one column so a page fills the screen
+    /// with no scrollbar; re-render when it changes (initial layout / window resize).</summary>
+    private void Table_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var n = Math.Max(1, (int)(GridL.ActualHeight / RowHeight));
+        if (n == _rowsPerCol) return;
+        _rowsPerCol = n;
+        RenderPage();
     }
 
     private void First_Click(object sender, RoutedEventArgs e) { _page = 0; RenderPage(); }

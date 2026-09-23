@@ -6,21 +6,21 @@
         Background="#0F1420" FontFamily="Microsoft YaHei"
         TextOptions.TextFormattingMode="Display">
   <Window.Resources>
-    <!-- Shared cell looks so the two side-by-side tables stay identical. -->
-    <Style x:Key="TimeCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="#8B93A3" />
-      <Setter Property="Margin" Value="8,0,0,0" />
-    </Style>
-    <Style x:Key="PriceCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{Binding PriceFg}" />
-      <Setter Property="TextAlignment" Value="Right" />
-      <Setter Property="Margin" Value="0,0,10,0" />
-    </Style>
-    <Style x:Key="VolCell" TargetType="TextBlock">
-      <Setter Property="Foreground" Value="{Binding VolFg}" />
-      <Setter Property="TextAlignment" Value="Right" />
-      <Setter Property="Margin" Value="0,0,10,0" />
-    </Style>
+    <!-- One row of the two side-by-side tables: fixed height (tight), fixed column
+         layout shared with the header so 列名/列数据 line up exactly. -->
+    <DataTemplate x:Key="TickRowTemplate">
+      <Grid Height="21">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <TextBlock Grid.Column="0" Text="{Binding Time}" Foreground="#8B93A3" FontSize="12"
+                   VerticalAlignment="Center" Margin="8,0,0,0" />
+        <TextBlock Grid.Column="1" Text="{Binding Price}" Foreground="{Binding PriceFg}" FontSize="12"
+                   VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+        <TextBlock Grid.Column="2" Text="{Binding Volume}" Foreground="{Binding VolFg}" FontSize="12"
+                   VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+      </Grid>
+    </DataTemplate>
   </Window.Resources>
   <Grid Margin="12">
     <Grid.RowDefinitions>
@@ -95,34 +95,41 @@
       </TextBlock>
     </StackPanel>
 
-    <!-- Detail table in TWO columns for density (item 5): left holds the first
-         half of the page, right the second — newspaper reading, ~2× rows on screen
-         and half the page turns. Both tables share the cell styles above. -->
-    <Grid Grid.Row="4">
+    <!-- Detail table in TWO columns (item 5). NO scrollbar: a page holds exactly
+         what fits on screen across both columns (left = first half, right = second),
+         computed from the height; navigate by the pager below. Header row shares the
+         row template's 3-* column layout so 列名/列数据 line up. -->
+    <Grid Grid.Row="4" ClipToBounds="True">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
-      <DataGrid x:Name="GridL" Grid.Column="0" AutoGenerateColumns="False" IsReadOnly="True"
-                HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
-                CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
-                BorderBrush="#222A38" BorderThickness="1" FontSize="12" EnableRowVirtualization="True">
-        <DataGrid.Columns>
-          <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="92" ElementStyle="{StaticResource TimeCell}" />
-          <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="86" ElementStyle="{StaticResource PriceCell}" />
-          <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="84" ElementStyle="{StaticResource VolCell}" />
-        </DataGrid.Columns>
-      </DataGrid>
-      <DataGrid x:Name="GridR" Grid.Column="1" Margin="8,0,0,0" AutoGenerateColumns="False" IsReadOnly="True"
-                HeadersVisibility="Column" GridLinesVisibility="None" CanUserSortColumns="False"
-                CanUserResizeRows="False" Background="Transparent" RowBackground="Transparent"
-                BorderBrush="#222A38" BorderThickness="1" FontSize="12" EnableRowVirtualization="True">
-        <DataGrid.Columns>
-          <DataGridTextColumn Header="时间" Binding="{Binding Time}" Width="92" ElementStyle="{StaticResource TimeCell}" />
-          <DataGridTextColumn Header="成交价" Binding="{Binding Price}" Width="86" ElementStyle="{StaticResource PriceCell}" />
-          <DataGridTextColumn Header="手数" Binding="{Binding Volume}" Width="84" ElementStyle="{StaticResource VolCell}" />
-        </DataGrid.Columns>
-      </DataGrid>
+      <Border Grid.Column="0" BorderBrush="#222A38" BorderThickness="1">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+          <Grid Grid.Row="0" Height="24" Background="#151B28">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="时间" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
+            <TextBlock Grid.Column="1" Text="成交价" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+            <TextBlock Grid.Column="2" Text="手数" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+          </Grid>
+          <ItemsControl x:Name="GridL" Grid.Row="1" ClipToBounds="True"
+                        ItemTemplate="{StaticResource TickRowTemplate}" SizeChanged="Table_SizeChanged" />
+        </Grid>
+      </Border>
+      <Border Grid.Column="1" Margin="8,0,0,0" BorderBrush="#222A38" BorderThickness="1">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+          <Grid Grid.Row="0" Height="24" Background="#151B28">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="时间" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0" />
+            <TextBlock Grid.Column="1" Text="成交价" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+            <TextBlock Grid.Column="2" Text="手数" Foreground="#8B93A3" FontSize="12" VerticalAlignment="Center" TextAlignment="Right" Margin="0,0,10,0" />
+          </Grid>
+          <ItemsControl x:Name="GridR" Grid.Row="1" ClipToBounds="True"
+                        ItemTemplate="{StaticResource TickRowTemplate}" />
+        </Grid>
+      </Border>
     </Grid>
 
     <!-- Pagination -->
