@@ -72,12 +72,14 @@ public sealed class MarketClock : IMarketClock
 {
     /// <summary>
     /// Grace period after the bell before the day's candle is trusted as final.
-    /// The upstream feeds keep settling the close for a few minutes (closing
-    /// auction prints, then the history endpoint catching up), so treating the
-    /// bell itself as the cutoff would freeze a not-quite-final candle for the
-    /// rest of the day.
+    /// The 收盘价 is fixed by the closing call auction at 15:00:00 and the feeds
+    /// publish that final daily bar within ~30s (measured: final well before
+    /// 15:15), so a short buffer is enough. It used to be 20min, which meant
+    /// today's finished candle / 分时 didn't show in 日K or 历史分时 until 15:20 —
+    /// the user wants them the moment the market closes. 1min keeps a safety
+    /// buffer for the publish lag; the 30s candle re-poll self-corrects anyway.
     /// </summary>
-    private static readonly TimeSpan SettleMargin = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan SettleMargin = TimeSpan.FromMinutes(1);
 
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Dictionary<string, TimeZoneInfo> _zones = new();

@@ -93,8 +93,8 @@ public class MarketClockTests
     [Fact]
     public void After_close_needs_the_settle_margin()
     {
-        // SH closes 15:00; 15:10 local is inside the settle margin, 15:25 past it.
-        Assert.False(At("2026-08-31T07:10:00").IsAfterClose(Market.SH, DateTimeOffset.Parse("2026-08-31T07:10:00Z")));
-        Assert.True(At("2026-08-31T07:25:00").IsAfterClose(Market.SH, DateTimeOffset.Parse("2026-08-31T07:25:00Z")));
+        // SH closes 15:00; 15:00:30 local is inside the (1min) settle margin, 15:02 past it.
+        Assert.False(At("2026-08-31T07:00:30").IsAfterClose(Market.SH, DateTimeOffset.Parse("2026-08-31T07:00:30Z")));
+        Assert.True(At("2026-08-31T07:02:00").IsAfterClose(Market.SH, DateTimeOffset.Parse("2026-08-31T07:02:00Z")));
     }
 }
