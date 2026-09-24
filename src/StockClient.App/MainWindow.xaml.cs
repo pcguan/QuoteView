@@ -807,7 +807,7 @@ public partial class MainWindow : FluentWindow
 
     private ViewModels.KlineViewModel MakeKlineVm(Contract contract) =>
         new(contract, _klineRepo, _trendRepo, Dispatcher, new TencentQuoteClient(_klineHttp),
-            new EastMoneyDetailsClient(_klineHttp), _tapeCache);
+            new EastMoneyDetailsClient(_klineHttp), _tapeCache, _session);
 
     /// <summary>The watch list grouped for the chart window's 分组→合约 pickers:
     /// one entry per group with its resolved contracts. If the charted contract

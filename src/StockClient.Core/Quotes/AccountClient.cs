@@ -420,6 +420,50 @@ public sealed class AccountClient
         }
     }
 
+    /// <summary>
+    /// The live 逐笔 tape from the server's shared poller (GET /livetape). The
+    /// server polls upstream (multi-source, rate-managed) and serves an accumulated
+    /// last-good tape, so N charts don't fan into N rate-limited 东财 requests. Same
+    /// row shape and parser as the archived <see cref="TicksAsync"/>.
+    /// </summary>
+    public async Task<(TradeTickSnapshot? Snap, bool Unauthorized)> LiveTicksAsync(
+        string token, string code, CancellationToken ct)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Get, $"{Base}/livetape?code={Uri.EscapeDataString(code)}");
+            Stamp(request, token);
+
+            using var response = await _http.SendAsync(request, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized) return (null, true);
+            if (!response.IsSuccessStatusCode) return (null, false);
+
+            var dto = JsonSerializer.Deserialize<ArchivedTicks>(
+                await response.Content.ReadAsStringAsync(ct));
+            if (dto?.Details is not { Count: > 0 }) return (null, false);
+
+            var ticks = dto.Details
+                .Select(EastMoneyDetailsClient.ParseRow)
+                .Where(t => t is not null)
+                .Select(t => t!)
+                .ToArray();
+            if (ticks.Length == 0) return (null, false);
+
+            return (new TradeTickSnapshot
+            {
+                Code = code,
+                PrePrice = dto.PrePrice,
+                Decimals = dto.Decimals > 0 ? dto.Decimals : 2,
+                Ticks = ticks,
+            }, false);
+        }
+        catch (Exception)
+        {
+            return (null, false);
+        }
+    }
+
     private sealed record ArchivedTicks
     {
         public double PrePrice { get; init; }

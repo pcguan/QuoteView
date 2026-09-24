@@ -780,6 +780,131 @@ def fetch_ticks(code):
     return None
 
 
+# ============================================================ live 逐笔 service
+# The desktop client polling 东财 details/get per-window fans N charts into N
+# rate-limited requests (details has no batch form, one secid each) and 东财
+# throttles it hard. So the server becomes the single poller: clients subscribe
+# (GET /livetape registers interest with a TTL) and read an accumulated, last-good
+# tape from here; only THIS box talks upstream. 腾讯 dealinfo is the live source
+# (fast from this egress, carries buy/sell direction, but caps at ~20 rows), plus
+# a sparingly-retried one-shot 东财 whole-day seed for the morning history. Rows
+# are the same "时间,价,量,笔,方向" the client already parses (方向 2买/1卖/4中性).
+_live_lock = threading.Lock()
+LIVE = {}            # code -> {pre, dec, rows{time:row}, seeded, seed_at, poll_at, at}
+LIVE_WANT = {}       # code -> expiry ts
+LIVE_TTL_S = 30      # a code stays polled this long after the last client read
+LIVE_CADENCE_S = 3   # matches the feed's own 3s sampling
+LIVE_SEED_RETRY_S = 90
+LIVE_UA = "Mozilla/5.0 (compatible; QuoteViewServer/1.0)"
+
+
+def _tencent_code(code):
+    return code[:2].lower() + code[2:]
+
+
+def tencent_prev_close(code):
+    """昨收 from qt.gtimg.cn (~-delimited, index 4); 0.0 on failure. Intraday it's
+    fixed, so the poller stops fetching it once a non-zero lands."""
+    try:
+        req = urllib.request.Request(
+            f"https://qt.gtimg.cn/q={_tencent_code(code)}",
+            headers={"User-Agent": LIVE_UA})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            body = r.read().decode("latin-1", "replace").split('"', 2)[1]
+        f = body.split("~")
+        return float(f[4]) if len(f) > 4 and f[4] else 0.0
+    except Exception:
+        return 0.0
+
+
+def fetch_ticks_tencent(code):
+    """The last ~30 逐笔 from 腾讯 dealinfo as EastMoney '时间,价,量(手),笔,方向'
+    rows, or None. 腾讯 gives no 笔数 (0) and B/S direction -> 2/1 (else 4)."""
+    try:
+        req = urllib.request.Request(
+            "https://web.ifzq.gtimg.cn/appstock/app/dealinfo/getMingXi"
+            f"?code={_tencent_code(code)}&count=30",
+            headers={"User-Agent": LIVE_UA})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            doc = json.load(r)
+        raw = (doc.get("data") or {}).get("data") or ""
+        rows = []
+        for item in raw.split("|"):
+            p = item.split("/")
+            if len(p) < 7:
+                continue
+            d = "2" if p[6] == "B" else "1" if p[6] == "S" else "4"
+            rows.append(f"{p[1]},{p[2]},{p[4]},0,{d}")
+        return rows or None
+    except Exception:
+        return None
+
+
+def _live_entry(code):
+    e = LIVE.get(code)
+    if e is None:
+        e = LIVE[code] = {"pre": 0.0, "dec": 2, "rows": {}, "seeded": False,
+                          "seed_at": 0.0, "poll_at": 0.0, "at": 0.0}
+    return e
+
+
+def live_subscribe(code):
+    """Registers a client's interest and returns the current accumulated tape."""
+    now = time.time()
+    with _live_lock:
+        LIVE_WANT[code] = now + LIVE_TTL_S
+        e = _live_entry(code)
+        return {"PrePrice": e["pre"], "Decimals": e["dec"],
+                "Details": [e["rows"][k] for k in sorted(e["rows"])]}
+
+
+def _live_merge(e, rows, overwrite):
+    for row in rows:
+        t = row.split(",", 1)[0]
+        if overwrite or t not in e["rows"]:
+            e["rows"][t] = row
+
+
+def live_poll_loop():
+    """Single upstream poller for every subscribed code: a one-shot 东财 whole-day
+    seed (retried at most every 90s until it lands, so a throttled egress isn't
+    hammered) plus a 腾讯 live merge, on a 3s cadence."""
+    while True:
+        now = time.time()
+        with _live_lock:
+            for c in [c for c, exp in LIVE_WANT.items() if exp <= now]:
+                LIVE_WANT.pop(c, None)
+            codes = list(LIVE_WANT.keys())
+        for code in codes:
+            with _live_lock:
+                e = _live_entry(code)
+                if now - e["poll_at"] < LIVE_CADENCE_S:
+                    continue
+                want_seed = (not e["seeded"]) and (now - e["seed_at"] >= LIVE_SEED_RETRY_S)
+                if want_seed:
+                    e["seed_at"] = now
+            if want_seed:
+                seed = fetch_ticks(code)   # 东财 whole-day (existing archive fetch)
+                if seed:
+                    with _live_lock:
+                        _live_merge(e, seed.get("Details") or [], overwrite=True)
+                        if seed.get("PrePrice"):
+                            e["pre"] = float(seed["PrePrice"])
+                        if seed.get("Decimals"):
+                            e["dec"] = int(seed["Decimals"])
+                        e["seeded"] = True
+            rows = fetch_ticks_tencent(code)
+            pre = tencent_prev_close(code) if e["pre"] == 0.0 else 0.0
+            with _live_lock:
+                if rows:
+                    _live_merge(e, rows, overwrite=False)   # forward ticks only
+                if pre:
+                    e["pre"] = pre
+                e["poll_at"] = time.time()
+                e["at"] = e["poll_at"]
+        time.sleep(1.0)
+
+
 def fetch_tencent(code):
     """(series, data_day) from Tencent minute/query — the fallback for when
     EastMoney throttles the trends2 path with connection resets (it does, in
@@ -2504,6 +2629,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._bad("bad code")
             return self._json({"dates": tick_dates(code)})
 
+        if url.path == "/livetape":
+            # Subscribe-and-read: registers interest (the poller keeps this code
+            # fresh for LIVE_TTL_S) and returns the accumulated last-good tape, so
+            # the client never touches 东财 and never sees an upstream throttle.
+            if self._auth() is None:
+                return
+            code = (q.get("code") or [""])[0].upper()
+            if not CODE_RE.match(code):
+                return self._bad("bad code")
+            return self._json(live_subscribe(code))
+
         if url.path == "/ticks":
             if self._auth() is None:
                 return
@@ -3302,6 +3438,7 @@ def main():
 
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=news_scheduler, daemon=True).start()
+    threading.Thread(target=live_poll_loop, daemon=True).start()
 
     server = ThreadingHTTPServer((BIND, PORT), Handler)
     log(f"listening on {BIND}:{PORT}, data={DATA}, "

@@ -56,6 +56,7 @@ public sealed class KlineViewModel : ObservableObject
     private readonly TrendRepository _trends;
     private readonly TencentQuoteClient? _quotes;
     private readonly EastMoneyDetailsClient? _details;
+    private readonly Services.AccountSession? _session;   // live 逐笔 via server's shared poller
     private readonly TapeCache? _tapeCache;      // today's 逐笔 persisted per contract
     private readonly MarketClock _clock = new();
     private DateTimeOffset _lastTapeSave;
@@ -83,13 +84,15 @@ public sealed class KlineViewModel : ObservableObject
     public KlineViewModel(
         Contract contract, KlineRepository repo,
         TrendRepository trends, Dispatcher dispatcher, TencentQuoteClient? quotes = null,
-        EastMoneyDetailsClient? details = null, TapeCache? tapeCache = null)
+        EastMoneyDetailsClient? details = null, TapeCache? tapeCache = null,
+        Services.AccountSession? session = null)
     {
         _contract = contract;
         _repo = repo;
         _trends = trends;
         _quotes = quotes;
         _details = details;
+        _session = session;
         _tapeCache = tapeCache;
         _dispatcher = dispatcher;
 
@@ -353,31 +356,33 @@ public sealed class KlineViewModel : ObservableObject
     {
         if (!HasTape || !IsTrend) return;
 
-        // Only the window the user is actually looking at polls its tape. Every open
-        // 分时 window has its own poller, and 东财's details endpoint has no batch form
-        // (one secid per request), so N background windows = N requests/tick all hitting
-        // the same rate-limited endpoint. A window claims this on activation; background
-        // windows pause and catch up (whole-day fetch + accumulator merge) when refocused.
-        if (ActiveTapeVm is not null && !ReferenceEquals(ActiveTapeVm, this)) return;
-
-        try
+        TradeTickSnapshot? snap;
+        if (_session is { IsSignedIn: true })
         {
-            var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
-            if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
-
-            Ticks = _tape.Add(snap.Ticks);
-            TickPrePrice = snap.PrePrice;
-            if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
-            TicksUpdated?.Invoke();
-            PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
+            // Server-backed: the NAS poller talks to upstream (multi-source, rate-managed)
+            // and serves an accumulated last-good tape, so EVERY open window can read its
+            // tape without fanning into N rate-limited 东财 requests. This is what lets
+            // 多合约 stay live at once, and the client never sees an upstream throttle.
+            try { snap = await _session.LiveTicksAsync(_contract.Code); }
+            catch (Exception) { return; }
         }
-        catch (Exception)
+        else
         {
-            // A failed poll just leaves the last tape in place and we retry on the next
-            // 3s tick. NO backoff: 东财's throttle clears on its own, and retrying at the
-            // full 3s catches the recovery within one tick — a growing skip only turned
-            // 东财's downtime into a multi-minute on-screen freeze.
+            // Not signed in: fall back to polling 东财 directly. That path IS per-IP
+            // rate-limited and has no batch form, so only the focused window polls;
+            // background windows pause and catch up when refocused.
+            if (ActiveTapeVm is not null && !ReferenceEquals(ActiveTapeVm, this)) return;
+            if (_details is null) return;
+            try { snap = await _details.FetchAsync(_contract, TapeMaxRows, CancellationToken.None); }
+            catch (Exception) { return; }
         }
+
+        if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
+        Ticks = _tape.Add(snap.Ticks);
+        TickPrePrice = snap.PrePrice;
+        if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
+        TicksUpdated?.Invoke();
+        PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
     }
 
     /// <summary>Seeds the accumulator from today's on-disk tape so the window shows

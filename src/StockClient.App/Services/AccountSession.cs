@@ -313,6 +313,13 @@ public sealed class AccountSession
         CallAsync(t => _client.TicksAsync(t, code, date, CancellationToken.None).ContinueWith(
             x => (x.Result.Snap, x.Result.Unauthorized)), (TradeTickSnapshot?)null);
 
+    /// <summary>The live 逐笔 tape from the server's shared poller (GET /livetape),
+    /// or null. The server — not the client — polls upstream, so any number of open
+    /// charts read their tapes without fanning into N rate-limited 东财 requests.</summary>
+    public Task<TradeTickSnapshot?> LiveTicksAsync(string code) =>
+        CallAsync(t => _client.LiveTicksAsync(t, code, CancellationToken.None).ContinueWith(
+            x => (x.Result.Snap, x.Result.Unauthorized)), (TradeTickSnapshot?)null);
+
     /// <summary>The personalized watch feed for this account, or null.</summary>
     public Task<string?> NewsJsonAsync() =>
         CallAsync(t => _client.NewsAsync(t, CancellationToken.None), (string?)null);
