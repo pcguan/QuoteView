@@ -24,16 +24,17 @@ public sealed class KlineViewModel : ObservableObject
     /// <summary>Intraday re-poll cadence (trend line + 五档 + 逐笔). 3s matches the
     /// 逐笔 feed's own refresh; the minute-grained trend just rides along.</summary>
     private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(3);
-    // 逐笔 tape polls on its OWN faster, Normal-priority timer (not the 3s Background
-    // trend tick): the details CDN serves an inconsistent tail across edges, so the
-    // tape only advances on a poll that happens to hit a fresh edge — at 3s (and
-    // starved behind rendering) fresh polls landed only every several seconds, so
-    // the tape sat still then dumped a batch. 1s hits a fresh edge far more often,
-    // keeping the tape flowing in small steps.
-    private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(1);
+    // 逐笔 tape polls on its OWN Normal-priority timer (not the Background trend
+    // tick) so it isn't starved behind rendering. Cadence is 3s: the details feed
+    // is itself 3s-sampled + origin-forced by the cache-buster, so 1s just re-pulled
+    // identical whole-day data 2 out of 3 times AND — measured 2026-09-24 — 东财
+    // rate-limited that hammering (code=000/掐断 on ~every poll, tape froze for tens
+    // of seconds), while a 3s cadence stayed reliably 200. So 3s is both the feed's
+    // real granularity and gentle enough not to be throttled.
+    private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(3);
 
     /// <summary>How often the running tape is flushed to <see cref="TapeCache"/>.
-    /// Coarser than the 1s poll — the accumulator already holds it in memory; disk
+    /// Coarser than the 3s poll — the accumulator already holds it in memory; disk
     /// is only the crash/reopen/blocked-request fallback, not the live source.</summary>
     private static readonly TimeSpan TapeSaveInterval = TimeSpan.FromSeconds(15);
 
@@ -60,7 +61,6 @@ public sealed class KlineViewModel : ObservableObject
     private DateTimeOffset _lastTapeSave;
     private int _tapeDecimals = 2;
     private bool _tapeSeeded;
-    private int _pollLogN;   // TEMP: log the first N detail polls after ShowTrend to diagnose startup lag
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _detailTimer;
@@ -244,8 +244,6 @@ public sealed class KlineViewModel : ObservableObject
 
         IsTrend = true;
         SeedTapeFromCache();   // show today's cached tape at once — a blocked first poll isn't blank
-        _pollLogN = 0;
-        StockClient.App.Probe.Log($"ShowTrend {_contract.Code} seed={Ticks.Count} hasTape={HasTape}");
         _trendTimer.Start();
         if (HasTape) _detailTimer.Start();   // only 沪深 have a 逐笔 tape to poll
         _ = LoadTrendAsync();
@@ -346,13 +344,9 @@ public sealed class KlineViewModel : ObservableObject
     {
         if (!HasTape || !IsTrend) return;
 
-        var sw = _pollLogN < 15 ? System.Diagnostics.Stopwatch.StartNew() : null;
         try
         {
             var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
-            if (sw is not null)
-                StockClient.App.Probe.Log(
-                    $"detail#{_pollLogN++} {_contract.Code} {sw.ElapsedMilliseconds}ms fetched={snap?.Ticks.Count ?? -1} total={Ticks.Count}");
             if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
 
             Ticks = _tape.Add(snap.Ticks);
@@ -361,10 +355,8 @@ public sealed class KlineViewModel : ObservableObject
             TicksUpdated?.Invoke();
             PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            if (sw is not null)
-                StockClient.App.Probe.Log($"detail#{_pollLogN++} {_contract.Code} EXC {sw.ElapsedMilliseconds}ms {ex.Message}");
             // Tape keeps its last state; not worth surfacing.
         }
     }
