@@ -37,19 +37,19 @@ public sealed class EastMoneyDetailsClient
     /// whole session (the archive sweep), a small one for a live tape.</param>
     public async Task<TradeTickSnapshot?> FetchAsync(Contract contract, int max, CancellationToken cancellationToken)
     {
-        // Cache-buster: without a unique query the CDN serves whatever a nearby
-        // edge cached — measured hopping between a fresh tail and a minutes-old one
-        // poll-to-poll, which is what made the tape stall then dump a batch, and
-        // occasionally drop a 3s bucket for good (an edge with a hole we kept
-        // re-reading). A unique _ per request bypasses that and hits origin, so
-        // every poll gets the latest, complete day; the accumulator then merges a
-        // consistent stream. (The feed itself is 3s-sampled — that granularity is
-        // upstream and unchanged.)
+        // NO cache-buster. A unique _ per request forces a CDN cache MISS → origin
+        // read on every poll, and 东财 rate-limits that scraping-shaped pattern: the
+        // edge resets the TLS (code=000) after a handful of polls, then keeps doing
+        // it for a cooldown — measured 2026-09-23 across two egresses. That froze the
+        // tape FAR more often than the occasional cross-edge staleness jump the
+        // cache-buster was added to smooth (which the user finds acceptable). A
+        // constant URL is served from the edge cache (cheap HITs, not throttled); the
+        // edge's own short TTL keeps it fresh enough at a 3s poll and the accumulator
+        // merges whatever each edge returns. (The feed is 3s-sampled — upstream.)
         var url =
             "/api/qt/stock/details/get?fields1=f1,f2,f3,f4,f5,f6,f7,f8" +
             $"&fields2={Fields2}&ut=fa5fd1943c7b386f172d6893dbfba10b&pos=-{Math.Max(1, max)}" +
-            $"&secid={Uri.EscapeDataString(contract.EastMoneySecId)}" +
-            $"&_={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            $"&secid={Uri.EscapeDataString(contract.EastMoneySecId)}";
 
         var response = await GetAsync(url, cancellationToken);
         if (response?.Data is not { } data) return null;
