@@ -79,6 +79,9 @@ public partial class TickDetailWindow : Window
         // until a manual click, which is what made it feel tens-of-seconds stale.
         _vm.TicksUpdated += OnVmTicks;
         Closed += (_, _) => _vm.TicksUpdated -= OnVmTicks;
+        // Focusing this popup keeps its source VM the active poller, so the tape it
+        // reads stays live even when the parent chart window is behind it.
+        Activated += (_, _) => _vm.ClaimActiveTape();
     }
 
     private void OnVmTicks() => Dispatcher.Invoke(Reload);

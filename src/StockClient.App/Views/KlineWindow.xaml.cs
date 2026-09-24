@@ -60,6 +60,10 @@ public partial class KlineWindow : Window
         WindowPlacement.Restore(this, PlaceKey(vm.Contract.Code));
         Closing += (_, _) => WindowPlacement.Save(this, PlaceKey(_vm.Contract.Code));
         WindowMinimizeGesture.Attach(this);
+        // Only the focused window polls its 逐笔 tape; background windows pause so they
+        // don't fan out into N rate-limited detail requests. Reads the current _vm so an
+        // in-place contract switch claims for whatever chart is showing.
+        Activated += (_, _) => _vm.ClaimActiveTape();
 
         _factory = factory;
         _groups = groups.ToArray();

@@ -334,6 +334,17 @@ public sealed class KlineViewModel : ObservableObject
     /// lagging behind, no longer makes the tape flicker or skip (see
     /// <see cref="TapeAccumulator"/>). One per contract = one per view model.</summary>
     private readonly TapeAccumulator _tape = new();
+    private int _detailSkip;    // detail-poll ticks to skip (rate-limit backoff)
+    private int _detailFails;   // consecutive detail-poll failures → backoff depth
+
+    /// <summary>The one VM whose 分时 tape is allowed to poll 东财 right now — the
+    /// window (or its 成交明细 popup) the user last focused. Others pause so N open
+    /// windows don't fan out into N rate-limited detail requests per tick.</summary>
+    public static KlineViewModel? ActiveTapeVm { get; private set; }
+
+    /// <summary>Called from a window's Activated handler: this VM's tape becomes the
+    /// live one; the previously-active window's tape pauses.</summary>
+    public void ClaimActiveTape() => ActiveTapeVm = this;
 
     /// <summary>
     /// One 成交明细 poll for the tape beside the book, on the same trend cadence.
@@ -344,6 +355,19 @@ public sealed class KlineViewModel : ObservableObject
     {
         if (!HasTape || !IsTrend) return;
 
+        // Only the window the user is actually looking at polls its tape. Every open
+        // 分时 window has its own poller, and 东财's details endpoint has no batch form
+        // (one secid per request), so N background windows = N requests/tick all hitting
+        // the same rate-limited endpoint. A window claims this on activation; background
+        // windows pause and catch up (whole-day fetch + accumulator merge) when refocused.
+        if (ActiveTapeVm is not null && !ReferenceEquals(ActiveTapeVm, this)) return;
+
+        // Back off when 东财 starts cutting us off (rate-limit with a cooldown): keep
+        // hammering at 3s and we just keep the penalty armed and never recover within a
+        // session. Skip a growing number of ticks (3s→9s→…→~30s) so the bucket refills,
+        // then snap straight back to 3s on the first success.
+        if (_detailSkip > 0) { _detailSkip--; return; }
+
         try
         {
             var snap = await _details!.FetchAsync(_contract, TapeMaxRows, CancellationToken.None);
@@ -352,11 +376,14 @@ public sealed class KlineViewModel : ObservableObject
             Ticks = _tape.Add(snap.Ticks);
             TickPrePrice = snap.PrePrice;
             if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
+            _detailFails = 0;   // healthy — hold the full 3s cadence
             TicksUpdated?.Invoke();
             PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
         }
         catch (Exception)
         {
+            _detailFails++;
+            _detailSkip = Math.Min(2 * _detailFails, 10);   // 3s→9s→15s→…→33s
             // Tape keeps its last state; not worth surfacing.
         }
     }
