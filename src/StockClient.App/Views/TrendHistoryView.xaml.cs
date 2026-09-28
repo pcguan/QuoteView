@@ -126,7 +126,6 @@ public partial class TrendHistoryView : UserControl
         }
 
         var request = ++_datesRequest;
-        var previous = keepSelection ? DateBox.SelectedItem as DateOnly? : null;
 
         // Local first so the list is usable immediately; the server's answer is
         // merged in when (and if) it arrives — offline just means local-only.
@@ -144,18 +143,38 @@ public partial class TrendHistoryView : UserControl
                 ? StockClient.Core.Contracts.TradingCalendar.IsAShareTradingDay(d)
                 : d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
             .OrderByDescending(d => d).ToArray();
-        DateBox.ItemsSource = dates;
 
         if (dates.Length == 0)
         {
+            DateBox.ItemsSource = dates;
             ShowEmpty(_session.IsSignedIn
                 ? "该合约还没有分时快照（收盘后由服务端统一拉取）"
                 : "本地无快照；登录后可查询服务端归档（右上角「登录」）");
             return;
         }
 
-        var restored = previous is { } p ? Array.IndexOf(dates, p) : -1;
-        DateBox.SelectedIndex = restored >= 0 ? restored : 0;
+        // Re-assigning ItemsSource clears the selection, so only do it when the list
+        // actually changed. A DateBox_DropDownOpened refresh (keepSelection) runs while
+        // the dropdown is open; without this it would rebuild the list on completion and
+        // restore a STALE pre-await date — snapping a date the user just picked back to
+        // the old one. When the list did change, restore the CURRENT selection (read
+        // after the await, so a pick made mid-refresh is what we keep).
+        var current = DateBox.ItemsSource as DateOnly[];
+        var sameList = current is not null && current.SequenceEqual(dates);
+
+        if (!keepSelection)
+        {
+            DateBox.ItemsSource = dates;   // contract switch → land on the newest date
+            DateBox.SelectedIndex = 0;
+        }
+        else if (!sameList)
+        {
+            var toKeep = DateBox.SelectedItem as DateOnly?;
+            DateBox.ItemsSource = dates;
+            var restored = toKeep is { } p ? Array.IndexOf(dates, p) : -1;
+            DateBox.SelectedIndex = restored >= 0 ? restored : 0;
+        }
+        // keepSelection && sameList → leave the dropdown and the user's pick untouched.
 
         RefreshCompareItems();
 

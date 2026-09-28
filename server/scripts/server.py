@@ -873,19 +873,30 @@ def fetch_ticks_tencent_fullday(code):
     comes back empty. 方向 B->2 S->1 (else 4); 笔数 unknown (0)."""
     tcode = _tencent_code(code)
     rows = []
-    for p in range(1, 130):   # generous cap; stop on the first empty page
-        try:
-            req = urllib.request.Request(
-                "https://stock.gtimg.cn/data/index.php"
-                f"?appn=detail&action=data&c={tcode}&p={p}",
-                headers={"User-Agent": LIVE_UA})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                text = r.read().decode("utf-8", "replace")
-        except Exception:
-            break
+    misses = 0
+    for p in range(1, 200):   # generous cap; a well-formed empty page ends the day
+        text = None
+        for _ in range(3):    # retry a transient page failure — one hiccup must NOT
+            try:              # truncate the whole day (that left a 10-min hole once)
+                req = urllib.request.Request(
+                    "https://stock.gtimg.cn/data/index.php"
+                    f"?appn=detail&action=data&c={tcode}&p={p}",
+                    headers={"User-Agent": LIVE_UA})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    text = r.read().decode("utf-8", "replace")
+                break
+            except Exception:
+                text = None
+                time.sleep(0.3)
+        if text is None:
+            misses += 1
+            if misses >= 3:   # several pages fail even after retries — stop, don't spin
+                break
+            continue          # skip this one page (small hole) instead of losing the rest
+        misses = 0
         i, j = text.find('"'), text.rfind('"')   # v_detail_data_xxx=[1,"...."]
         if i < 0 or j <= i:
-            break
+            break             # a well-formed empty page = end of day
         added = 0
         for item in text[i + 1:j].split("|"):
             q = item.split("/")
