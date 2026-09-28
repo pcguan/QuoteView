@@ -1,7 +1,7 @@
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Threading;
 using StockClient.Core.Quotes;
 
 namespace StockClient.App.Views;
@@ -21,7 +21,23 @@ public partial class TradeTapeView : UserControl
 {
     private ScrollViewer? _scroll;
 
-    public TradeTapeView() => InitializeComponent();
+    // A stable collection bound once: refreshes ADD only the new prints instead of
+    // replacing ItemsSource, so existing rows (and the reader's scroll) aren't torn
+    // down and rebuilt every poll — that wholesale rebuild was the flicker.
+    private readonly ObservableCollection<Row> _obs = new();
+    private int _rendered;        // ticks already turned into rows
+    private double _lastPrice;    // newest rendered price, to chain the ↑↓ arrow onto appends
+    private string? _lastTime;    // newest rendered time, to recognise a plain append
+    private int _dec = -1;
+    private int _big = -1;
+    private double _pre = double.NaN;
+    private bool _nf = true;
+
+    public TradeTapeView()
+    {
+        InitializeComponent();
+        List.ItemsSource = _obs;
+    }
 
     private ScrollViewer? Scroll => _scroll ??= List.Template?.FindName("TapeScroll", List) as ScrollViewer;
 
@@ -32,48 +48,76 @@ public partial class TradeTapeView : UserControl
     public void SetTicks(IReadOnlyList<TradeTick> ticks, int decimals, int bigTradeWan,
         double prePrice = 0, bool newestFirst = true)
     {
+        var paramsSame = decimals == _dec && bigTradeWan == _big
+                         && prePrice.Equals(_pre) && newestFirst == _nf;
+
+        // Nothing new (the feed is 3s-sampled, so most polls repeat) → don't touch the
+        // list at all. This is what stops the tape flickering on every refresh.
+        if (paramsSame && ticks.Count == _rendered
+            && (ticks.Count == 0 || ticks[^1].Time == _lastTime))
+            return;
+
+        // Append fast-path: same shape, only grew, old tail still matches → render just
+        // the new prints and slide them in; existing rows stay put.
+        var append = paramsSame && ticks.Count > _rendered && _rendered > 0
+                     && ticks[_rendered - 1].Time == _lastTime;
+
+        if (!append)
+        {
+            _obs.Clear();
+            _rendered = 0;
+            _lastPrice = prePrice;
+            _dec = decimals; _big = bigTradeWan; _pre = prePrice; _nf = newestFirst;
+        }
+
         var sv = Scroll;
         var oldOffset = sv?.VerticalOffset ?? 0;
-        var oldCount = List.Items.Count;
         var wasAtTop = oldOffset <= 4;
 
-        // 成交价 colour is vs 昨收 (prePrice); the ↑↓ arrow is vs the previous print.
-        // Computed in time order, then flipped for display if newest-first.
-        var rows = new List<Row>(ticks.Count);
-        var prev = prePrice;
-        foreach (var t in ticks)   // chronological — earliest first
+        // 成交价 colour is vs 昨收 (prePrice); the ↑↓ arrow is vs the previous print —
+        // chained onto _lastPrice so an append picks up where the last row left off.
+        var prev = _lastPrice;
+        var fresh = new List<Row>(ticks.Count - _rendered);
+        for (var i = _rendered; i < ticks.Count; i++)
         {
+            var t = ticks[i];
             var (priceFg, arrow) = TradeColors.PriceLook(t.Price, prePrice, prev);
             prev = t.Price;
-            var big = TradeColors.IsBig(t, bigTradeWan);
-            rows.Add(new Row(
+            fresh.Add(new Row(
                 t.Time,
                 t.Price.ToString("F" + decimals) + arrow,
                 t.Volume.ToString(),
                 priceFg,
-                TradeColors.Volume(t.Side, big)));
+                TradeColors.Volume(t.Side, TradeColors.IsBig(t, bigTradeWan))));
         }
-        if (newestFirst) rows.Reverse();   // newest print at the top
 
-        List.ItemsSource = rows;
+        if (newestFirst)
+            for (var k = 0; k < fresh.Count; k++) _obs.Insert(k, fresh[fresh.Count - 1 - k]);
+        else
+            foreach (var r in fresh) _obs.Add(r);
 
-        // Replacing ItemsSource resets the viewport to the top; restore the
-        // reader's place after the new rows lay out.
-        var delta = rows.Count - oldCount;
-        Dispatcher.BeginInvoke(new Action(() =>
+        _rendered = ticks.Count;
+        if (ticks.Count > 0) { _lastPrice = ticks[^1].Price; _lastTime = ticks[^1].Time; }
+
+        // Hold the reader's place. Newest-first: new prints came in at the top, so a
+        // reader who'd scrolled into history shifts down by that many; a reader at the
+        // top keeps following the latest. Chronological replay just parks at the open.
+        if (sv is not null)
         {
-            var s = Scroll;
-            if (s is null) return;
-            if (!newestFirst) { s.ScrollToTop(); return; }   // historical replay parks at the open
-            // Newest-first live tape: sit at the top to follow the latest, or —
-            // when the reader has scrolled down into history — hold their place
-            // (new prints arrive at the top, so shift the offset by how many).
-            if (wasAtTop) s.ScrollToTop();
-            else s.ScrollToVerticalOffset(Math.Max(0, oldOffset + delta));
-        }), DispatcherPriority.Background);
+            if (!newestFirst) sv.ScrollToTop();
+            else if (wasAtTop) sv.ScrollToTop();
+            else sv.ScrollToVerticalOffset(Math.Max(0, oldOffset + fresh.Count));
+        }
     }
 
-    public void Clear() => List.ItemsSource = null;
+    public void Clear()
+    {
+        _obs.Clear();
+        _rendered = 0;
+        _lastTime = null;
+        _dec = _big = -1;
+        _pre = double.NaN;
+    }
 
     /// <summary>Snap back to the top — the newest print on a live (newest-first)
     /// tape. After this the tape is "at top" again, so it resumes following the

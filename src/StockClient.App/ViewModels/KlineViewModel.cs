@@ -24,14 +24,14 @@ public sealed class KlineViewModel : ObservableObject
     /// <summary>Intraday re-poll cadence (trend line + 五档 + 逐笔). 3s matches the
     /// 逐笔 feed's own refresh; the minute-grained trend just rides along.</summary>
     private static readonly TimeSpan TrendInterval = TimeSpan.FromSeconds(3);
-    // 逐笔 tape polls on its OWN Normal-priority timer (not the Background trend
-    // tick) so it isn't starved behind rendering. Cadence is 3s: the details feed
-    // is itself 3s-sampled + origin-forced by the cache-buster, so 1s just re-pulled
-    // identical whole-day data 2 out of 3 times AND — measured 2026-09-24 — 东财
-    // rate-limited that hammering (code=000/掐断 on ~every poll, tape froze for tens
-    // of seconds), while a 3s cadence stayed reliably 200. So 3s is both the feed's
-    // real granularity and gentle enough not to be throttled.
-    private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(3);
+    // 逐笔 tape polls on its OWN Normal-priority timer (not the Background trend tick)
+    // so it isn't starved behind rendering. 1s: the signed-in path reads the server's
+    // accumulated tape (a NAS read, NOT 东财 — no upstream rate limit), so polling
+    // faster just picks up each new 3s bucket promptly and evenly instead of beating
+    // against the server's own 3s cadence. Idle polls are cheap: PollDetailsAsync only
+    // fires a refresh when prints actually changed. The 东财-direct fallback (not
+    // signed in) self-throttles back to ~3s inside PollDetailsAsync.
+    private static readonly TimeSpan DetailInterval = TimeSpan.FromSeconds(1);
 
     /// <summary>How often the running tape is flushed to <see cref="TapeCache"/>.
     /// Coarser than the 3s poll — the accumulator already holds it in memory; disk
@@ -60,6 +60,7 @@ public sealed class KlineViewModel : ObservableObject
     private readonly TapeCache? _tapeCache;      // today's 逐笔 persisted per contract
     private readonly MarketClock _clock = new();
     private DateTimeOffset _lastTapeSave;
+    private DateTimeOffset _lastEastPoll;   // throttles the 东财-direct fallback to ~3s under the 1s timer
     private int _tapeDecimals = 2;
     private bool _tapeSeeded;
     private readonly Dispatcher _dispatcher;
@@ -369,19 +370,27 @@ public sealed class KlineViewModel : ObservableObject
         else
         {
             // Not signed in: fall back to polling 东财 directly. That path IS per-IP
-            // rate-limited and has no batch form, so only the focused window polls;
-            // background windows pause and catch up when refocused.
+            // rate-limited and has no batch form, so only the focused window polls,
+            // and — since the timer now ticks at 1s for the server path — throttle it
+            // back to ~3s so the direct fallback doesn't hammer 东财.
             if (ActiveTapeVm is not null && !ReferenceEquals(ActiveTapeVm, this)) return;
             if (_details is null) return;
+            if ((DateTimeOffset.UtcNow - _lastEastPoll).TotalSeconds < 2.7) return;
+            _lastEastPoll = DateTimeOffset.UtcNow;
             try { snap = await _details.FetchAsync(_contract, TapeMaxRows, CancellationToken.None); }
             catch (Exception) { return; }
         }
 
         if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
+        var before = Ticks.Count;
+        var beforePre = TickPrePrice;
         Ticks = _tape.Add(snap.Ticks);
         TickPrePrice = snap.PrePrice;
         if (snap.Decimals > 0) _tapeDecimals = snap.Decimals;
-        TicksUpdated?.Invoke();
+        // Only signal a refresh when prints actually changed — the feed is 3s-sampled,
+        // so at 1s most polls repeat; firing every poll would re-render (and flicker)
+        // the tape for nothing.
+        if (Ticks.Count != before || !TickPrePrice.Equals(beforePre)) TicksUpdated?.Invoke();
         PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
     }
 

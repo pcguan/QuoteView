@@ -38,6 +38,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+from concurrent.futures import ThreadPoolExecutor
 
 DATA = os.environ.get("QV_DATA", "/data")
 LOG_FILE = os.environ.get("QV_LOG", "")
@@ -865,43 +866,165 @@ def _live_merge(e, rows, overwrite):
             e["rows"][t] = row
 
 
+def fetch_ticks_tencent_fullday(code):
+    """腾讯 stock.gtimg paginated full-day 逐笔 as EastMoney '时间,价,量,笔,方向'
+    rows, or None. Reliable from this egress (unlike 东财 whole-day when throttled),
+    but paginated ~70 rows/page — a session is ~65 pages, so this walks until a page
+    comes back empty. 方向 B->2 S->1 (else 4); 笔数 unknown (0)."""
+    tcode = _tencent_code(code)
+    rows = []
+    for p in range(1, 130):   # generous cap; stop on the first empty page
+        try:
+            req = urllib.request.Request(
+                "https://stock.gtimg.cn/data/index.php"
+                f"?appn=detail&action=data&c={tcode}&p={p}",
+                headers={"User-Agent": LIVE_UA})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                text = r.read().decode("utf-8", "replace")
+        except Exception:
+            break
+        i, j = text.find('"'), text.rfind('"')   # v_detail_data_xxx=[1,"...."]
+        if i < 0 or j <= i:
+            break
+        added = 0
+        for item in text[i + 1:j].split("|"):
+            q = item.split("/")
+            if len(q) < 7:
+                continue
+            d = "2" if q[6] == "B" else "1" if q[6] == "S" else "4"
+            rows.append(f"{q[1]},{q[2]},{q[4]},0,{d}")
+            added += 1
+        if added == 0:
+            break
+        time.sleep(0.05)   # be gentle across the page walk
+    if not rows:
+        return None
+    return {"Code": code, "PrePrice": tencent_prev_close(code),
+            "Decimals": 2, "Details": rows}
+
+
+def _seed_code(code, e):
+    """Backfills the morning history once, off the poll loop. 腾讯 stock.gtimg's
+    paginated full day is the primary source — reliable from this egress and quick
+    (~66 small pages). 东财 whole-day is the fallback (one request, carries real 笔数,
+    but its egress is often throttled AND fails slowly ~44s). Leaves seeded=False on
+    total failure so it retries after LIVE_SEED_RETRY_S."""
+    seed = fetch_ticks_tencent_fullday(code)
+    if not (seed and seed.get("Details")):
+        seed = fetch_ticks(code)
+    if not (seed and seed.get("Details")):
+        return
+    with _live_lock:
+        _live_merge(e, seed["Details"], overwrite=True)
+        if seed.get("PrePrice"):
+            e["pre"] = float(seed["PrePrice"])
+        if seed.get("Decimals"):
+            e["dec"] = int(seed["Decimals"])
+        e["seeded"] = True
+
+
+def fetch_ticks_eastmoney_live(code):
+    """Last ~50 逐笔 from 东财 push2delay details; rows already in the shared
+    '时间,价,量,笔,方向' shape. dict {rows, pre, dec} or None. A DIFFERENT provider
+    from 腾讯 — splitting the subscribed set across the two ~halves each one's per-IP
+    request rate, which is what lets the whole set stay live without throttling."""
+    secid = f"{'1' if code.startswith('SH') else '0'}.{code[2:]}"
+    url = ("https://push2delay.eastmoney.com/api/qt/stock/details/get"
+           "?fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55"
+           f"&ut=fa5fd1943c7b386f172d6893dbfba10b&pos=-50&secid={secid}")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": LIVE_UA, "Referer": "https://quote.eastmoney.com/"})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.load(r).get("data") or {}
+        details = data.get("details") or []
+        if not details:
+            return None
+        return {"rows": [str(x) for x in details],
+                "pre": float(data.get("prePrice") or 0),
+                "dec": int(data.get("decimal") or 2)}
+    except Exception:
+        return None
+
+
+def _live_tencent(code, e):
+    rows = fetch_ticks_tencent(code)
+    if not rows:
+        return None
+    return {"rows": rows, "pre": e["pre"] or tencent_prev_close(code), "dec": e["dec"]}
+
+
+def _live_eastmoney(code, e):
+    r = fetch_ticks_eastmoney_live(code)
+    if r and not r.get("pre"):
+        r["pre"] = e["pre"]
+    return r
+
+
+# Different providers, independent per-IP limits. The subscribed set is split
+# across them by code so neither is hammered when many charts are open; a code
+# whose assigned provider fails this tick falls over to the other(s).
+LIVE_SOURCES = [_live_tencent, _live_eastmoney]
+
+
+def _live_fetch(code, e):
+    n = len(LIVE_SOURCES)
+    start = hashlib.md5(code.encode()).digest()[0] % n   # even, stable split by code
+    for k in range(n):
+        res = LIVE_SOURCES[(start + k) % n](code, e)
+        if res and res.get("rows"):
+            return res
+    return None
+
+
+# Bounded worker pools so a big subscribed set is polled CONCURRENTLY, not one
+# after another. Sequential polling made a sweep take (N × per-fetch), so dozens
+# of contracts fell far behind the 3s cadence and one slow/timing-out fetch stalled
+# every other code. With the pool a sweep finishes in ~ceil(N/workers) × per-fetch,
+# and one slow code only ties up its own worker. (The hard ceiling above this is the
+# providers' per-IP rate — see LIVE_SOURCES; more than that needs more IPs.)
+_live_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="live")
+_seed_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="seed")
+
+
+def _poll_one(code, e):
+    res = _live_fetch(code, e)   # provider split across 腾讯/东财 by code
+    if res and res.get("rows"):
+        with _live_lock:
+            _live_merge(e, res["rows"], overwrite=False)   # forward ticks only
+            if res.get("pre"):
+                e["pre"] = res["pre"]
+            if res.get("dec"):
+                e["dec"] = res["dec"]
+            e["at"] = time.time()
+
+
 def live_poll_loop():
-    """Single upstream poller for every subscribed code: a one-shot 东财 whole-day
-    seed (retried at most every 90s until it lands, so a throttled egress isn't
-    hammered) plus a 腾讯 live merge, on a 3s cadence."""
+    """Coordinates every subscribed code on a 3s cadence: a one-shot whole-day seed
+    (off-loop) plus a live merge whose source is split across providers (腾讯/东财) by
+    code. Codes due this tick are fetched CONCURRENTLY via a bounded pool so dozens
+    stay near 3s instead of serializing into a minutes-long sweep."""
     while True:
         now = time.time()
+        due = []
         with _live_lock:
             for c in [c for c, exp in LIVE_WANT.items() if exp <= now]:
                 LIVE_WANT.pop(c, None)
-            codes = list(LIVE_WANT.keys())
-        for code in codes:
-            with _live_lock:
+            for code in list(LIVE_WANT.keys()):
                 e = _live_entry(code)
                 if now - e["poll_at"] < LIVE_CADENCE_S:
                     continue
+                e["poll_at"] = now   # claim up front so the next tick won't re-dispatch an in-flight code
                 want_seed = (not e["seeded"]) and (now - e["seed_at"] >= LIVE_SEED_RETRY_S)
                 if want_seed:
                     e["seed_at"] = now
+                due.append((code, e, want_seed))
+        for code, e, want_seed in due:
             if want_seed:
-                seed = fetch_ticks(code)   # 东财 whole-day (existing archive fetch)
-                if seed:
-                    with _live_lock:
-                        _live_merge(e, seed.get("Details") or [], overwrite=True)
-                        if seed.get("PrePrice"):
-                            e["pre"] = float(seed["PrePrice"])
-                        if seed.get("Decimals"):
-                            e["dec"] = int(seed["Decimals"])
-                        e["seeded"] = True
-            rows = fetch_ticks_tencent(code)
-            pre = tencent_prev_close(code) if e["pre"] == 0.0 else 0.0
-            with _live_lock:
-                if rows:
-                    _live_merge(e, rows, overwrite=False)   # forward ticks only
-                if pre:
-                    e["pre"] = pre
-                e["poll_at"] = time.time()
-                e["at"] = e["poll_at"]
+                _seed_pool.submit(_seed_code, code, e)
+        if due:
+            # map() blocks until this tick's fetches finish; the bounded pool paces them
+            list(_live_pool.map(lambda ce: _poll_one(ce[0], ce[1]), due))
         time.sleep(1.0)
 
 
