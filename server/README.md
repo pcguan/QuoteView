@@ -86,3 +86,19 @@ ssh nas 'tail -50 /vol3/1000/HDD2/tool/docker/quoteview-server/log/server.log'
 docker logs quoteview-server --tail 50        # 同样内容的 stdout 副本
 curl -s https://nas.pcguan.cn/quoteview/api/status
 ```
+
+## 实时逐笔补缺口（2026-10-08）
+
+`/livetape` 返回服务端累计记录；实时腾讯/东财接口只返回最近几十条，历史由独立任务补齐。
+历史分页从第 0 页开始，按腾讯原始序号核对连续性，不把时间间隔当成丢失依据。
+每批最多 8 页，从已验证的 `next_seq` 继续，未满尾页下次重读；空页、错页、实时尾部失败
+均不能标记完整。同一合约只有一个在途任务，全局最多 2 个，避免重复排队和请求放大。
+重新订阅、实时序号跳跃会触发补拉；订阅期间每 60 秒核对一次，收盘后对当天采集过的合约
+再核对并写入历史逐笔归档。补拉期间实时行情继续，已收集记录始终保留。
+
+进度及已收集记录写入 `data/live-ticks/<CODE>/<YYYY-MM-DD>.json`，永久保留；重启恢复进度。
+交易日用北京时间隔离，取腾讯带日期的行情确认当天身份，旧日异步任务不能污染新日。
+客户端接口格式不变，现有 v1.1.79 客户端收到中段新增记录后合并、显示并缓存。
+日志 `tape repair` 给出序号起止、目标序号、新增条数及失败页。
+
+离线回归：`python3 -m unittest discover -s server/tests -v`。

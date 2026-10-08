@@ -788,39 +788,73 @@ def fetch_ticks(code):
 # (GET /livetape registers interest with a TTL) and read an accumulated, last-good
 # tape from here; only THIS box talks upstream. 腾讯 dealinfo is the live source
 # (fast from this egress, carries buy/sell direction, but caps at ~20 rows), plus
-# a sparingly-retried one-shot 东财 whole-day seed for the morning history. Rows
+# resumable Tencent history reconciliation (EastMoney is last-good fallback). Rows
 # are the same "时间,价,量,笔,方向" the client already parses (方向 2买/1卖/4中性).
 _live_lock = threading.Lock()
-LIVE = {}            # code -> {pre, dec, rows{time:row}, seeded, seed_at, poll_at, at}
+LIVE = {}            # code -> day-scoped tape and verified Tencent sequence cursor
 LIVE_WANT = {}       # code -> expiry ts
 LIVE_TTL_S = 30      # a code stays polled this long after the last client read
 LIVE_CADENCE_S = 3   # matches the feed's own 3s sampling
-LIVE_SEED_RETRY_S = 90
+LIVE_SEED_RETRY_S = 30
+LIVE_CHECK_S = 60       # reconcile even when a provider silently drops middle rows
+LIVE_PAGE_SIZE = 70
+LIVE_PAGE_BUDGET = 8    # bounded batches: large tapes cannot starve other contracts
+LIVE_STORE = os.path.join(DATA, "live-ticks")  # permanent day-scoped checkpoints
 LIVE_UA = "Mozilla/5.0 (compatible; QuoteViewServer/1.0)"
+# Tick rows carry only HH:MM:SS, no date. Before today's session opens, 腾讯/东财
+# still serve YESTERDAY's whole day (times up to 15:30) — accepting it would show
+# yesterday's tape on a fresh trading morning. A tell: yesterday's newest print is
+# HOURS ahead of the current clock (15:30 seen at 09:22), impossible for today. So
+# any snapshot/entry whose newest tick is >5min ahead of now is a previous session.
+LIVE_STALE_MARGIN_S = 300
 
 
 def _tencent_code(code):
     return code[:2].lower() + code[2:]
 
 
-def tencent_prev_close(code):
-    """昨收 from qt.gtimg.cn (~-delimited, index 4); 0.0 on failure. Intraday it's
-    fixed, so the poller stops fetching it once a non-zero lands."""
+def tencent_session(code):
+    """Date and previous close from the dated quote (tick feeds have no date)."""
     try:
         req = urllib.request.Request(
             f"https://qt.gtimg.cn/q={_tencent_code(code)}",
             headers={"User-Agent": LIVE_UA})
         with urllib.request.urlopen(req, timeout=8) as r:
-            body = r.read().decode("latin-1", "replace").split('"', 2)[1]
-        f = body.split("~")
-        return float(f[4]) if len(f) > 4 and f[4] else 0.0
+            f = r.read().decode("latin-1", "replace").split('"', 2)[1].split("~")
+        stamp = f[30]
+        day = datetime.strptime(stamp[:8], "%Y%m%d").strftime("%Y-%m-%d")
+        return {"day": day, "pre": float(f[4])}
     except Exception:
-        return 0.0
+        return None
 
 
-def fetch_ticks_tencent(code):
-    """The last ~30 逐笔 from 腾讯 dealinfo as EastMoney '时间,价,量(手),笔,方向'
-    rows, or None. 腾讯 gives no 笔数 (0) and B/S direction -> 2/1 (else 4)."""
+def tencent_prev_close(code):
+    q = tencent_session(code)
+    return q["pre"] if q else 0.0
+
+
+def _tencent_items(raw):
+    """Keep provider sequence IDs; time gaps alone do not prove missing trades."""
+    items = []
+    for item in raw.split("|"):
+        p = item.split("/")
+        if len(p) < 7:
+            continue
+        try:
+            seq = int(p[0])
+            float(p[2])
+            int(p[4])
+            if seq < 0 or _secs_of_day(p[1]) < 0:
+                continue
+        except ValueError:
+            continue
+        side = "2" if p[6] == "B" else "1" if p[6] == "S" else "4"
+        items.append((seq, f"{p[1]},{p[2]},{p[4]},0,{side}"))
+    return items
+
+
+def fetch_ticks_tencent(code, with_ids=False):
+    """Recent Tencent ticks, optionally retaining their original sequence IDs."""
     try:
         req = urllib.request.Request(
             "https://web.ifzq.gtimg.cn/appstock/app/dealinfo/getMingXi"
@@ -828,33 +862,86 @@ def fetch_ticks_tencent(code):
             headers={"User-Agent": LIVE_UA})
         with urllib.request.urlopen(req, timeout=8) as r:
             doc = json.load(r)
-        raw = (doc.get("data") or {}).get("data") or ""
-        rows = []
-        for item in raw.split("|"):
-            p = item.split("/")
-            if len(p) < 7:
-                continue
-            d = "2" if p[6] == "B" else "1" if p[6] == "S" else "4"
-            rows.append(f"{p[1]},{p[2]},{p[4]},0,{d}")
-        return rows or None
+        items = _tencent_items((doc.get("data") or {}).get("data") or "")
+        return (items if with_ids else [row for _, row in items]) or None
     except Exception:
         return None
 
 
+def _secs_of_day(hms):
+    try:
+        h, m, s = hms.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s)
+    except Exception:
+        return -1
+
+
+def _now_secs():
+    lt = time.localtime()   # container TZ is Asia/Shanghai (matches 沪深/腾讯 clock)
+    return lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec
+
+
+def _stale_newest(newest_hms):
+    """True if a print at this time can't be from today's session yet — it's hours
+    ahead of the clock, i.e. a leftover previous session (see LIVE_STALE_MARGIN_S)."""
+    n = _secs_of_day(newest_hms)
+    return n >= 0 and n > _now_secs() + LIVE_STALE_MARGIN_S
+
+
+def _snapshot_stale(rows):
+    return bool(rows) and _stale_newest(rows[-1].split(",", 1)[0])   # rows are chronological
+
+
+def _live_day():
+    return datetime.now(CN).strftime("%Y-%m-%d")
+
+
+def _live_path(code, day):
+    return os.path.join(LIVE_STORE, code, day + ".json")
+
+
 def _live_entry(code):
+    day = _live_day()
     e = LIVE.get(code)
-    if e is None:
-        e = LIVE[code] = {"pre": 0.0, "dec": 2, "rows": {}, "seeded": False,
-                          "seed_at": 0.0, "poll_at": 0.0, "at": 0.0}
+    if e is None or e["day"] != day:
+        e = {"day": day, "day_valid": False, "pre": 0.0, "dec": 2, "rows": {},
+             "next_seq": 0, "last_live_seq": -1, "check_at": 0.0,
+             "seed_inflight": False, "poll_at": 0.0, "at": 0.0,
+             "closed_checked": False}
+        try:
+            with open(_live_path(code, day)) as f:
+                saved = json.load(f)
+            if saved.get("day") == day and saved.get("schema") == 1:
+                e.update({k: saved[k] for k in ("rows", "next_seq", "pre", "dec")})
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        LIVE[code] = e  # replacing identity also invalidates yesterday's workers
     return e
 
 
+def _live_current(code, e):
+    return LIVE.get(code) is e and e["day"] == _live_day()
+
+
+def _live_validate_day(code, e):
+    q = tencent_session(code)
+    with _live_lock:
+        if not _live_current(code, e) or not q or q["day"] != e["day"]:
+            return False
+        e["pre"] = q["pre"]
+        e["day_valid"] = True
+        return True
+
+
 def live_subscribe(code):
-    """Registers a client's interest and returns the current accumulated tape."""
+    """Resume history reconciliation on every new subscription, keeping old rows."""
     now = time.time()
     with _live_lock:
+        resumed = LIVE_WANT.get(code, 0) <= now
         LIVE_WANT[code] = now + LIVE_TTL_S
         e = _live_entry(code)
+        if resumed:
+            e["check_at"] = 0.0
         return {"PrePrice": e["pre"], "Decimals": e["dec"],
                 "Details": [e["rows"][k] for k in sorted(e["rows"])]}
 
@@ -866,72 +953,136 @@ def _live_merge(e, rows, overwrite):
             e["rows"][t] = row
 
 
-def fetch_ticks_tencent_fullday(code):
-    """腾讯 stock.gtimg paginated full-day 逐笔 as EastMoney '时间,价,量,笔,方向'
-    rows, or None. Reliable from this egress (unlike 东财 whole-day when throttled),
-    but paginated ~70 rows/page — a session is ~65 pages, so this walks until a page
-    comes back empty. 方向 B->2 S->1 (else 4); 笔数 unknown (0)."""
-    tcode = _tencent_code(code)
+def fetch_ticks_tencent_fullday(code, start_seq=0):
+    """Walk a bounded, contiguous batch, resuming even inside a partial page.
+
+    An empty/error page never proves completion. Only reaching the dated session's
+    observed tail sequence does. Missing tail metadata still allows useful progress.
+    """
+    tail = fetch_ticks_tencent(code, with_ids=True)
+    target = max((seq for seq, _ in tail), default=-1) if tail else -1
+    cursor = start_seq
     rows = []
-    misses = 0
-    for p in range(1, 200):   # generous cap; a well-formed empty page ends the day
-        text = None
-        for _ in range(3):    # retry a transient page failure — one hiccup must NOT
-            try:              # truncate the whole day (that left a 10-min hole once)
+    tail_rows = dict(tail or [])
+    reason = "budget"
+    for _ in range(LIVE_PAGE_BUDGET):
+        # History can lag the live endpoint, especially the final partial page.
+        # Join only consecutive IDs at the verified frontier, never jump to a tail.
+        while cursor in tail_rows:
+            rows.append(tail_rows[cursor])
+            cursor += 1
+        if target >= 0 and cursor > target:
+            reason = "caught-up"
+            break
+        page = cursor // LIVE_PAGE_SIZE
+        accepted = None
+        for attempt in range(3):
+            try:
                 req = urllib.request.Request(
                     "https://stock.gtimg.cn/data/index.php"
-                    f"?appn=detail&action=data&c={tcode}&p={p}",
+                    f"?appn=detail&action=data&c={_tencent_code(code)}&p={page}",
                     headers={"User-Agent": LIVE_UA})
                 with urllib.request.urlopen(req, timeout=8) as r:
                     text = r.read().decode("utf-8", "replace")
-                break
-            except Exception:
-                text = None
-                time.sleep(0.3)
-        if text is None:
-            misses += 1
-            if misses >= 3:   # several pages fail even after retries — stop, don't spin
-                break
-            continue          # skip this one page (small hole) instead of losing the rest
-        misses = 0
-        i, j = text.find('"'), text.rfind('"')   # v_detail_data_xxx=[1,"...."]
-        if i < 0 or j <= i:
-            break             # a well-formed empty page = end of day
-        added = 0
-        for item in text[i + 1:j].split("|"):
-            q = item.split("/")
-            if len(q) < 7:
-                continue
-            d = "2" if q[6] == "B" else "1" if q[6] == "S" else "4"
-            rows.append(f"{q[1]},{q[2]},{q[4]},0,{d}")
-            added += 1
-        if added == 0:
+                i, j = text.find('"'), text.rfind('"')
+                items = _tencent_items(text[i + 1:j]) if i >= 0 and j > i else []
+                # Reject shifted/duplicate/missing sequence IDs instead of declaring
+                # a page complete just because its newest time looks recent.
+                ids = [seq for seq, _ in items]
+                if (ids and ids[0] == page * LIVE_PAGE_SIZE
+                        and ids == list(range(ids[0], ids[0] + len(ids)))
+                        and len(ids) <= LIVE_PAGE_SIZE and ids[-1] >= cursor):
+                    accepted = [(seq, row) for seq, row in items if seq >= cursor]
+                    break
+                reason = f"empty-or-discontinuous-page-{page}"
+            except Exception as ex:
+                reason = f"page-{page}-{type(ex).__name__}"
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+        if not accepted:
             break
-        time.sleep(0.05)   # be gentle across the page walk
-    if not rows:
-        return None
-    return {"Code": code, "PrePrice": tencent_prev_close(code),
-            "Decimals": 2, "Details": rows}
+        rows.extend(row for _, row in accepted)
+        cursor = accepted[-1][0] + 1
+        if target >= 0 and cursor > target:
+            reason = "caught-up"
+            break
+        if cursor % LIVE_PAGE_SIZE:
+            # Partial tail page is revisited at this cursor on the next batch.
+            reason = "partial-page"
+            break
+        time.sleep(0.25)
+    while cursor in tail_rows:
+        rows.append(tail_rows[cursor])
+        cursor += 1
+    complete = target >= 0 and cursor > target
+    return {"Details": rows, "next_seq": cursor, "target": target,
+            "complete": complete, "reason": "caught-up" if complete else reason}
+
+
+def _save_live(code, e):
+    with _live_lock:
+        if not _live_current(code, e):
+            return
+        saved = {k: e[k] for k in ("day", "next_seq", "pre", "dec")}
+        saved.update(schema=1, rows=dict(e["rows"]))
+    path = _live_path(code, e["day"])
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(saved, f, separators=(",", ":"))
+    os.replace(tmp, path)
+
+
+def _live_after_close():
+    now = datetime.now(CN)
+    return (now.hour, now.minute) >= (15, 1)
 
 
 def _seed_code(code, e):
-    """Backfills the morning history once, off the poll loop. 腾讯 stock.gtimg's
-    paginated full day is the primary source — reliable from this egress and quick
-    (~66 small pages). 东财 whole-day is the fallback (one request, carries real 笔数,
-    but its egress is often throttled AND fails slowly ~44s). Leaves seeded=False on
-    total failure so it retries after LIVE_SEED_RETRY_S."""
-    seed = fetch_ticks_tencent_fullday(code)
-    if not (seed and seed.get("Details")):
-        seed = fetch_ticks(code)
-    if not (seed and seed.get("Details")):
-        return
-    with _live_lock:
-        _live_merge(e, seed["Details"], overwrite=True)
-        if seed.get("PrePrice"):
-            e["pre"] = float(seed["PrePrice"])
-        if seed.get("Decimals"):
-            e["dec"] = int(seed["Decimals"])
-        e["seeded"] = True
+    """One reconciliation batch; the claimed worker slot is always released."""
+    start = e["next_seq"]
+    started_after_close = _live_after_close()
+    try:
+        if not _live_validate_day(code, e):
+            return
+        seed = fetch_ticks_tencent_fullday(code, start)
+        rows = seed["Details"]
+        if _snapshot_stale(rows):
+            return
+        # EastMoney is last-good fallback only. Its time-only rows must never
+        # advance Tencent's verified sequence cursor or suppress future repair.
+        if not rows and start == 0:
+            fallback = fetch_ticks(code)
+            if fallback and not _snapshot_stale(fallback["Details"]):
+                rows = fallback["Details"]
+        with _live_lock:
+            if not _live_current(code, e):
+                return
+            before = len(e["rows"])
+            _live_merge(e, rows, overwrite=False)
+            e["next_seq"] = seed["next_seq"]
+            e["check_at"] = time.time() + (LIVE_CHECK_S if seed["complete"]
+                else 1 if seed["next_seq"] > start else LIVE_SEED_RETRY_S)
+            # A tail observed before the close cannot certify the closing auction.
+            archive_ready = seed["complete"] and started_after_close
+            added = len(e["rows"]) - before
+            payload = {"Code": code, "PrePrice": e["pre"], "Decimals": e["dec"],
+                       "Details": [e["rows"][k] for k in sorted(e["rows"])]}
+        _save_live(code, e)
+        if archive_ready:
+            write_ticks(code, e["day"], payload)
+            with _live_lock:
+                if _live_current(code, e):
+                    e["closed_checked"] = True
+        if added or not seed["complete"]:
+            log(f"tape repair {code} {e['day']}: seq {start}->{seed['next_seq']} "
+                f"target={seed['target']} added={added} {seed['reason']}")
+    except Exception as ex:
+        log(f"tape repair {code} failed: {type(ex).__name__}: {ex}")
+    finally:
+        with _live_lock:
+            e["seed_inflight"] = False
+            _seed_active.discard(code)
 
 
 def fetch_ticks_eastmoney_live(code):
@@ -959,10 +1110,11 @@ def fetch_ticks_eastmoney_live(code):
 
 
 def _live_tencent(code, e):
-    rows = fetch_ticks_tencent(code)
-    if not rows:
+    items = fetch_ticks_tencent(code, with_ids=True)
+    if not items:
         return None
-    return {"rows": rows, "pre": e["pre"] or tencent_prev_close(code), "dec": e["dec"]}
+    return {"rows": [row for _, row in items], "seqs": [seq for seq, _ in items],
+            "pre": e["pre"], "dec": e["dec"]}
 
 
 def _live_eastmoney(code, e):
@@ -995,14 +1147,31 @@ def _live_fetch(code, e):
 # and one slow code only ties up its own worker. (The hard ceiling above this is the
 # providers' per-IP rate — see LIVE_SOURCES; more than that needs more IPs.)
 _live_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="live")
-_seed_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="seed")
+_seed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="seed")   # keep concurrent stock.gtimg walks low
+
+
+_seed_active = set()  # at most two submitted jobs, not an unbounded executor queue
 
 
 def _poll_one(code, e):
-    res = _live_fetch(code, e)   # provider split across 腾讯/东财 by code
-    if res and res.get("rows"):
+    if not e["day_valid"] and not _live_validate_day(code, e):
+        return
+    res = _live_fetch(code, e)
+    if res and res.get("rows") and not _snapshot_stale(res["rows"]):
         with _live_lock:
-            _live_merge(e, res["rows"], overwrite=False)   # forward ticks only
+            if not _live_current(code, e):
+                return
+            rows = res["rows"]
+            seqs = res.get("seqs") or []
+            old = max(e["rows"], default="")
+            gap = (seqs and min(seqs) > max(e["last_live_seq"], e["next_seq"] - 1) + 1)
+            if not seqs:
+                gap = old and min(r[:8] for r in rows) > old
+            if gap:
+                e["check_at"] = min(e["check_at"], time.time())
+            if seqs:
+                e["last_live_seq"] = max(e["last_live_seq"], max(seqs))
+            _live_merge(e, rows, overwrite=False)
             if res.get("pre"):
                 e["pre"] = res["pre"]
             if res.get("dec"):
@@ -1010,32 +1179,40 @@ def _poll_one(code, e):
             e["at"] = time.time()
 
 
+def _live_schedule(now):
+    """Claim bounded repair jobs fairly; separate from IO for deterministic tests."""
+    polls, repairs = [], []
+    with _live_lock:
+        for c in [c for c, exp in LIVE_WANT.items() if exp <= now]:
+            LIVE_WANT.pop(c, None)
+        for code in list(LIVE_WANT):
+            e = _live_entry(code)
+            if now - e["poll_at"] >= LIVE_CADENCE_S:
+                e["poll_at"] = now
+                polls.append((code, e))
+        candidates = [(c, e) for c, e in LIVE.items() if _live_current(c, e)
+                      and (c in LIVE_WANT or (_live_after_close() and e["rows"]
+                                            and not e["closed_checked"]))]
+        for code, e in sorted(candidates, key=lambda ce: ce[1]["check_at"]):
+            if len(_seed_active) >= 2:
+                break
+            if code in _seed_active or e["seed_inflight"] or now < e["check_at"]:
+                continue
+            e["seed_inflight"] = True
+            e["check_at"] = now + LIVE_SEED_RETRY_S
+            _seed_active.add(code)
+            repairs.append((code, e))
+    return polls, repairs
+
+
 def live_poll_loop():
-    """Coordinates every subscribed code on a 3s cadence: a one-shot whole-day seed
-    (off-loop) plus a live merge whose source is split across providers (腾讯/东财) by
-    code. Codes due this tick are fetched CONCURRENTLY via a bounded pool so dozens
-    stay near 3s instead of serializing into a minutes-long sweep."""
+    """Realtime tails plus bounded resumable repair, including a final close pass."""
     while True:
-        now = time.time()
-        due = []
-        with _live_lock:
-            for c in [c for c, exp in LIVE_WANT.items() if exp <= now]:
-                LIVE_WANT.pop(c, None)
-            for code in list(LIVE_WANT.keys()):
-                e = _live_entry(code)
-                if now - e["poll_at"] < LIVE_CADENCE_S:
-                    continue
-                e["poll_at"] = now   # claim up front so the next tick won't re-dispatch an in-flight code
-                want_seed = (not e["seeded"]) and (now - e["seed_at"] >= LIVE_SEED_RETRY_S)
-                if want_seed:
-                    e["seed_at"] = now
-                due.append((code, e, want_seed))
-        for code, e, want_seed in due:
-            if want_seed:
-                _seed_pool.submit(_seed_code, code, e)
-        if due:
-            # map() blocks until this tick's fetches finish; the bounded pool paces them
-            list(_live_pool.map(lambda ce: _poll_one(ce[0], ce[1]), due))
+        polls, repairs = _live_schedule(time.time())
+        for code, e in repairs:
+            _seed_pool.submit(_seed_code, code, e)
+        if polls:
+            list(_live_pool.map(lambda ce: _poll_one(*ce), polls))
         time.sleep(1.0)
 
 
