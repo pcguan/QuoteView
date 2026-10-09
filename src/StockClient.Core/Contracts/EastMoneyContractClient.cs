@@ -55,6 +55,71 @@ public sealed class EastMoneyContractClient : IContractListClient
         return byCode.Values.ToArray();
     }
 
+    private string _boardHost = "push2.eastmoney.com";
+
+    /// <summary>Fetch boards separately: multi-board fs unions are not reliable on all hosts.</summary>
+    public async Task<IReadOnlyList<Contract>> FetchBoardMembersAsync(
+        IReadOnlyList<string> boardCodes, CancellationToken cancellationToken)
+    {
+        if (boardCodes.Count == 0) return Array.Empty<Contract>();
+        if (boardCodes.Any(c => !System.Text.RegularExpressions.Regex.IsMatch(c, @"^BK[0-9]+$")))
+            throw new ArgumentException("Invalid board code", nameof(boardCodes));
+        var members = new Dictionary<string, Contract>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in boardCodes.Distinct())
+            foreach (var contract in await FetchSingleBoardAsync(code, cancellationToken))
+                members[contract.Code] = contract;
+        return members.Values.ToArray();
+    }
+
+    private async Task<IReadOnlyList<Contract>> FetchSingleBoardAsync(string code, CancellationToken cancellationToken)
+    {
+        var filter = "b:" + code;
+        var first = await FetchMemberPageAsync(filter, 1, cancellationToken);
+        var data = first?.Data ?? throw new InvalidOperationException("板块成分股接口暂无数据");
+        if (data.Total < 0 || data.Total > MaxPages * PageSize)
+            throw new InvalidOperationException("板块成分股数量异常");
+        var rows = new List<ClistRow>(data.Diff ?? new List<ClistRow>());
+        var pages = (int)Math.Ceiling(data.Total / (double)PageSize);
+        for (var page = 2; page <= pages; page++)
+        {
+            var next = await FetchMemberPageAsync(filter, page, cancellationToken);
+            if (next?.Data is null || next.Data.Total != data.Total || next.Data.Diff is not { Count: > 0 })
+                throw new InvalidOperationException("板块成分股列表不完整，请重试");
+            rows.AddRange(next.Data.Diff);
+        }
+        var unique = rows.DistinctBy(r => $"{r.MarketNumber}:{r.Code}").ToArray();
+        if (rows.Count != data.Total || unique.Length != data.Total)
+            throw new InvalidOperationException("板块成分股列表不完整，请重试");
+        var result = new List<Contract>();
+        foreach (var row in unique)
+        {
+            if (string.IsNullOrWhiteSpace(row.Code) || string.IsNullOrWhiteSpace(row.Name))
+                throw new InvalidOperationException("板块成分股字段缺失，请重试");
+            var listing = Boards.BoardSearch.Classify(row.Code, ParseInt(row.MarketNumber));
+            if (listing is { } a) result.Add(Build(a.Market, a.Type, row));
+        }
+        return result;
+    }
+
+    private async Task<ClistResponse?> FetchMemberPageAsync(string filter, int page, CancellationToken ct)
+    {
+        Exception? last = null;
+        foreach (var host in new[] { _boardHost, "push2.eastmoney.com", "82.push2.eastmoney.com", Host }.Distinct())
+        {
+            try
+            {
+                var result = await FetchPageAsync(filter, page, ct, host);
+                if (result?.Data is null) throw new InvalidOperationException("板块成分股接口暂无数据");
+                _boardHost = host;
+                return result;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested &&
+                ex is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException)
+            { last = ex; }
+        }
+        throw new InvalidOperationException("板块成分股接口暂不可用", last);
+    }
+
     private static Contract Build(Market market, ContractType type, ClistRow row)
     {
         var name = row.Name!.Trim();
@@ -172,11 +237,11 @@ public sealed class EastMoneyContractClient : IContractListClient
     }
 
     private async Task<ClistResponse?> FetchPageAsync(
-        string filter, int page, CancellationToken cancellationToken)
+        string filter, int page, CancellationToken cancellationToken, string? host = null)
     {
         // `fs` must keep its literal '+' separators; escaping them breaks the filter.
         var url =
-            $"https://{Host}/api/qt/clist/get?pn={page}&pz={PageSize}&po=1&np=1" +
+            $"https://{host ?? Host}/api/qt/clist/get?pn={page}&pz={PageSize}&po=1&np=1" +
             $"&fltt=2&invt=2&fid=f12&fs={filter}&fields=f12,f13,f14,f19,f26,f38,f39,f100,f102,f103";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);

@@ -222,6 +222,7 @@ public sealed class ContractRepository
         if (c.PinyinInitials.Length > 0 &&
             c.PinyinInitials.StartsWith(lower, StringComparison.Ordinal)) return 5;
         if (c.Name.Contains(query, StringComparison.Ordinal)) return 6;
+        if (c.Industry is not null && c.Industry.Contains(query, StringComparison.Ordinal)) return 6;
         // Concepts are searchable too: "半导体" should surface concept members.
         if (c.Concepts is not null &&
             c.Concepts.Contains(query, StringComparison.Ordinal)) return 6;

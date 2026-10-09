@@ -39,6 +39,14 @@ Smoke 打真实接口，东财 kline 偶发限流会让它中断；这种时候�
 `MainWindow.ResultGrid_Sorting` 接管 `Sorting` 事件（`e.Handled = true`），方向由
 `MainViewModel.SortField` / `SortAscending` 决定。
 
+## 板块成分股搜索
+
+合约查询先在日缓存的行业/概念目录中匹配关键词（也接受“电池板块”及 BK 编码），默认取匹配板块的并集，也可选择单个板块或退回原合约搜索。
+`EastMoneyContractClient.FetchBoardMembersAsync` 逐板块使用 `fs=b:BK...`，在客户端合并去重，按 `fid=f12` 稳定分页，并校验 total、缺页与重复记录；失败不缓存、不显示不完整结果。
+`BoardMemberRepository` 按交易日及单个板块缓存完整成员，切换单板块可直接复用并集查询缓存，上市板块过滤在本地执行，不增加请求。
+`BoardSearch` 负责匹配及主板/创业板/科创板/北交所分类、过滤；BJ 和 SZ 共享 f13=0，需同时看股票代码。
+`MainViewModel` 保留搜索防抖，取消在途旧查询并核验取消令牌；新条件的结果不会被旧请求覆盖。行业字段也加入原本地搜索，板块目录不可用时仍可使用已缓存的合约元数据。
+
 ## K 线图 / 分时图
 
 - **数据源**：K 线用东财 `push2his` kline（六市场全历史，一次请求返回上市至今，不分页）；

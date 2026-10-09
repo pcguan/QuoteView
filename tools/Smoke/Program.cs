@@ -7,8 +7,34 @@ using StockClient.Core.Quotes;
 
 Console.OutputEncoding = Encoding.UTF8;
 
-using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(10) };
 http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
+// Optional focused integration check; no desktop UI is opened.
+if (args.Contains("--boards"))
+{
+    var clock = new MarketClock();
+    var catalog = new StockClient.Core.Boards.BoardCache().TryLoad(clock.TradingDate(Market.SH))?.Boards
+        ?? await new StockClient.Core.Boards.EastMoneyBoardClient(http).FetchAsync(default);
+    var matches = StockClient.Core.Boards.BoardSearch.Match(catalog, "电池");
+    if (matches.Count == 0) throw new Exception("电池板块未匹配");
+    var boardClient = new EastMoneyContractClient(http);
+    var members = await boardClient.FetchBoardMembersAsync(matches.Select(b => b.Code).ToArray(), default);
+    var exact = matches.Single(b => b.Name == "电池" && b.Kind == StockClient.Core.Boards.BoardKind.Industry);
+    var industry = await boardClient.FetchBoardMembersAsync(new[] { exact.Code }, default);
+    if (!members.Any(c => c.Code == "SZ300750")) throw new Exception("缺少电池成分股宁德时代");
+    if (!industry.Any(c => c.Code == "BJ920914" && c.Type == ContractType.BeijingBoard))
+        throw new Exception("北交所分类错误");
+    var selected = members.Where(c => StockClient.Core.Boards.BoardSearch.Includes(c,
+        StockClient.Core.Boards.ListingBoards.Main | StockClient.Core.Boards.ListingBoards.Beijing)).ToArray();
+    if (selected.Any(c => c.Type is ContractType.ChiNext or ContractType.Star))
+        throw new Exception("排除创业板/科创板失败");
+    Console.WriteLine($"电池相关板块={matches.Count} 合并去重成分股={members.Count} 电池行业={industry.Count}");
+    foreach (var group in members.GroupBy(c => c.Type))
+        Console.WriteLine($"{group.Key.Display()}={group.Count()}");
+    Console.WriteLine($"排除创业板和科创板后={selected.Length}，真实接口验证通过");
+    return;
+}
+
 var client = new TencentQuoteClient(http);
 
 var codes = new[] { "SH600519", "SZ000651", "BJ920992", "HK00700", "USAAPL", "KR005930" };

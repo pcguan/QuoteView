@@ -33,6 +33,11 @@ public sealed record TypeOption(ContractType? Type, string Display)
     public override string ToString() => Display;
 }
 
+public sealed record BoardOption(string Key, string Display, IReadOnlyList<Board> Boards)
+{
+    public override string ToString() => Display;
+}
+
 public sealed class MainViewModel : ObservableObject, IDisposable
 {
     /// <summary>
@@ -48,10 +53,19 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private readonly HttpClient _http;
     private readonly ContractRepository _repo;
     private readonly BoardRepository _boards;
+    private readonly BoardMemberRepository _members;
     private readonly IMarketClock _clock;
     private readonly DispatcherTimer _rolloverTimer;
 
     private CancellationTokenSource? _searchCts;
+    private CancellationTokenSource? _queryCts;
+    private string? _boardQuery;
+    private bool _updatingBoards;
+    private bool _searching;
+    private string _loadStatus = "";
+    private bool _includeMain = true, _includeChiNext = true, _includeStar = true, _includeBeijing = true;
+    private BoardOption _selectedBoard = new("-", "合约匹配", Array.Empty<Board>());
+    private IReadOnlyList<BoardOption> _boardOptions = Array.Empty<BoardOption>();
     private MarketOption _selectedMarket;
     private TypeOption _selectedType;
     private string _keyword = "";
@@ -66,8 +80,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
         _clock = new MarketClock();
-        _repo = new ContractRepository(
-            new EastMoneyContractClient(_http), new ContractCache(), _clock);
+        var client = new EastMoneyContractClient(_http);
+        _repo = new ContractRepository(client, new ContractCache(), _clock);
+        _members = new BoardMemberRepository(client.FetchBoardMembersAsync, _clock);
+        RetrySearchCommand = new RelayCommand(_ => RunSearch());
         _boards = new BoardRepository(
             new EastMoneyBoardClient(_http), new BoardCache(), _clock);
 
@@ -108,6 +124,34 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<TypeOption> Types { get; }
 
+    public RelayCommand RetrySearchCommand { get; }
+    public IReadOnlyList<BoardOption> BoardOptions => _boardOptions;
+    public bool HasBoardMatches => _boardOptions.Any(o => o.Boards.Count > 0);
+    public bool Searching
+    {
+        get => _searching;
+        private set { if (Set(ref _searching, value)) OnPropertyChanged(nameof(ResultSummary)); }
+    }
+    public BoardOption SelectedBoard
+    {
+        get => _selectedBoard;
+        set
+        {
+            if (value is null || _updatingBoards || !Set(ref _selectedBoard, value)) return;
+            RunSearch();
+        }
+    }
+    public bool IncludeMain { get => _includeMain; set { if (Set(ref _includeMain, value)) FilterChanged(); } }
+    public bool IncludeChiNext { get => _includeChiNext; set { if (Set(ref _includeChiNext, value)) FilterChanged(); } }
+    public bool IncludeStar { get => _includeStar; set { if (Set(ref _includeStar, value)) FilterChanged(); } }
+    public bool IncludeBeijing { get => _includeBeijing; set { if (Set(ref _includeBeijing, value)) FilterChanged(); } }
+    private void FilterChanged() { OnPropertyChanged(nameof(CanClear)); RunSearch(); }
+    private ListingBoards ListingFilter =>
+        (IncludeMain ? ListingBoards.Main : ListingBoards.None)
+        | (IncludeChiNext ? ListingBoards.ChiNext : ListingBoards.None)
+        | (IncludeStar ? ListingBoards.Star : ListingBoards.None)
+        | (IncludeBeijing ? ListingBoards.Beijing : ListingBoards.None);
+
     public TypeOption SelectedType
     {
         get => _selectedType;
@@ -136,7 +180,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     }
 
     public string ResultSummary =>
-        Loading ? "" : $"{_results.Count} 条";
+        Loading || Searching ? "…" : _results.Count.ToString("N0");
 
     private SortField _sortField = SortField.None;
     private bool _sortAscending = true;
@@ -157,7 +201,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         (_selectedMarket.Market is not null
          || _selectedType.Type is not null
          || !string.IsNullOrEmpty(_keyword)
-         || _sortField != SortField.None);
+         || _sortField != SortField.None || ListingFilter != ListingBoards.All);
 
     public ObservableCollection<MarketStatus> MarketStatuses { get; } = new();
 
@@ -178,6 +222,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         set
         {
             if (!Set(ref _keyword, value)) return;
+            _queryCts?.Cancel();
             OnPropertyChanged(nameof(CanClear));
             _ = DebouncedSearchAsync();
         }
@@ -243,6 +288,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            _loadStatus = Status;
+            _boardQuery = null;
             Loading = false;
             _rolloverTimer.Start();
             RunSearch();
@@ -293,6 +340,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _selectedType = Types[0];
         _sortField = SortField.None;
         _sortAscending = true;
+        _includeMain = _includeChiNext = _includeStar = _includeBeijing = true;
+        _boardQuery = null;
+        foreach (var property in new[] { nameof(IncludeMain), nameof(IncludeChiNext), nameof(IncludeStar), nameof(IncludeBeijing) })
+            OnPropertyChanged(property);
 
         OnPropertyChanged(nameof(Keyword));
         OnPropertyChanged(nameof(SelectedMarket));
@@ -302,12 +353,80 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         RunSearch();
     }
 
-    private void RunSearch()
+    private void UpdateBoardOptions()
     {
-        // Empty keyword is a browse, not an empty result: selecting a market
-        // should show everything in it.
-        var hits = _repo.Search(_keyword, _selectedMarket.Market, _selectedType.Type);
-        Results = Sort(hits);
+        var query = _keyword.Trim();
+        if (_boardQuery == query) return;
+        _boardQuery = query;
+        var matches = BoardSearch.Match(_boards.Loaded, query);
+        var options = new List<BoardOption>();
+        if (matches.Count > 0)
+        {
+            options.Add(new BoardOption("*", $"全部相关板块（{matches.Count}）", matches));
+            options.AddRange(matches.Select(b => new BoardOption(b.Code,
+                $"{b.Name} · {(b.Kind == BoardKind.Industry ? "行业" : "概念")}", new[] { b })));
+        }
+        options.Add(new BoardOption("-", "合约匹配", Array.Empty<Board>()));
+        _updatingBoards = true;
+        try
+        {
+            _boardOptions = options;
+            _selectedBoard = options[0];
+            OnPropertyChanged(nameof(BoardOptions));
+            OnPropertyChanged(nameof(SelectedBoard));
+            OnPropertyChanged(nameof(HasBoardMatches));
+        }
+        finally { _updatingBoards = false; }
+    }
+
+    private void RunSearch() => _ = SearchAsync();
+
+    private async Task SearchAsync()
+    {
+        if (Loading) return;
+        _queryCts?.Cancel();
+        using var cts = new CancellationTokenSource();
+        _queryCts = cts;
+        UpdateBoardOptions();
+        var boards = _selectedBoard.Boards;
+        var market = _selectedMarket.Market;
+        var type = _selectedType.Type;
+        var listing = ListingFilter;
+        try
+        {
+            IReadOnlyList<Contract> hits;
+            if (boards.Count > 0)
+            {
+                Searching = true;
+                Results = Array.Empty<Contract>();
+                Status = "正在加载板块成分股…";
+                var members = await _members.GetAsync(boards, cts.Token);
+                cts.Token.ThrowIfCancellationRequested();
+                hits = members.Where(c => (market is null || c.Market == market)
+                    && (type is null || c.Type == type)).ToArray();
+                Status = $"{_selectedBoard.Display} · 共 {members.Count} 只成分股";
+            }
+            else
+            {
+                hits = _repo.Search(_keyword, market, type);
+                Status = _loadStatus;
+            }
+            Results = Sort(hits.Where(c => BoardSearch.Includes(c, listing)).ToArray());
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!cts.IsCancellationRequested)
+            {
+                Results = Array.Empty<Contract>();
+                Status = "板块成分股加载失败，请点击重试";
+                Probe.Log($"board members failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_queryCts, cts)) { Searching = false; _queryCts = null; }
+        }
     }
 
     /// <summary>
@@ -366,6 +485,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         _rolloverTimer.Stop();
         _searchCts?.Cancel();
+        _queryCts?.Cancel();
         _http.Dispose();
     }
 }
