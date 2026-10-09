@@ -60,6 +60,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _queryCts;
     private string? _boardQuery;
+    private string? _boardSelectionKeyword;
     private bool _updatingBoards;
     private bool _searching;
     private string _loadStatus = "";
@@ -357,6 +358,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         var query = _keyword.Trim();
         if (_boardQuery == query) return;
+        var selectedKey = _boardSelectionKeyword == query ? _selectedBoard.Key : null;
+        _boardSelectionKeyword = query;
         _boardQuery = query;
         var matches = BoardSearch.Match(_boards.Loaded, query);
         var options = new List<BoardOption>();
@@ -371,7 +374,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             _boardOptions = options;
-            _selectedBoard = options[0];
+            _selectedBoard = options.FirstOrDefault(o => o.Key == selectedKey) ?? options[0];
             OnPropertyChanged(nameof(BoardOptions));
             OnPropertyChanged(nameof(SelectedBoard));
             OnPropertyChanged(nameof(HasBoardMatches));
