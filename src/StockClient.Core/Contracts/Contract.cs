@@ -23,6 +23,10 @@ public sealed record Contract
     [JsonPropertyName("pyi")]
     public string PinyinInitials { get; init; } = "";
 
+    /// <summary>Common alternative names, kept separate from industry/concepts.</summary>
+    [JsonPropertyName("aliases")]
+    public IReadOnlyList<string> SearchAliases { get; init; } = Array.Empty<string>();
+
     /// <summary>Board / instrument category, tagged from the fetch filter.</summary>
     [JsonPropertyName("type")]
     public ContractType Type { get; init; } = ContractType.Unknown;

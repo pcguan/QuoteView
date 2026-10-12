@@ -101,7 +101,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 new[]
                 {
                     ContractType.MainBoard, ContractType.Star, ContractType.ChiNext,
-                    ContractType.BeijingBoard, ContractType.Etf, ContractType.Stock,
+                    ContractType.BeijingBoard, ContractType.Index, ContractType.Etf, ContractType.Stock,
                     ContractType.Bond, ContractType.Fund, ContractType.Adr,
                     ContractType.PreferredStock, ContractType.Warrant,
                     ContractType.Unit, ContractType.Other,
@@ -127,7 +127,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public RelayCommand RetrySearchCommand { get; }
     public IReadOnlyList<BoardOption> BoardOptions => _boardOptions;
-    public bool HasBoardMatches => _boardOptions.Any(o => o.Boards.Count > 0);
+    public bool HasBoardMatches => _selectedType.Type != ContractType.Index && _boardOptions.Any(o => o.Boards.Count > 0);
     public bool Searching
     {
         get => _searching;
@@ -160,6 +160,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             if (!Set(ref _selectedType, value)) return;
             OnPropertyChanged(nameof(CanClear));
+            OnPropertyChanged(nameof(HasBoardMatches));
             RunSearch();
         }
     }
@@ -349,6 +350,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(Keyword));
         OnPropertyChanged(nameof(SelectedMarket));
         OnPropertyChanged(nameof(SelectedType));
+        OnPropertyChanged(nameof(HasBoardMatches));
         OnPropertyChanged(nameof(CanClear));
 
         RunSearch();
@@ -374,7 +376,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             _boardOptions = options;
-            _selectedBoard = options.FirstOrDefault(o => o.Key == selectedKey) ?? options[0];
+            _selectedBoard = options.FirstOrDefault(o => o.Key == selectedKey)
+                ?? (IndexCatalog.MatchesExactly(query) ? options[^1] : options[0]);
             OnPropertyChanged(nameof(BoardOptions));
             OnPropertyChanged(nameof(SelectedBoard));
             OnPropertyChanged(nameof(HasBoardMatches));
@@ -398,7 +401,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         try
         {
             IReadOnlyList<Contract> hits;
-            if (boards.Count > 0)
+            if (boards.Count > 0 && type != ContractType.Index)
             {
                 Searching = true;
                 Results = Array.Empty<Contract>();

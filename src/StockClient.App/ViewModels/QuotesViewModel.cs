@@ -812,9 +812,11 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         if (_activeGroup is null) return;
 
         var raw = (code ?? _newCode).Trim().ToUpperInvariant();
-        if (!CodeMapper.IsValid(raw))
+        if (!CodeMapper.IsValid(raw)
+            || (code is null && _contracts.Find(raw) is null && Suggestions.Count > 0))
         {
-            // Fall back to the best search hit so typing a name also works.
+            // A typed pinyin such as "szcz" starts with a valid market prefix,
+            // but must resolve the suggestion rather than add a fake SZCZ symbol.
             var hit = Suggestions.FirstOrDefault();
             if (hit is null)
             {
@@ -1320,6 +1322,8 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         foreach (var code in group.Model.Codes)
         {
             if (!CodeMapper.IsAShare(code)) continue;
+            // Benchmarks already aggregate stocks; including them would double-count exposure.
+            if (_contracts.Find(code)?.Type == ContractType.Index) continue;
             if (_agg.TryGetValue(code, out var q))
                 members.Add(new GroupIndexCalc.Member(q.Pct, q.FloatCap));
         }

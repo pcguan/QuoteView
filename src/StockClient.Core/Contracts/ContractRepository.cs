@@ -22,6 +22,7 @@ public sealed class ContractRepository
     private readonly IMarketClock _clock;
 
     private readonly Dictionary<Market, IReadOnlyList<Contract>> _loaded = new();
+    private readonly HashSet<Market> _initialized = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public ContractRepository(
@@ -30,6 +31,8 @@ public sealed class ContractRepository
         _client = client;
         _cache = cache;
         _clock = clock;
+        foreach (var market in new[] { Market.SH, Market.SZ })
+            _loaded[market] = IndexCatalog.Merge(market, Array.Empty<Contract>());
     }
 
     public IReadOnlyList<Contract> Loaded(Market market) =>
@@ -67,7 +70,7 @@ public sealed class ContractRepository
             var started = System.Diagnostics.Stopwatch.StartNew();
 
             // Already in memory for this market's current trading date?
-            if (_loaded.TryGetValue(market, out var inMemory) &&
+            if (_initialized.Contains(market) && _loaded.TryGetValue(market, out var inMemory) &&
                 _cache.TryLoad(market, date) is not null)
             {
                 return Ok(market, date, inMemory.Count, fromCache: true, started.ElapsedMilliseconds);
@@ -76,8 +79,9 @@ public sealed class ContractRepository
             var cached = _cache.TryLoad(market, date);
             if (cached is not null)
             {
-                _loaded[market] = cached.Symbols;
-                return Ok(market, date, cached.Symbols.Count, true, started.ElapsedMilliseconds);
+                _loaded[market] = IndexCatalog.Merge(market, cached.Symbols);
+                _initialized.Add(market);
+                return Ok(market, date, _loaded[market].Count, true, started.ElapsedMilliseconds);
             }
 
             try
@@ -87,9 +91,10 @@ public sealed class ContractRepository
 
                 _cache.Save(market, date, fetched);
                 _cache.Prune(market);
-                _loaded[market] = fetched;
+                _loaded[market] = IndexCatalog.Merge(market, fetched);
+                _initialized.Add(market);
 
-                return Ok(market, date, fetched.Count, false, started.ElapsedMilliseconds);
+                return Ok(market, date, _loaded[market].Count, false, started.ElapsedMilliseconds);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -98,12 +103,12 @@ public sealed class ContractRepository
                 var fallback = MostRecent(market, date);
                 if (fallback is not null)
                 {
-                    _loaded[market] = fallback.Symbols;
+                    _loaded[market] = IndexCatalog.Merge(market, fallback.Symbols);
                     return new MarketLoadResult
                     {
                         Market = market,
                         TradingDate = DateOnly.ParseExact(fallback.TradingDate, "yyyy-MM-dd"),
-                        Count = fallback.Symbols.Count,
+                        Count = _loaded[market].Count,
                         FromCache = true,
                         Stale = true,
                         ElapsedMs = started.ElapsedMilliseconds,
@@ -212,6 +217,7 @@ public sealed class ContractRepository
     {
         if (c.Code.Equals(lower, StringComparison.OrdinalIgnoreCase)) return 0;
         if (c.Name.Equals(query, StringComparison.Ordinal)) return 1;
+        if (c.SearchAliases.Any(a => a.Equals(query, StringComparison.OrdinalIgnoreCase))) return 1;
 
         // Bare code: SH600519 should be reachable by typing 600519.
         var bare = c.Code.Length > 2 ? c.Code[2..] : c.Code;
@@ -222,6 +228,7 @@ public sealed class ContractRepository
         if (c.PinyinInitials.Length > 0 &&
             c.PinyinInitials.StartsWith(lower, StringComparison.Ordinal)) return 5;
         if (c.Name.Contains(query, StringComparison.Ordinal)) return 6;
+        if (c.SearchAliases.Any(a => a.Contains(query, StringComparison.OrdinalIgnoreCase))) return 6;
         if (c.Industry is not null && c.Industry.Contains(query, StringComparison.Ordinal)) return 6;
         // Concepts are searchable too: "半导体" should surface concept members.
         if (c.Concepts is not null &&

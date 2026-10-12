@@ -115,6 +115,7 @@ public sealed class TencentQuoteClient
         // the 52-week range for HK/US/KR.
         var isA = market is "SH" or "SZ" or "BJ";
         var isHkUs = market is "HK" or "US";
+        var isIndex = At(p, 61) == "ZS";
 
         return new Quote
         {
@@ -139,8 +140,8 @@ public sealed class TencentQuoteClient
             Pb = isA ? Opt(p, 46) : null,
             FloatCap = isA || isHkUs ? Opt(p, 44) * 1e8 : null,
             TotalCap = Opt(p, 45) * 1e8,
-            LimitUp = isA ? Opt(p, 47) : null,
-            LimitDown = isA ? Opt(p, 48) : null,
+            LimitUp = isA && !isIndex ? Opt(p, 47) : null,
+            LimitDown = isA && !isIndex ? Opt(p, 48) : null,
             Week52High = isA ? null : Opt(p, 48),
             Week52Low = isA ? null : Opt(p, 49),
             DividendYield = market == "HK" ? Opt(p, 59) : null,
@@ -148,7 +149,7 @@ public sealed class TencentQuoteClient
             InnerVolume = isA ? Opt(p, 8) : null,
 
             Depth = Depth(p),
-            Extras = Extras(market, p),
+            Extras = Extras(market, p, isIndex),
         };
     }
 
@@ -190,7 +191,7 @@ public sealed class TencentQuoteClient
     /// 52-week high/low for HK/US/KR. A shared table renders plausible-looking
     /// nonsense without erroring.
     /// </summary>
-    private static IReadOnlyList<QuoteField> Extras(string market, string[] p)
+    private static IReadOnlyList<QuoteField> Extras(string market, string[] p, bool isIndex)
     {
         var fields = new List<QuoteField>();
 
@@ -212,8 +213,11 @@ public sealed class TencentQuoteClient
                 Add("流通市值(亿)", 44);
                 Add("总市值(亿)", 45);
                 Add("市净率", 46);
-                Add("涨停价", 47);
-                Add("跌停价", 48);
+                if (!isIndex)
+                {
+                    Add("涨停价", 47);
+                    Add("跌停价", 48);
+                }
                 Add("量比", 49);
                 Add("均价", 51);
                 Add("外盘", 7);

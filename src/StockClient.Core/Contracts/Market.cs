@@ -60,6 +60,9 @@ public enum ContractType
 
     /// <summary>信托 / REITs 等其它</summary>
     Other,
+
+    // Append only: contract caches serialize this enum by ordinal.
+    Index,
 }
 
 public static class ContractTypes
@@ -79,6 +82,7 @@ public static class ContractTypes
         ContractType.Warrant => "权证",
         ContractType.Unit => "单位",
         ContractType.Other => "其它",
+        ContractType.Index => "指数",
         _ => "-",
     };
 }

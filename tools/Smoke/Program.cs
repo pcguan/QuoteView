@@ -10,6 +10,29 @@ Console.OutputEncoding = Encoding.UTF8;
 using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(10) };
 http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 // Optional focused integration check; no desktop UI is opened.
+if (args.Contains("--indices"))
+{
+    var repo = new ContractRepository(new EastMoneyContractClient(http), new ContractCache(), new MarketClock());
+    foreach (var (query, code) in new[] { ("上证指数", "SH000001"), ("深证指数", "SZ399001"), ("创业板指数", "SZ399006") })
+        if (repo.Search(query).FirstOrDefault()?.Code != code) throw new Exception($"指数搜索失败: {query}");
+    var indices = repo.Browse(type: ContractType.Index);
+    var live = await new TencentQuoteClient(http).GetQuotesAsync(indices.Select(c => c.Code).ToArray(), default);
+    var klines = new TencentKlineClient(http);
+    foreach (var contract in indices)
+    {
+        var quote = live.Single(q => q.Code == contract.Code);
+        if (quote.IsMissing || quote.Now <= 0 || quote.Name != contract.Name)
+            throw new Exception($"指数行情失败: {contract.Code}");
+        if (quote.LimitUp is not null || quote.LimitDown is not null)
+            throw new Exception($"指数不应显示涨跌停价: {contract.Code}");
+        var series = await klines.FetchAsync(contract, KlinePeriod.Day, KlineAdjust.Qfq, 30, default);
+        if (series.Candles.Count < 20 || series.Candles.Any(k => k.Close <= 0))
+            throw new Exception($"指数日线失败: {contract.Code}");
+        Console.WriteLine($"{contract.Code} {quote.Name} 点位={quote.Now} 日线={series.Candles.Count} secid={contract.EastMoneySecId}");
+    }
+    Console.WriteLine($"{indices.Count} 个指数搜索、行情、日线验证通过");
+    return;
+}
 if (args.Contains("--boards"))
 {
     var clock = new MarketClock();
