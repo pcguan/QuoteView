@@ -103,6 +103,9 @@ public partial class StealthWindow : Window
     private readonly TrendRepository _trends;
     private HwndSource? _source;
     private IReadOnlyList<QuoteRow> _rows = Array.Empty<QuoteRow>();
+    private QuoteRow? _contextRow;
+    private GroupRow? _contextGroup;
+    private bool _editingContracts;
 
     // Charts of the anchor (current) contract only — one contract at a time, so
     // the request load stays minimal. The order book needs no request at all: it
@@ -202,6 +205,19 @@ public partial class StealthWindow : Window
         _vm.StealthTick += OnTick;
 
         Root.ContextMenu = BuildMenu();
+        Root.ContextMenuOpening += (_, e) =>
+        {
+            _contextGroup = _vm.ActiveGroup;
+            _contextRow = null;
+            for (var node = e.OriginalSource as DependencyObject; node is not null;
+                 node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node))
+            {
+                if (node is FrameworkElement { DataContext: QuoteRow row })
+                { _contextRow = row; break; }
+                if (ReferenceEquals(node, Root)) break;
+            }
+            _contextRow ??= _rows.FirstOrDefault();
+        };
 
         LocationChanged += (_, _) =>
         {
@@ -432,6 +448,7 @@ public partial class StealthWindow : Window
         {
             Rows.Children.Add(new TextBlock
                 { Text = "无行情", FontSize = _config.FontSize, Foreground = Brushes.Gray });
+            UpdateTrend();
             Resync();
             return;
         }
@@ -565,10 +582,17 @@ public partial class StealthWindow : Window
             var row = _rows[r];
             var top = r == 0 ? (showHeader ? 2.0 : 0.0) : gap;
 
+            // Hit the whole row, including the gaps between its cells.
+            var hitArea = new Border { Background = Brushes.Transparent, DataContext = row };
+            Grid.SetRow(hitArea, r + 1);
+            Grid.SetColumnSpan(hitArea, Math.Max(1, used.Count));
+            grid.Children.Add(hitArea);
+
             if (row.IsMissing)
             {
                 var missing = new TextBlock
                 {
+                    DataContext = row,
                     Text = "无行情", FontSize = _config.FontSize, Foreground = Brushes.Gray,
                     Margin = new Thickness(0, top, 0, 0),
                 };
@@ -587,6 +611,7 @@ public partial class StealthWindow : Window
                     f.Field == StealthField.Name ? FontWeights.SemiBold : FontWeights.Normal,
                     fontSize, top);
                 Grid.SetRow(cell, r + 1);
+                cell.DataContext = row;
             }
         }
 
@@ -1075,6 +1100,34 @@ public partial class StealthWindow : Window
         menu.Opened += (_, _) => FillGroups(groups);
         menu.Items.Add(groups);
 
+        var add = new MenuItem { Header = "新增合约…" };
+        add.Click += (_, _) =>
+        {
+            if (_editingContracts) return;
+            _editingContracts = true;
+            try { new AddContractWindow(_vm) { Owner = this }.ShowDialog(); }
+            finally { _editingContracts = false; }
+        };
+        menu.Items.Add(add);
+
+        var remove = new MenuItem { Header = "删除合约…" };
+        menu.Opened += (_, _) =>
+        {
+            remove.IsEnabled = _contextRow is not null && _contextGroup is not null;
+            remove.Header = _contextRow is { } row
+                ? $"删除合约（{(row.IsMissing ? row.Code : row.Name + " " + row.Code)}）…" : "删除合约…";
+        };
+        remove.Click += async (_, _) =>
+        {
+            // Capture identity at menu-open time: quote ticks rebuild the visual rows.
+            if (_editingContracts || _contextRow is not { } row
+                || !ReferenceEquals(_contextGroup, _vm.ActiveGroup)) return;
+            _editingContracts = true;
+            try { await ContractRemoval.ConfirmAsync(_vm, new[] { row }, this); }
+            finally { _editingContracts = false; }
+        };
+        menu.Items.Add(remove);
+
         menu.Items.Add(new Separator());
 
         // Fields, colours, row count and shade now live in a dedicated settings
@@ -1441,6 +1494,7 @@ public partial class StealthWindow : Window
         // element is where.
         if (msg == WmMouseWheel)
         {
+            if (_editingContracts || Root.ContextMenu?.IsOpen == true) return IntPtr.Zero;
             // Only reached when the hook didn't swallow it. No logging here: this
             // is on the scroll path, and Probe.Log writes the file synchronously.
             var delta = (short)((wParam.ToInt64() >> 16) & 0xFFFF);
@@ -1481,6 +1535,7 @@ public partial class StealthWindow : Window
     /// <summary>Runs one hotkey's action, whether it came from WM_HOTKEY or the hook.</summary>
     private void Trigger(int id)
     {
+        if (_editingContracts) return;
         switch (id)
         {
             // Up brightens, down darkens — the way the arrows read.
@@ -1663,6 +1718,8 @@ public partial class StealthWindow : Window
 
     private IntPtr WheelHook(int code, IntPtr wParam, IntPtr lParam)
     {
+        if (_editingContracts || Root.ContextMenu?.IsOpen == true)
+            return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
         if (code >= 0 && wParam.ToInt32() == Native.WmLButtonDownMsg && _config.Shade == 0)
         {
             var click = System.Runtime.InteropServices.Marshal
@@ -1754,6 +1811,7 @@ public partial class StealthWindow : Window
         // contract redraws the panel.
         Dispatcher.BeginInvoke(new Action(() =>
         {
+            if (_editingContracts || Root.ContextMenu?.IsOpen == true) return;
             if (shift) StepShade(delta > 0 ? 1 : -1);
             else if (ctrl) _vm.StealthStepGroup(delta > 0 ? -1 : 1);
             else StepByWheel(delta);
@@ -1771,6 +1829,7 @@ public partial class StealthWindow : Window
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (_editingContracts || Root.ContextMenu?.IsOpen == true) return;
         if (e.Delta == 0) return;
 
         StepByWheel(e.Delta);

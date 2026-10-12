@@ -719,6 +719,14 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Resolves a code to its full contract (for a secid, e.g. the panel's trend).</summary>
     public Contract? FindContract(string code) => _contracts.Find(code);
 
+    public void StealthSelectContract(string code)
+    {
+        var row = Quotes.FirstOrDefault(q => q.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+        if (row is null) return;
+        _stealthIndex = Quotes.IndexOf(row);
+        StealthTick?.Invoke(StealthRows());
+    }
+
     /// <summary>
     /// The contracts the panel shows: up to <see cref="StealthConfig.Rows"/> of
     /// them, starting from the current one and wrapping. One row is the original
@@ -791,6 +799,9 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Raised so the view can open/close the suggestion popup.</summary>
     public event Action<bool>? SuggestionsChanged;
+
+    public IReadOnlyList<Contract> SearchContracts(string query) =>
+        string.IsNullOrWhiteSpace(query) ? Array.Empty<Contract>() : _contracts.Search(query).Take(10).ToArray();
 
     private void RefreshSuggestions()
     {
