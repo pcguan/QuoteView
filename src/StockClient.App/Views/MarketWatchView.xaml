@@ -1,0 +1,82 @@
+<UserControl x:Class="StockClient.App.Views.MarketWatchView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <Grid Margin="0,4,0,8">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+    <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+      <StackPanel>
+        <DockPanel Margin="0,0,0,10">
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <TextBlock Text="{Binding ResultCount}" VerticalAlignment="Center" Margin="10,0" Foreground="{StaticResource Accent}" />
+            <ui:Button Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding RefreshCommand}"
+                       ToolTip="刷新全市场行情（受最小间隔及失败退避限制）" Margin="4,0" />
+            <ui:Button Icon="{ui:SymbolIcon ArrowReset24}" Command="{Binding ClearCommand}" ToolTip="清空过滤与排序" Margin="4,0" />
+          </StackPanel>
+          <TextBlock Text="沪深全市场行情" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
+        </DockPanel>
+        <WrapPanel Margin="0,0,0,8">
+          <ComboBox Width="120" ItemsSource="{Binding Markets}" SelectedItem="{Binding SelectedMarket}" Margin="0,0,12,0" ToolTip="市场" />
+          <CheckBox Content="主板" IsChecked="{Binding IncludeMain}" VerticalAlignment="Center" Margin="0,0,12,0" />
+          <CheckBox Content="创业板" IsChecked="{Binding IncludeChiNext}" VerticalAlignment="Center" Margin="0,0,12,0" />
+          <CheckBox Content="科创板" IsChecked="{Binding IncludeStar}" VerticalAlignment="Center" Margin="0,0,16,0" />
+          <CheckBox Content="排除 ST" IsChecked="{Binding ExcludeSt}" VerticalAlignment="Center" Margin="0,0,12,0" />
+          <CheckBox Content="仅有报价" IsChecked="{Binding QuotedOnly}" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="隐藏暂无最新价的合约" />
+          <ui:TextBox Width="280" PlaceholderText="代码 / 名称 / 拼音 / 行业 / 概念"
+                      ClearButtonEnabled="True" Text="{Binding Keyword, UpdateSourceTrigger=PropertyChanged}" />
+        </WrapPanel>
+        <WrapPanel>
+          <ComboBox Width="170" ItemsSource="{Binding Fields}" SelectedItem="{Binding SelectedField}" ToolTip="过滤字段与单位" Margin="0,0,8,0" />
+          <ComboBox Width="65" ItemsSource="{Binding Comparisons}" SelectedItem="{Binding SelectedComparison}" ToolTip="比较条件" Margin="0,0,8,0" />
+          <ui:TextBox Width="110" PlaceholderText="数值" Text="{Binding ConditionValue, UpdateSourceTrigger=PropertyChanged}" KeyDown="Value_KeyDown" />
+          <ui:Button Icon="{ui:SymbolIcon Add24}" Command="{Binding AddConditionCommand}" ToolTip="添加条件，所有条件同时满足" Margin="8,0" />
+          <TextBlock Text="{Binding FilterError}" Foreground="#F1707B" VerticalAlignment="Center" />
+        </WrapPanel>
+        <ItemsControl ItemsSource="{Binding Conditions}">
+          <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Style="{StaticResource TagChip}" Margin="0,6,6,0">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding Display}" VerticalAlignment="Center" Margin="0,0,5,0" />
+                  <Button Content="×" Padding="4,0" ToolTip="移除此条件"
+                          Command="{Binding DataContext.RemoveConditionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                          CommandParameter="{Binding}" />
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </Border>
+    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
+      <Grid>
+        <DataGrid x:Name="QuoteGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="True" CanUserReorderColumns="True"
+                  EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                  ScrollViewer.CanContentScroll="True" RowHeight="30" HeadersVisibility="Column" GridLinesVisibility="None"
+                  BorderThickness="0" Background="Transparent" FrozenColumnCount="2" SelectionMode="Single"
+                  Sorting="Grid_Sorting" MouseDoubleClick="Grid_DoubleClick" />
+        <TextBlock Text="暂无符合条件的行情" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+          <TextBlock.Style>
+            <Style TargetType="TextBlock">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers><DataTrigger Binding="{Binding Rows.Count}" Value="0"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+            </Style>
+          </TextBlock.Style>
+        </TextBlock>
+      </Grid>
+    </Border>
+    <DockPanel Grid.Row="2" Margin="2,7,2,0">
+      <TextBlock DockPanel.Dock="Right" Text="{Binding Schedule}" Foreground="{StaticResource Faint}" FontSize="11" />
+      <StackPanel Orientation="Horizontal">
+        <TextBlock Text="{Binding Status}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0" />
+        <TextBlock Text="{Binding SnapshotInfo}" Foreground="{StaticResource Faint}" FontSize="11" ToolTip="各合约的上游时间见行情时间列；整轮为逐页采集，并非同一瞬间的快照" />
+      </StackPanel>
+    </DockPanel>
+  </Grid>
+</UserControl>

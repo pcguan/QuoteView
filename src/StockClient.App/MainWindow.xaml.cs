@@ -84,6 +84,7 @@ public partial class MainWindow : FluentWindow
 
         _vm = new MainViewModel(Dispatcher);
         DataContext = _vm;
+        MarketWatch.OpenContract += contract => OpenKline(contract);
 
         _klineHttp = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
         _klineHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
@@ -311,6 +312,7 @@ public partial class MainWindow : FluentWindow
             foreach (var window in _historyWindows.ToArray()) window.Close();
 
             _pingTimer?.Stop();
+            MarketWatch.Dispose();
             await _presence.DisposeAsync();
             _settingsPushTimer?.Stop();
             await FlushSettingsPushAsync();

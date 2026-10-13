@@ -10,6 +10,22 @@ Console.OutputEncoding = Encoding.UTF8;
 using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(10) };
 http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 // Optional focused integration check; no desktop UI is opened.
+if (args.Contains("--market"))
+{
+    var marketClient = new StockClient.Core.MarketWatch.EastMoneyMarketClient(http);
+    var snapshot = await marketClient.FetchAsync(null, default);
+    if (snapshot.Rows.Count < 4000 || snapshot.Rows.Select(r => r.Code).Distinct().Count() != snapshot.Rows.Count)
+        throw new Exception("全市场快照不完整");
+    var query = new StockClient.Core.MarketWatch.MarketQuery
+        { Market = Market.SZ, Boards = StockClient.Core.Boards.ListingBoards.ChiNext };
+    var filtered = query.Apply(snapshot.Rows, "Percent", true);
+    if (filtered.Count == 0 || filtered.Any(r => r.Contract.Type != ContractType.ChiNext || r.Contract.Market != Market.SZ))
+        throw new Exception("市场和上市板块过滤失败");
+    Console.WriteLine($"全市场={snapshot.Rows.Count} 页数={snapshot.Pages} 耗时={(snapshot.CompletedAt - snapshot.StartedAt).TotalSeconds:0.0}s 来源={snapshot.Host}");
+    foreach (var g in snapshot.Rows.GroupBy(r => r.Contract.Type)) Console.WriteLine($"{g.Key.Display()}={g.Count()}");
+    Console.WriteLine($"创业板过滤={filtered.Count}，涨跌幅排序首行={filtered[0].Code} {filtered[0].Percent}，缺报价={snapshot.Rows.Count(r => r.Price is null)}");
+    return;
+}
 if (args.Contains("--indices"))
 {
     var repo = new ContractRepository(new EastMoneyContractClient(http), new ContractCache(), new MarketClock());

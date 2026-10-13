@@ -62,6 +62,9 @@
           </Border>
         </Grid>
       </TabItem>
+      <TabItem Header="全市场行情">
+        <views:MarketWatchView x:Name="MarketWatch" />
+      </TabItem>
       <TabItem Header="历史分时">
         <Grid>
           <Grid.Resources />
