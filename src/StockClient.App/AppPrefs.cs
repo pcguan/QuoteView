@@ -20,7 +20,8 @@ public static class AppPrefs
         int UpdateDelayHours = 0, bool StealthIntroShown = false,
         int BigTradeWan = 100, double WindowOpacity = 1.0,
         Dictionary<string, WinPlace>? Placements = null,
-        List<KlineWin>? OpenKlines = null);
+        List<KlineWin>? OpenKlines = null,
+        List<StockClient.Core.Groups.QuoteColumnState>? MarketColumns = null);
 
     /// <summary>A window's remembered restore bounds + maximized state, per key.</summary>
     public sealed record WinPlace(double L, double T, double W, double H, bool Max);
@@ -56,6 +57,17 @@ public static class AppPrefs
         {
             // Best effort.
         }
+    }
+
+    public static event Action? MarketColumnsChanged;
+    public static IReadOnlyList<StockClient.Core.Groups.QuoteColumnState> MarketColumns =>
+        _doc.MarketColumns ?? new();
+
+    public static void SaveMarketColumns(List<StockClient.Core.Groups.QuoteColumnState> columns)
+    {
+        _doc = _doc with { MarketColumns = columns };
+        Save();
+        MarketColumnsChanged?.Invoke();
     }
 
     public const string AutoSilent = "silent";

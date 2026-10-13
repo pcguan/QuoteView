@@ -54,11 +54,19 @@ public partial class ColumnSettingsWindow : Window
     private bool _dragging;
     private GhostAdorner? _ghost;
 
-    public ColumnSettingsWindow(DataGrid grid)
+    private readonly Action? _resetLayout;
+
+    public ColumnSettingsWindow(DataGrid grid, Action? resetLayout = null)
     {
         InitializeComponent();
         WindowDimmer.Attach(this);
         _grid = grid;
+        _resetLayout = resetLayout;
+        if (resetLayout is not null)
+        {
+            ASharePreset.Visibility = OverseasPreset.Visibility = Visibility.Collapsed;
+            DefaultPreset.ToolTip = "恢复默认列顺序、宽度和显示状态";
+        }
 
         // String headers only — the delete column's header is not a real column name.
         foreach (var column in grid.Columns
@@ -86,7 +94,13 @@ public partial class ColumnSettingsWindow : Window
 
     private void Default_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var chip in _chips) chip.Visible = DefaultVisible.Contains(chip.Header);
+        if (_resetLayout is not null)
+        {
+            _resetLayout();
+            _chips.Clear();
+            foreach (var column in _grid.Columns.OrderBy(c => c.DisplayIndex)) _chips.Add(new Chip(column));
+        }
+        else foreach (var chip in _chips) chip.Visible = DefaultVisible.Contains(chip.Header);
     }
 
     private void AShare_Click(object sender, RoutedEventArgs e)

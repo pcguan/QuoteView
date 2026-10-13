@@ -95,7 +95,8 @@ public static class ColumnMenu
 
         return text.ElementStyle.Setters.OfType<Setter>().Any(s =>
             s.Property == FrameworkElement.HorizontalAlignmentProperty &&
-            s.Value is HorizontalAlignment.Right);
+            s.Value is HorizontalAlignment.Right
+            || s.Property == TextBlock.TextAlignmentProperty && s.Value is TextAlignment.Right);
     }
 
     private static ContextMenu BuildMenu(System.Windows.Controls.DataGrid grid)

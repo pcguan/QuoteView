@@ -189,9 +189,10 @@ public partial class StealthWindow : Window
     /// window, which owns the chart plumbing. Null = the menu item is hidden.</summary>
     private readonly Action<string>? _openKline;
     private readonly Action<string>? _openHistory;
+    private readonly Action? _openMarket;
 
     public StealthWindow(QuotesViewModel vm, StealthConfig config, Action save, TrendRepository trends,
-        Action<string>? openKline = null, Action<string>? openHistory = null)
+        Action<string>? openKline = null, Action<string>? openHistory = null, Action? openMarket = null)
     {
         InitializeComponent();
 
@@ -201,6 +202,7 @@ public partial class StealthWindow : Window
         _trends = trends;
         _openKline = openKline;
         _openHistory = openHistory;
+        _openMarket = openMarket;
         _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
@@ -1170,7 +1172,14 @@ public partial class StealthWindow : Window
             menu.Items.Add(history);
         }
 
-        if (_openKline is not null || _openHistory is not null)
+        if (_openMarket is { } openMarket)
+        {
+            var market = new MenuItem { Header = "全市场行情…" };
+            market.Click += (_, _) => openMarket();
+            menu.Items.Add(market);
+        }
+
+        if (_openKline is not null || _openHistory is not null || _openMarket is not null)
             menu.Items.Add(new Separator());
 
         var settings = new MenuItem { Header = "设置…" };

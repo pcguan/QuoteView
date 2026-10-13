@@ -15,6 +15,7 @@
             <TextBlock Text="{Binding ResultCount}" VerticalAlignment="Center" Margin="10,0" Foreground="{StaticResource Accent}" />
             <ui:Button Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding RefreshCommand}"
                        ToolTip="刷新全市场行情（受最小间隔及失败退避限制）" Margin="4,0" />
+            <ui:Button Icon="{ui:SymbolIcon Settings24}" Click="Columns_Click" ToolTip="列设置：显示、隐藏、拖动排序；拖动表头右边缘调整宽度" Margin="4,0" />
             <ui:Button Icon="{ui:SymbolIcon ArrowReset24}" Command="{Binding ClearCommand}" ToolTip="清空过滤与排序" Margin="4,0" />
           </StackPanel>
           <TextBlock Text="沪深全市场行情" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
@@ -56,12 +57,12 @@
     <Border Grid.Row="1" Style="{StaticResource Card}" Padding="0">
       <Grid>
         <DataGrid x:Name="QuoteGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" IsReadOnly="True"
-                  CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="True" CanUserReorderColumns="True"
+                  CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="True" CanUserReorderColumns="True" CanUserResizeColumns="True" MinColumnWidth="40"
                   EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling"
                   ScrollViewer.CanContentScroll="True" RowHeight="30" HeadersVisibility="Column" GridLinesVisibility="None"
-                  BorderThickness="0" Background="Transparent" FrozenColumnCount="2" SelectionMode="Single"
+                  BorderThickness="0" Background="Transparent" FrozenColumnCount="0" SelectionMode="Single"
                   Sorting="Grid_Sorting" MouseDoubleClick="Grid_DoubleClick" />
-        <TextBlock Text="暂无符合条件的行情" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+        <TextBlock Text="{Binding EmptyMessage}" Foreground="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
           <TextBlock.Style>
             <Style TargetType="TextBlock">
               <Setter Property="Visibility" Value="Collapsed" />

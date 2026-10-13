@@ -20,6 +20,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private CancellationTokenSource? _request;
     private MarketSnapshot? _snapshot;
+    private readonly HashSet<object> _activeViews = new();
     private bool _active, _busy, _disposed, _wasLive;
     private int _failures;
     private DateTimeOffset _nextDue, _allowedAt;
@@ -45,8 +46,10 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         { new MarketOption(null, "沪深全部"), new MarketOption(Market.SH, "沪市"), new MarketOption(Market.SZ, "深市") };
     public IReadOnlyList<MarketField> Fields => MarketFields.All;
     public IReadOnlyList<ComparisonOption> Comparisons { get; } = Enum.GetValues<MarketComparison>().Select(c => new ComparisonOption(c)).ToArray();
-    public MarketField SelectedField { get; set; } = MarketFields.All[1];
-    public ComparisonOption SelectedComparison { get; set; } = new(MarketComparison.GreaterOrEqual);
+    private MarketField _selectedField = MarketFields.All[1];
+    private ComparisonOption _selectedComparison = new(MarketComparison.GreaterOrEqual);
+    public MarketField SelectedField { get => _selectedField; set { if (value is not null) Set(ref _selectedField, value); } }
+    public ComparisonOption SelectedComparison { get => _selectedComparison; set { if (value is not null) Set(ref _selectedComparison, value); } }
     public string ConditionValue { get => _conditionValue; set => Set(ref _conditionValue, value); }
     public string FilterError { get => _filterError; private set => Set(ref _filterError, value); }
     public ObservableCollection<MarketCondition> Conditions { get; } = new();
@@ -54,9 +57,11 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     public RelayCommand AddConditionCommand { get; }
     public RelayCommand RemoveConditionCommand { get; }
     public RelayCommand ClearCommand { get; }
-    public bool Busy { get => _busy; private set { Set(ref _busy, value); OnPropertyChanged(nameof(CanRefresh)); } }
+    public bool Busy { get => _busy; private set { Set(ref _busy, value); OnPropertyChanged(nameof(CanRefresh)); OnPropertyChanged(nameof(EmptyMessage)); } }
     public bool CanRefresh => _active && !Busy && DateTimeOffset.UtcNow >= _allowedAt;
-    public string Status { get => _status; private set => Set(ref _status, value); }
+    public string Status { get => _status; private set { Set(ref _status, value); OnPropertyChanged(nameof(EmptyMessage)); } }
+    public string EmptyMessage => Busy ? "正在加载全市场行情，请稍候…"
+        : _snapshot is null ? Status : "暂无符合条件的行情";
     public string SnapshotInfo => _snapshot is null ? "尚未取得完整行情"
         : $"{(_snapshot.Delayed ? "东方财富 · 延迟备用源" : "东方财富")} · 完成 {_snapshot.CompletedAt.ToLocalTime():MM-dd HH:mm:ss} · 耗时 {(_snapshot.CompletedAt - _snapshot.StartedAt).TotalSeconds:0.0}s";
     public string ResultCount => $"{Rows.Count:N0} / {_snapshot?.Rows.Count ?? 0:N0}";
@@ -65,7 +70,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
             + (_failures > 0 ? $"失败退避 {MarketRefreshPolicy.FailureDelay(_failures).TotalMinutes:0} 分钟"
                 : MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? "间隔 60 秒" : "非交易时段 15 分钟");
     public IReadOnlyList<MarketQuote> Rows { get => _rows; private set { Set(ref _rows, value); OnPropertyChanged(nameof(ResultCount)); } }
-    public MarketOption SelectedMarket { get => _market; set { if (Set(ref _market, value)) Filter(); } }
+    public MarketOption SelectedMarket { get => _market; set { if (value is not null && Set(ref _market, value)) Filter(); } }
     public string Keyword { get => _keyword; set { if (Set(ref _keyword, value)) Filter(); } }
     public bool IncludeMain { get => _main; set { if (Set(ref _main, value)) Filter(); } }
     public bool IncludeChiNext { get => _chiNext; set { if (Set(ref _chiNext, value)) Filter(); } }
@@ -77,7 +82,13 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     public event Action? ResultsChanging;
     public event Action? ResultsChanged;
 
-    public void SetActive(bool active)
+    public void SetActive(object view, bool active)
+    {
+        if (active) _activeViews.Add(view); else _activeViews.Remove(view);
+        SetActive(_activeViews.Count > 0);
+    }
+
+    private void SetActive(bool active)
     {
         if (_disposed || _active == active) return;
         _active = active;
@@ -119,6 +130,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
             var snapshot = await _client.FetchAsync(progress, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             _snapshot = snapshot;
+            Probe.Log($"market watch updated: rows={snapshot.Rows.Count} pages={snapshot.Pages} host={snapshot.Host}");
             _failures = 0;
             _nextDue = started + (MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? MarketRefreshPolicy.Interval : MarketRefreshPolicy.ClosedInterval);
             // A very slow refresh must not immediately start another whole crawl.
@@ -126,6 +138,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
             _allowedAt = MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? _nextDue : started + MarketRefreshPolicy.Interval;
             Status = snapshot.Delayed ? "已更新 · 当前使用延迟备用行情" : "已更新";
             OnPropertyChanged(nameof(SnapshotInfo));
+            OnPropertyChanged(nameof(EmptyMessage));
             Filter();
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }

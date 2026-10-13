@@ -13,6 +13,7 @@ public partial class MarketWatchView : UserControl
 {
     private MarketWatchViewModel? _vm;
     private Window? _window;
+    private MarketColumnLayout? _layout;
     private string? _selectedCode;
     public event Action<Contract>? OpenContract;
 
@@ -25,7 +26,10 @@ public partial class MarketWatchView : UserControl
         Column("上市板块", nameof(MarketQuote.BoardName), 85);
         foreach (var field in MarketFields.All)
         {
-            var col = Column(field.Name, field.Key, field.Name.Length > 8 ? 140 : 110, field.Format);
+            var title = MarketValueFormat.Scale(field.Key) is null ? field.Name : field.Name.Split('(')[0];
+            var col = Column(title, field.Key, 120, field.Format);
+            if (MarketValueFormat.Scale(field.Key) is not null)
+                col.Binding = new Binding(field.Key) { Converter = new MarketNumberConverter(field.Key) };
             if (field.Key is nameof(MarketQuote.Percent) or nameof(MarketQuote.Change) or nameof(MarketQuote.Speed)
                 or nameof(MarketQuote.MainInflow) or nameof(MarketQuote.SuperInflow) or nameof(MarketQuote.BigInflow)
                 or nameof(MarketQuote.MidInflow) or nameof(MarketQuote.SmallInflow))
@@ -44,12 +48,14 @@ public partial class MarketWatchView : UserControl
         Column("行情时间(北京时间)", nameof(MarketQuote.TimeDisplay), 170).SortMemberPath = nameof(MarketQuote.QuoteTime);
         Loaded += (_, _) =>
         {
-            if (_vm is null)
+            if (_layout is null)
             {
-                _vm = new MarketWatchViewModel(Dispatcher);
-                DataContext = _vm;
-                _vm.ResultsChanging += () => _selectedCode = (QuoteGrid.SelectedItem as MarketQuote)?.Code;
-                _vm.ResultsChanged += RestoreSelection;
+                _layout = new MarketColumnLayout(QuoteGrid);
+                var menu = new ContextMenu();
+                var settings = new MenuItem { Header = "列设置…" };
+                settings.Click += (_, _) => OpenColumnSettings();
+                menu.Items.Add(settings);
+                ColumnMenu.Attach(QuoteGrid, menu);
             }
             _window = Window.GetWindow(this);
             if (_window is not null) _window.StateChanged += Window_StateChanged;
@@ -58,9 +64,29 @@ public partial class MarketWatchView : UserControl
         Unloaded += (_, _) =>
         {
             if (_window is not null) _window.StateChanged -= Window_StateChanged;
-            _vm?.SetActive(false);
+            _vm?.SetActive(this, false);
+            _layout?.Flush();
         };
         IsVisibleChanged += (_, _) => UpdateActive();
+    }
+
+    public void Initialize(MarketWatchViewModel vm)
+    {
+        if (_vm is not null) throw new InvalidOperationException("Market view already initialized");
+        _vm = vm;
+        DataContext = vm;
+        vm.ResultsChanging += CaptureSelection;
+        vm.ResultsChanged += RestoreSelection;
+        UpdateActive();
+    }
+
+    private void CaptureSelection() => _selectedCode = (QuoteGrid.SelectedItem as MarketQuote)?.Code;
+    private void Columns_Click(object sender, RoutedEventArgs e) => OpenColumnSettings();
+    private void OpenColumnSettings()
+    {
+        if (_layout is null) return;
+        new ColumnSettingsWindow(QuoteGrid, _layout.Reset) { Owner = Window.GetWindow(this) }.ShowDialog();
+        _layout.Flush();
     }
 
     private DataGridTextColumn Column(string title, string property, double width, string? format = null)
@@ -81,7 +107,7 @@ public partial class MarketWatchView : UserControl
     }
 
     private void Window_StateChanged(object? sender, EventArgs e) => UpdateActive();
-    private void UpdateActive() => _vm?.SetActive(IsLoaded && IsVisible && _window?.WindowState != WindowState.Minimized);
+    private void UpdateActive() => _vm?.SetActive(this, IsLoaded && IsVisible && _window?.WindowState != WindowState.Minimized);
 
     private void RestoreSelection()
     {
@@ -112,5 +138,23 @@ public partial class MarketWatchView : UserControl
         if (e.Key == Key.Enter) { _vm?.AddConditionCommand.Execute(null); e.Handled = true; }
     }
 
-    public void Dispose() => _vm?.Dispose();
+    public void Dispose()
+    {
+        if (_window is not null) _window.StateChanged -= Window_StateChanged;
+        if (_vm is not null)
+        {
+            _vm.SetActive(this, false);
+            _vm.ResultsChanging -= CaptureSelection;
+            _vm.ResultsChanged -= RestoreSelection;
+        }
+        _layout?.Dispose();
+    }
+
+    private sealed class MarketNumberConverter(string key) : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) =>
+            MarketValueFormat.Format(value is double number ? number : null, key, culture);
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) =>
+            Binding.DoNothing;
+    }
 }
