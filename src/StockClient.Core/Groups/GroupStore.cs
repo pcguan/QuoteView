@@ -347,6 +347,10 @@ public sealed class StealthConfig
 /// </summary>
 public sealed class QuoteColumnState
 {
+    [JsonPropertyName("title")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; set; }
+
     [JsonPropertyName("key")]
     public string Key { get; set; } = "";
 

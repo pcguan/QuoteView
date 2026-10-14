@@ -22,6 +22,8 @@ public partial class MainWindow : FluentWindow
     private Views.StealthWindow? _stealth;
     private readonly MarketWatchViewModel _marketWatchVm;
     private Views.MarketWatchWindow? _marketWatchWindow;
+    private readonly BoardWatchViewModel _boardWatchVm;
+    private Views.BoardWatchWindow? _boardWatchWindow;
     private Views.SystemSettingsWindow? _systemSettings;
     private System.Windows.Forms.NotifyIcon? _tray;
 
@@ -89,6 +91,8 @@ public partial class MainWindow : FluentWindow
         _marketWatchVm = new MarketWatchViewModel(Dispatcher);
         MarketWatch.Initialize(_marketWatchVm);
         MarketWatch.OpenContract += contract => OpenKline(contract);
+        _boardWatchVm = new BoardWatchViewModel(Dispatcher);
+        BoardWatch.Initialize(_boardWatchVm);
         BoardWatch.OpenContract += contract => OpenKline(contract);
 
         _klineHttp = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
@@ -318,7 +322,9 @@ public partial class MainWindow : FluentWindow
 
             _pingTimer?.Stop();
             _marketWatchWindow?.Close();
+            _boardWatchWindow?.Close();
             BoardWatch.Dispose();
+            _boardWatchVm.Dispose();
             MarketWatch.Dispose();
             _marketWatchVm.Dispose();
             await _presence.DisposeAsync();
@@ -914,6 +920,19 @@ public partial class MainWindow : FluentWindow
         _marketWatchWindow.Activate();
     }
 
+    private void OpenBoardWatch()
+    {
+        if (_boardWatchWindow is null)
+        {
+            _boardWatchWindow = new Views.BoardWatchWindow(_boardWatchVm, contract => OpenKline(contract));
+            _boardWatchWindow.Closed += (_, _) => _boardWatchWindow = null;
+            _boardWatchWindow.Show();
+        }
+        else if (_boardWatchWindow.WindowState == WindowState.Minimized)
+            _boardWatchWindow.WindowState = WindowState.Normal;
+        _boardWatchWindow.Activate();
+    }
+
     private void Stealth_Click(object sender, RoutedEventArgs e) => EnterStealth();
 
     /// <summary>Drops to the stealth ticker: main window to the background,
@@ -923,7 +942,7 @@ public partial class MainWindow : FluentWindow
         if (_quotes is null || _stealth is not null) return;
 
         _stealth = new Views.StealthWindow(_quotes, _quotes.Stealth, _quotes.SaveConfig, _trendRepo,
-            openKline: OpenKlineByCode, openHistory: OpenHistoryByCode, openMarket: OpenMarketWatch);
+            openKline: OpenKlineByCode, openHistory: OpenHistoryByCode, openMarket: OpenMarketWatch, openBoards: OpenBoardWatch);
         _stealth.RestoreRequested += () => RestoreFromStealth("panel context menu 还原主窗口");
         _stealth.SettingsRequested += () => OpenSettings(Views.SystemSettingsWindow.TabPanel);
         _stealth.Closed += (_, _) => _stealth = null;

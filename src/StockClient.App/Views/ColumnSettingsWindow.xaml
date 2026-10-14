@@ -22,7 +22,17 @@
             <StackPanel Orientation="Horizontal">
               <CheckBox IsChecked="{Binding Visible, Mode=TwoWay}" VerticalAlignment="Center" />
               <TextBlock Text="{Binding Header}" Margin="5,0,0,0" VerticalAlignment="Center"
-                         Foreground="#EDF1F7" />
+                         Foreground="#EDF1F7">
+                <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers>
+                  <DataTrigger Binding="{Binding CanRename}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+                </Style.Triggers></Style></TextBlock.Style>
+              </TextBlock>
+              <TextBox Text="{Binding Header, UpdateSourceTrigger=LostFocus}" Width="120" MaxLength="40" Margin="5,0,0,0" ToolTip="自定义列名，移开焦点后保存">
+                <TextBox.Style><Style TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers><DataTrigger Binding="{Binding CanRename}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+                </Style></TextBox.Style>
+              </TextBox>
             </StackPanel>
           </Border>
         </DataTemplate>

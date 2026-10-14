@@ -15,6 +15,11 @@ public sealed class BoardWatchViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _timer;
     private CancellationTokenSource? _request;
     private BoardMarketSnapshot? _snapshot;
+    private readonly HashSet<object> _activeViews = new();
+    private readonly Dictionary<string, MarketWatchViewModel> _members = new();
+    private readonly Dictionary<object, string> _memberViews = new();
+    private readonly LinkedList<string> _recent = new();
+    private readonly Dispatcher _dispatcher;
     private bool _active, _busy, _disposed, _wasLive;
     private int _failures;
     private DateTimeOffset _nextDue, _allowedAt;
@@ -23,6 +28,7 @@ public sealed class BoardWatchViewModel : ObservableObject, IDisposable
 
     public BoardWatchViewModel(Dispatcher dispatcher)
     {
+        _dispatcher = dispatcher;
         _kind = Kinds[0];
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; QuoteView/1.0)");
         _client = new EastMoneyBoardMarketClient(_http);
@@ -65,7 +71,40 @@ public sealed class BoardWatchViewModel : ObservableObject, IDisposable
         RankingsChanged?.Invoke();
     }
 
-    public void SetActive(bool active)
+    public MarketWatchViewModel GetMembers(object view, Board board)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_members.TryGetValue(board.Code, out var model))
+            _members.Add(board.Code, model = new MarketWatchViewModel(_dispatcher, board));
+        _memberViews[view] = board.Code;
+        _recent.Remove(board.Code);
+        _recent.AddLast(board.Code);
+        TrimMembers();
+        return model;
+    }
+
+    public void ReleaseMembers(object view)
+    { _memberViews.Remove(view); TrimMembers(); }
+
+    private void TrimMembers()
+    {
+        // Hidden views can reopen still-bound models. Keep those alive too.
+        foreach (var code in _recent.ToArray())
+        {
+            if (_members.Count <= 8) break;
+            if (_memberViews.ContainsValue(code)) continue;
+            _members[code].Dispose(); _members.Remove(code); _recent.Remove(code);
+        }
+    }
+
+    public void SetActive(object view, bool active)
+    {
+        if (_disposed) return;
+        if (active) _activeViews.Add(view); else _activeViews.Remove(view);
+        SetActive(_activeViews.Count > 0);
+    }
+
+    private void SetActive(bool active)
     {
         if (_disposed || _active == active) return;
         _active = active;
@@ -120,5 +159,9 @@ public sealed class BoardWatchViewModel : ObservableObject, IDisposable
     }
 
     public void Dispose()
-    { _disposed = true; _active = false; _timer.Stop(); _request?.Cancel(); _http.Dispose(); }
+    {
+        _disposed = true; _active = false; _timer.Stop(); _request?.Cancel(); _http.Dispose();
+        foreach (var member in _members.Values) member.Dispose();
+        _members.Clear(); _memberViews.Clear(); _recent.Clear(); _activeViews.Clear();
+    }
 }

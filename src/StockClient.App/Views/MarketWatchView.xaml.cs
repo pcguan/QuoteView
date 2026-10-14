@@ -73,12 +73,7 @@ public partial class MarketWatchView : UserControl
     public void Initialize(MarketWatchViewModel vm)
     {
         if (ReferenceEquals(_vm, vm)) return;
-        if (_vm is not null)
-        {
-            _vm.SetActive(this, false);
-            _vm.ResultsChanging -= CaptureSelection;
-            _vm.ResultsChanged -= RestoreSelection;
-        }
+        ClearModel();
         _selectedCode = null;
         _vm = vm;
         DataContext = vm;
@@ -146,15 +141,22 @@ public partial class MarketWatchView : UserControl
         if (e.Key == Key.Enter) { _vm?.AddConditionCommand.Execute(null); e.Handled = true; }
     }
 
-    public void Dispose()
+    public void ClearModel()
     {
-        if (_window is not null) _window.StateChanged -= Window_StateChanged;
         if (_vm is not null)
         {
             _vm.SetActive(this, false);
             _vm.ResultsChanging -= CaptureSelection;
             _vm.ResultsChanged -= RestoreSelection;
         }
+        _vm = null;
+        DataContext = null;
+    }
+
+    public void Dispose()
+    {
+        if (_window is not null) _window.StateChanged -= Window_StateChanged;
+        ClearModel();
         _layout?.Dispose();
     }
 

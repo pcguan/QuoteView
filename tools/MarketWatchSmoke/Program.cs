@@ -54,6 +54,23 @@ internal static class Program
             Check(first.Columns[1].HeaderStyle.Setters.OfType<Setter>().Any(s =>
                 s.Property == Control.HorizontalContentAlignmentProperty && s.Value is HorizontalAlignment.Right), "header alignment");
         }
+        var gainers = Grid(); var losers = Grid(); var otherGainers = Grid();
+        using (var gains = new MarketColumnLayout(gainers, "board-gainers"))
+        using (var losses = new MarketColumnLayout(losers, "board-losers"))
+        using (var synced = new MarketColumnLayout(otherGainers, "board-gainers"))
+        {
+            gainers.Columns[1].Header = "自定义金额";
+            gainers.Columns[1].Width = 222;
+            gainers.Columns[1].DisplayIndex = 0;
+            gainers.Columns[0].Visibility = Visibility.Collapsed;
+            gains.Flush();
+            Check(otherGainers.Columns[1].Header as string == "自定义金额" && otherGainers.Columns[1].Width.Value == 222
+                && otherGainers.Columns[1].DisplayIndex == 0 && otherGainers.Columns[0].Visibility == Visibility.Collapsed, "board layouts must sync across windows");
+            Check(losers.Columns[1].Header as string == "金额" && losers.Columns[1].Width.Value == 120
+                && AppPrefs.GetColumns("market").Single(c => c.Key == "Amount").Width == 237, "separate ranking/market layout scopes");
+            gains.Reset();
+            Check(otherGainers.Columns[1].Header as string == "金额" && otherGainers.Columns[0].Visibility == Visibility.Visible, "rename reset must sync");
+        }
         var reopened = Grid("成交额");
         using var restored = new MarketColumnLayout(reopened);
         Check(reopened.Columns[1].Width.Value == 237 && reopened.Columns[1].DisplayIndex == 0
@@ -63,7 +80,7 @@ internal static class Program
             && reopened.Columns.All(c => c.Visibility == Visibility.Visible), "default reset");
         reopened.Columns[0].Width = 199;
         restored.Dispose(); // A close before the debounce must still save.
-        Check(AppPrefs.MarketColumns.Single(c => c.Key == "Code").Width == 199, "close must flush");
+        Check(AppPrefs.GetColumns("market").Single(c => c.Key == "Code").Width == 199, "close must flush");
     }
 
     private static async Task Idle(MarketWatchViewModel vm)
@@ -111,7 +128,11 @@ internal static class Program
         };
         handler.Ready.SetResult(true);
         using var rankings = new BoardWatchViewModel(dispatcher);
-        rankings.SetActive(true);
+        var thisView = new object();
+        rankings.SetActive(thisView, true);
+        var secondView = new object();
+        rankings.SetActive(secondView, true);
+        rankings.SetActive(thisView, false);
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (rankings.Busy && DateTime.UtcNow < deadline) await Task.Delay(10);
         Check(!rankings.Busy && rankings.Gainers.Count == 1 && rankings.Losers.Count == 1 && rankings.Neutral.Count == 1, "board rankings populated incorrectly");
@@ -119,8 +140,17 @@ internal static class Program
         Check(rankings.Gainers.Single().Code == "BK0004" && rankings.Losers.Count == 0 && handler.Calls == 3, "category switch should use same complete snapshot");
         rankings.Keyword = "不存在";
         Check(rankings.Gainers.Count == 0, "board keyword filtering");
-        rankings.SetActive(false);
+        rankings.SetActive(secondView, false);
         Check(rankings.Schedule == "已暂停", "board timer must stop when hidden");
+
+        var sharedBoard = new StockClient.Core.Boards.Board { Code = "BK1234", Name = "共享", Kind = StockClient.Core.Boards.BoardKind.Industry };
+        var firstMembers = rankings.GetMembers(thisView, sharedBoard);
+        Check(ReferenceEquals(firstMembers, rankings.GetMembers(secondView, sharedBoard)), "two views of one board must share member polling");
+        for (var i = 0; i < 12; i++)
+            rankings.GetMembers(thisView, sharedBoard with { Code = "BK" + (2000 + i) });
+        Check(ReferenceEquals(firstMembers, rankings.GetMembers(secondView, sharedBoard)), "LRU must retain a hidden view's bound model");
+        rankings.ReleaseMembers(thisView);
+        rankings.ReleaseMembers(secondView);
 
         handler = DirectHttp.Handler = new PendingHandler
         {

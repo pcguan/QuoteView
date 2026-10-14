@@ -28,18 +28,24 @@
       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
       <Border Style="{StaticResource Card}" Padding="8">
         <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="涨幅榜" Foreground="#F1707B" FontWeight="SemiBold" FontSize="16" Margin="4,0,0,8" />
+          <DockPanel DockPanel.Dock="Top" Margin="4,0,0,8">
+            <ui:Button DockPanel.Dock="Right" Icon="{ui:SymbolIcon Settings24}" Click="GainersColumns_Click" ToolTip="涨幅榜列设置：列名、显隐、顺序；拖动表头右边缘调宽" />
+            <TextBlock Text="涨幅榜" Foreground="#F1707B" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" />
+          </DockPanel>
           <DataGrid x:Name="GainersGrid" ItemsSource="{Binding Gainers}" AutoGenerateColumns="False" IsReadOnly="True"
-                    CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" SelectionMode="Single"
+                    CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="True" CanUserResizeColumns="True" SelectionMode="Single"
                     SelectionChanged="Ranking_SelectionChanged" RowHeight="30" HeadersVisibility="Column" GridLinesVisibility="None"
                     EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" />
         </DockPanel>
       </Border>
       <Border Grid.Column="2" Style="{StaticResource Card}" Padding="8">
         <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="跌幅榜" Foreground="#69CFA3" FontWeight="SemiBold" FontSize="16" Margin="4,0,0,8" />
+          <DockPanel DockPanel.Dock="Top" Margin="4,0,0,8">
+            <ui:Button DockPanel.Dock="Right" Icon="{ui:SymbolIcon Settings24}" Click="LosersColumns_Click" ToolTip="跌幅榜列设置：列名、显隐、顺序；拖动表头右边缘调宽" />
+            <TextBlock Text="跌幅榜" Foreground="#69CFA3" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" />
+          </DockPanel>
           <DataGrid x:Name="LosersGrid" ItemsSource="{Binding Losers}" AutoGenerateColumns="False" IsReadOnly="True"
-                    CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" SelectionMode="Single"
+                    CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" CanUserReorderColumns="True" CanUserResizeColumns="True" SelectionMode="Single"
                     SelectionChanged="Ranking_SelectionChanged" RowHeight="30" HeadersVisibility="Column" GridLinesVisibility="None"
                     EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" />
         </DockPanel>

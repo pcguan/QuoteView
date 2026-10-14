@@ -12,10 +12,9 @@ namespace StockClient.App.Views;
 
 public partial class BoardWatchView : UserControl, IDisposable
 {
-    private readonly BoardWatchViewModel _vm;
+    private BoardWatchViewModel? _vm;
     private readonly DispatcherTimer _selectionTimer;
-    private readonly Dictionary<string, MarketWatchViewModel> _memberModels = new();
-    private readonly LinkedList<string> _recent = new();
+    private MarketColumnLayout? _gainersLayout, _losersLayout;
     private BoardMarketQuote? _selected, _pending;
     private Window? _window;
     private bool _updatingSelection;
@@ -24,8 +23,6 @@ public partial class BoardWatchView : UserControl, IDisposable
     public BoardWatchView()
     {
         InitializeComponent();
-        _vm = new BoardWatchViewModel(Dispatcher);
-        DataContext = _vm;
         foreach (var grid in new[] { GainersGrid, LosersGrid })
         {
             AddColumn(grid, "板块", nameof(BoardMarketQuote.Name), 135);
@@ -44,25 +41,59 @@ public partial class BoardWatchView : UserControl, IDisposable
         }
         _selectionTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMilliseconds(350) };
         _selectionTimer.Tick += (_, _) => ShowPending();
-        _vm.RankingsChanging += () => _updatingSelection = true;
-        _vm.RankingsChanged += RestoreSelection;
         Members.OpenContract += c => OpenContract?.Invoke(c);
         Loaded += (_, _) =>
         {
             _window = Window.GetWindow(this);
             if (_window is not null) _window.StateChanged += Window_StateChanged;
-            ColumnMenu.Attach(GainersGrid);
-            ColumnMenu.Attach(LosersGrid);
+            if (_gainersLayout is null)
+            {
+                _gainersLayout = new MarketColumnLayout(GainersGrid, "board-gainers");
+                _losersLayout = new MarketColumnLayout(LosersGrid, "board-losers");
+                AttachColumns(GainersGrid, _gainersLayout);
+                AttachColumns(LosersGrid, _losersLayout);
+            }
             UpdateActive();
         };
         Unloaded += (_, _) =>
         {
             if (_window is not null) _window.StateChanged -= Window_StateChanged;
             _selectionTimer.Stop();
-            _vm.SetActive(false);
+            _vm?.SetActive(this, false);
+            _gainersLayout?.Flush(); _losersLayout?.Flush();
         };
         IsVisibleChanged += (_, _) => UpdateActive();
     }
+
+    public void Initialize(BoardWatchViewModel vm)
+    {
+        if (_vm is not null) throw new InvalidOperationException("Board view already initialized");
+        _vm = vm;
+        DataContext = vm;
+        vm.RankingsChanging += RankingsChanging;
+        vm.RankingsChanged += RestoreSelection;
+        UpdateActive();
+    }
+
+    private void RankingsChanging() => _updatingSelection = true;
+
+    private void AttachColumns(DataGrid grid, MarketColumnLayout layout)
+    {
+        var menu = new ContextMenu();
+        var item = new MenuItem { Header = "列设置…" };
+        item.Click += (_, _) => OpenColumns(grid, layout);
+        menu.Items.Add(item);
+        ColumnMenu.Attach(grid, menu);
+    }
+
+    private void OpenColumns(DataGrid grid, MarketColumnLayout? layout)
+    {
+        if (layout is null) return;
+        new ColumnSettingsWindow(grid, layout.Reset) { Owner = Window.GetWindow(this) }.ShowDialog();
+        layout.Flush();
+    }
+    private void GainersColumns_Click(object sender, RoutedEventArgs e) => OpenColumns(GainersGrid, _gainersLayout);
+    private void LosersColumns_Click(object sender, RoutedEventArgs e) => OpenColumns(LosersGrid, _losersLayout);
 
     private void AddColumn(DataGrid grid, string title, string property, double width, string? format = null, bool signed = false)
     {
@@ -71,7 +102,7 @@ public partial class BoardWatchView : UserControl, IDisposable
         if (signed) style.Setters.Add(new Setter(TextBlock.ForegroundProperty, new Binding(
             property == nameof(BoardMarketQuote.InflowDisplay) ? nameof(BoardMarketQuote.MainInflow) : property)
             { Converter = (IValueConverter)FindResource("SignToBrush") }));
-        grid.Columns.Add(new DataGridTextColumn { Header = title, Width = width, MinWidth = 45, ElementStyle = style,
+        grid.Columns.Add(new DataGridTextColumn { Header = title, SortMemberPath = property, Width = width, MinWidth = 45, ElementStyle = style,
             Binding = new Binding(property) { StringFormat = string.IsNullOrEmpty(format) ? null : "{0:" + format + "}", TargetNullValue = "—" } });
     }
 
@@ -79,7 +110,7 @@ public partial class BoardWatchView : UserControl, IDisposable
     private void UpdateActive()
     {
         var active = IsLoaded && IsVisible && _window?.WindowState != WindowState.Minimized;
-        _vm?.SetActive(active);
+        _vm?.SetActive(this, active);
         if (_selectionTimer is null) return;
         if (active && _pending is not null) _selectionTimer.Start(); else if (!active) _selectionTimer.Stop();
     }
@@ -111,21 +142,8 @@ public partial class BoardWatchView : UserControl, IDisposable
         if (_pending is not { } row) return;
         _pending = null;
         _selected = row;
-        if (!_memberModels.TryGetValue(row.Code, out var vm))
-        {
-            vm = new MarketWatchViewModel(Dispatcher, row.Board);
-            _memberModels.Add(row.Code, vm);
-        }
-        _recent.Remove(row.Code);
-        _recent.AddLast(row.Code);
-        Members.Initialize(vm);
-        while (_recent.Count > 8)
-        {
-            var oldest = _recent.First!.Value;
-            _recent.RemoveFirst();
-            _memberModels[oldest].Dispose();
-            _memberModels.Remove(oldest);
-        }
+        if (_vm is null) return;
+        Members.Initialize(_vm.GetMembers(this, row.Board));
         Details.Header = $"{row.Name}（{row.Code}）· 成分股行情";
         Details.IsEnabled = true;
         Details.IsExpanded = true;
@@ -133,6 +151,7 @@ public partial class BoardWatchView : UserControl, IDisposable
 
     private void RestoreSelection()
     {
+        if (_vm is null) return;
         try
         {
             var code = (_pending ?? _selected)?.Code;
@@ -143,6 +162,7 @@ public partial class BoardWatchView : UserControl, IDisposable
             if (row is null)
             {
                 _selectionTimer.Stop(); _pending = _selected = null;
+                Members.ClearModel(); _vm.ReleaseMembers(this);
                 Details.IsExpanded = false; Details.IsEnabled = false;
                 Details.Header = "点击板块展开成分股行情";
             }
@@ -162,8 +182,13 @@ public partial class BoardWatchView : UserControl, IDisposable
         _selectionTimer.Stop();
         if (_window is not null) _window.StateChanged -= Window_StateChanged;
         Members.Dispose();
-        foreach (var vm in _memberModels.Values) vm.Dispose();
-        _memberModels.Clear();
-        _vm.Dispose();
+        _gainersLayout?.Dispose(); _losersLayout?.Dispose();
+        if (_vm is not null)
+        {
+            _vm.SetActive(this, false);
+            _vm.ReleaseMembers(this);
+            _vm.RankingsChanging -= RankingsChanging;
+            _vm.RankingsChanged -= RestoreSelection;
+        }
     }
 }

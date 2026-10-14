@@ -7,10 +7,11 @@ namespace StockClient.App
 {
     public static class AppPrefs
     {
-        public static IReadOnlyList<QuoteColumnState> MarketColumns { get; private set; } = Array.Empty<QuoteColumnState>();
-        public static event Action? MarketColumnsChanged;
-        public static void SaveMarketColumns(List<QuoteColumnState> columns)
-        { MarketColumns = columns; MarketColumnsChanged?.Invoke(); }
+        private static readonly Dictionary<string, List<QuoteColumnState>> Layouts = new();
+        public static IReadOnlyList<QuoteColumnState> GetColumns(string key) => Layouts.TryGetValue(key, out var columns) ? columns : Array.Empty<QuoteColumnState>();
+        public static event Action<string>? ColumnsChanged;
+        public static void SaveColumns(string key, List<QuoteColumnState> columns)
+        { Layouts[key] = columns; ColumnsChanged?.Invoke(key); }
     }
     public static class Probe
     { public static void Log(string message) => Console.WriteLine(message); }

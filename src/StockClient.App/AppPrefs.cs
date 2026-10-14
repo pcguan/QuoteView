@@ -21,7 +21,8 @@ public static class AppPrefs
         int BigTradeWan = 100, double WindowOpacity = 1.0,
         Dictionary<string, WinPlace>? Placements = null,
         List<KlineWin>? OpenKlines = null,
-        List<StockClient.Core.Groups.QuoteColumnState>? MarketColumns = null);
+        List<StockClient.Core.Groups.QuoteColumnState>? MarketColumns = null,
+        Dictionary<string, List<StockClient.Core.Groups.QuoteColumnState>>? ColumnLayouts = null);
 
     /// <summary>A window's remembered restore bounds + maximized state, per key.</summary>
     public sealed record WinPlace(double L, double T, double W, double H, bool Max);
@@ -59,15 +60,22 @@ public static class AppPrefs
         }
     }
 
-    public static event Action? MarketColumnsChanged;
-    public static IReadOnlyList<StockClient.Core.Groups.QuoteColumnState> MarketColumns =>
-        _doc.MarketColumns ?? new();
+    public static event Action<string>? ColumnsChanged;
+    public static IReadOnlyList<StockClient.Core.Groups.QuoteColumnState> GetColumns(string key) =>
+        key == "market" ? _doc.MarketColumns ?? new() :
+        _doc.ColumnLayouts is { } layouts && layouts.TryGetValue(key, out var columns) ? columns : Array.Empty<StockClient.Core.Groups.QuoteColumnState>();
 
-    public static void SaveMarketColumns(List<StockClient.Core.Groups.QuoteColumnState> columns)
+    public static void SaveColumns(string key, List<StockClient.Core.Groups.QuoteColumnState> columns)
     {
-        _doc = _doc with { MarketColumns = columns };
+        if (key == "market") _doc = _doc with { MarketColumns = columns };
+        else
+        {
+            var layouts = _doc.ColumnLayouts is null ? new Dictionary<string, List<StockClient.Core.Groups.QuoteColumnState>>() : new Dictionary<string, List<StockClient.Core.Groups.QuoteColumnState>>(_doc.ColumnLayouts);
+            layouts[key] = columns;
+            _doc = _doc with { ColumnLayouts = layouts };
+        }
         Save();
-        MarketColumnsChanged?.Invoke();
+        ColumnsChanged?.Invoke(key);
     }
 
     public const string AutoSilent = "silent";

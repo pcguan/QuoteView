@@ -65,14 +65,14 @@ public partial class ColumnSettingsWindow : Window
         if (resetLayout is not null)
         {
             ASharePreset.Visibility = OverseasPreset.Visibility = Visibility.Collapsed;
-            DefaultPreset.ToolTip = "恢复默认列顺序、宽度和显示状态";
+            DefaultPreset.ToolTip = "恢复默认列名、顺序、宽度和显示状态";
         }
 
         // String headers only — the delete column's header is not a real column name.
         foreach (var column in grid.Columns
                      .Where(c => c.Header is string { Length: > 0 })
                      .OrderBy(c => c.DisplayIndex))
-            _chips.Add(new Chip(column));
+            _chips.Add(new Chip(column, _resetLayout is not null));
 
         Chips.ItemsSource = _chips;
 
@@ -98,7 +98,7 @@ public partial class ColumnSettingsWindow : Window
         {
             _resetLayout();
             _chips.Clear();
-            foreach (var column in _grid.Columns.OrderBy(c => c.DisplayIndex)) _chips.Add(new Chip(column));
+            foreach (var column in _grid.Columns.OrderBy(c => c.DisplayIndex)) _chips.Add(new Chip(column, _resetLayout is not null));
         }
         else foreach (var chip in _chips) chip.Visible = DefaultVisible.Contains(chip.Header);
     }
@@ -121,7 +121,8 @@ public partial class ColumnSettingsWindow : Window
         _pressIndex = IndexAt(_pressPoint);
         // A press on the checkbox glyph is the checkbox's own toggle; arming it
         // here would double-toggle on the way back up.
-        _armed = _pressIndex >= 0 && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject);
+        _armed = _pressIndex >= 0 && !IsOn<ButtonBase>(e.OriginalSource as DependencyObject)
+            && !IsOn<TextBoxBase>(e.OriginalSource as DependencyObject);
         _dragging = false;
 
         if (_armed && Container(_pressIndex) is { } c)
@@ -274,14 +275,24 @@ public partial class ColumnSettingsWindow : Window
     /// <summary>One column as a togglable chip; writes straight through to the column.</summary>
     public sealed class Chip : INotifyPropertyChanged
     {
-        public Chip(DataGridColumn column)
+        public Chip(DataGridColumn column, bool canRename = false)
         {
             Column = column;
-            Header = column.Header as string ?? "";
+            CanRename = canRename;
         }
 
         public DataGridColumn Column { get; }
-        public string Header { get; }
+        public bool CanRename { get; }
+        public string Header
+        {
+            get => Column.Header as string ?? "";
+            set
+            {
+                var title = value?.Trim();
+                if (CanRename && !string.IsNullOrEmpty(title) && title.Length <= 40) Column.Header = title;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Header)));
+            }
+        }
 
         /// <summary>True while this chip is the one being dragged.</summary>
         public bool Dragging { get; set; }
