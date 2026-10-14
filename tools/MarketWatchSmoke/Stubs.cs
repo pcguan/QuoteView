@@ -24,6 +24,7 @@ namespace StockClient.App.Services
     }
     public sealed class PendingHandler : HttpMessageHandler
     {
+        public Func<HttpRequestMessage, string>? Response { get; set; }
         public int Calls { get; private set; }
         public int Canceled { get; private set; }
         public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -34,7 +35,7 @@ namespace StockClient.App.Services
             catch (OperationCanceledException) { Canceled++; throw; }
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("""{"data":{"total":1,"diff":[{"f12":"000001","f13":0,"f14":"平安银行","f2":12.34}]}}"""),
+                Content = new StringContent(Response?.Invoke(request) ?? """{"data":{"total":1,"diff":[{"f12":"000001","f13":0,"f14":"平安银行","f2":12.34}]}}"""),
             };
         }
     }

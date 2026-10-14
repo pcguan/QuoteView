@@ -14,17 +14,23 @@
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
             <TextBlock Text="{Binding ResultCount}" VerticalAlignment="Center" Margin="10,0" Foreground="{StaticResource Accent}" />
             <ui:Button Icon="{ui:SymbolIcon ArrowSync24}" Command="{Binding RefreshCommand}"
-                       ToolTip="刷新全市场行情（受最小间隔及失败退避限制）" Margin="4,0" />
+                       ToolTip="刷新行情（受最小间隔及失败退避限制）" Margin="4,0" />
             <ui:Button Icon="{ui:SymbolIcon Settings24}" Click="Columns_Click" ToolTip="列设置：显示、隐藏、拖动排序；拖动表头右边缘调整宽度" Margin="4,0" />
             <ui:Button Icon="{ui:SymbolIcon ArrowReset24}" Command="{Binding ClearCommand}" ToolTip="清空过滤与排序" Margin="4,0" />
           </StackPanel>
-          <TextBlock Text="沪深全市场行情" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
+          <TextBlock Text="{Binding Title}" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TitleGradient}" />
         </DockPanel>
         <WrapPanel Margin="0,0,0,8">
           <ComboBox Width="120" ItemsSource="{Binding Markets}" SelectedItem="{Binding SelectedMarket}" Margin="0,0,12,0" ToolTip="市场" />
           <CheckBox Content="主板" IsChecked="{Binding IncludeMain}" VerticalAlignment="Center" Margin="0,0,12,0" />
           <CheckBox Content="创业板" IsChecked="{Binding IncludeChiNext}" VerticalAlignment="Center" Margin="0,0,12,0" />
           <CheckBox Content="科创板" IsChecked="{Binding IncludeStar}" VerticalAlignment="Center" Margin="0,0,16,0" />
+          <CheckBox Content="北交所" IsChecked="{Binding IncludeBeijing}" VerticalAlignment="Center" Margin="0,0,12,0">
+            <CheckBox.Style><Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+              <Setter Property="Visibility" Value="Collapsed" />
+              <Style.Triggers><DataTrigger Binding="{Binding SupportsBeijing}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+            </Style></CheckBox.Style>
+          </CheckBox>
           <CheckBox Content="排除 ST" IsChecked="{Binding ExcludeSt}" VerticalAlignment="Center" Margin="0,0,12,0" />
           <CheckBox Content="仅有报价" IsChecked="{Binding QuotedOnly}" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="隐藏暂无最新价的合约" />
           <ui:TextBox Width="280" PlaceholderText="代码 / 名称 / 拼音 / 行业 / 概念"

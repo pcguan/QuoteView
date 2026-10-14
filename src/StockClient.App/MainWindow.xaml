@@ -65,6 +65,9 @@
       <TabItem Header="全市场行情">
         <views:MarketWatchView x:Name="MarketWatch" />
       </TabItem>
+      <TabItem Header="板块行情">
+        <views:BoardWatchView x:Name="BoardWatch" />
+      </TabItem>
       <TabItem Header="历史分时">
         <Grid>
           <Grid.Resources />

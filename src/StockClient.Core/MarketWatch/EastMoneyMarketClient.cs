@@ -21,8 +21,18 @@ public sealed class EastMoneyMarketClient
     public EastMoneyMarketClient(HttpClient http, Func<CancellationToken, Task>? pace = null)
     { _http = http; _pace = pace ?? (ct => Task.Delay(200, ct)); }
 
-    public async Task<MarketSnapshot> FetchAsync(IProgress<(int Page, int Total)>? progress,
+    public Task<MarketSnapshot> FetchAsync(IProgress<(int Page, int Total)>? progress,
+        CancellationToken cancellationToken) => FetchCoreAsync(Filter, false, progress, cancellationToken);
+
+    public Task<MarketSnapshot> FetchBoardAsync(string code, IProgress<(int Page, int Total)>? progress,
         CancellationToken cancellationToken)
+    {
+        if (!EastMoneyBoardMarketClient.ValidCode(code)) throw new ArgumentException("板块代码无效", nameof(code));
+        return FetchCoreAsync("b:" + code, true, progress, cancellationToken);
+    }
+
+    private async Task<MarketSnapshot> FetchCoreAsync(string filter, bool includeBeijing,
+        IProgress<(int Page, int Total)>? progress, CancellationToken cancellationToken)
     {
         if (_hostIndex > 0 && DateTimeOffset.UtcNow >= _retryPrimary) _hostIndex = 0;
         var host = Hosts[_hostIndex];
@@ -39,7 +49,7 @@ public sealed class EastMoneyMarketClient
             {
                 ct.ThrowIfCancellationRequested();
                 if (page > 1) await _pace(ct).ConfigureAwait(false);
-                var url = $"https://{host}/api/qt/clist/get?pn={page}&pz={PageSize}&po=0&np=1&fltt=2&invt=2&fid=f12&fs={Filter}&fields={Fields}";
+                var url = $"https://{host}/api/qt/clist/get?pn={page}&pz={PageSize}&po=0&np=1&fltt=2&invt=2&fid=f12&fs={filter}&fields={Fields}";
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
                 request.Headers.Referrer = new Uri("https://quote.eastmoney.com/");
                 using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
@@ -47,15 +57,18 @@ public sealed class EastMoneyMarketClient
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
                 if (!json.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object
                     || !data.TryGetProperty("total", out var size) || !size.TryGetInt32(out var count)
-                    || count <= 0 || count > 30000 || !data.TryGetProperty("diff", out var diff)
-                    || diff.ValueKind != JsonValueKind.Array)
-                    throw new InvalidOperationException("全市场行情接口返回无效数据");
+                    || count < 0 || count > 30000 || (count == 0 && !includeBeijing))
+                    throw new InvalidOperationException("行情接口返回无效数据");
+                if (count == 0 && page == 1)
+                    return new MarketSnapshot(Array.Empty<MarketQuote>(), started, DateTimeOffset.UtcNow, host, 1);
+                if (!data.TryGetProperty("diff", out var diff) || diff.ValueKind != JsonValueKind.Array)
+                    throw new InvalidOperationException("行情分页数据无效");
                 if (page == 1) { total = count; pages = (total + PageSize - 1) / PageSize; }
                 if (count != total || diff.GetArrayLength() != Math.Min(PageSize, total - rows.Count))
                     throw new InvalidOperationException("行情分页不完整或合约数量变更");
                 foreach (var item in diff.EnumerateArray())
                 {
-                    var row = Parse(item);
+                    var row = Parse(item, includeBeijing);
                     if (!seen.Add(row.Code)) throw new InvalidOperationException("行情分页含重复合约");
                     rows.Add(row);
                 }
@@ -75,14 +88,14 @@ public sealed class EastMoneyMarketClient
         }
     }
 
-    private static MarketQuote Parse(JsonElement row)
+    private static MarketQuote Parse(JsonElement row, bool includeBeijing)
     {
         var code = Text(row, "f12");
         var name = Text(row, "f14");
         var number = Num(row, "f13");
         var listing = BoardSearch.Classify(code, number is 0 or 1 ? (int)number.Value : null);
         if (code.Length != 6 || !code.All(char.IsAsciiDigit) || name.Length == 0
-            || listing is not { } pair || pair.Market is not (Market.SH or Market.SZ))
+            || listing is not { } pair || (pair.Market is not (Market.SH or Market.SZ) && !(includeBeijing && pair.Market == Market.BJ)))
             throw new InvalidOperationException("行情合约身份字段缺失或市场不匹配");
         var date = Text(row, "f26");
         var stamp = Num(row, "f124");

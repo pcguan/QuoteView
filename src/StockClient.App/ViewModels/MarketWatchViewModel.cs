@@ -17,6 +17,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
 {
     private readonly HttpClient _http = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
     private readonly EastMoneyMarketClient _client;
+    private readonly Board? _board;
     private readonly DispatcherTimer _timer;
     private CancellationTokenSource? _request;
     private MarketSnapshot? _snapshot;
@@ -29,8 +30,16 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     private MarketOption _market = new(null, "沪深全部");
     private IReadOnlyList<MarketQuote> _rows = Array.Empty<MarketQuote>();
 
-    public MarketWatchViewModel(Dispatcher dispatcher)
+    public MarketWatchViewModel(Dispatcher dispatcher, Board? board = null)
     {
+        _board = board;
+        if (board is not null)
+        {
+            Markets = new[] { new MarketOption(null, "全部市场"), new MarketOption(Market.SH, "沪市"),
+                new MarketOption(Market.SZ, "深市"), new MarketOption(Market.BJ, "北交所") };
+            _market = Markets[0];
+            _status = "展开后加载板块成分股行情";
+        }
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; QuoteView/1.0)");
         _client = new EastMoneyMarketClient(_http);
         _timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(1) };
@@ -41,6 +50,11 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         ClearCommand = new RelayCommand(_ => Clear());
         Conditions.CollectionChanged += (_, _) => Filter();
     }
+
+    public string Title => _board is null ? "沪深全市场行情" : $"{_board.Name} · 成分股行情";
+    public bool SupportsBeijing => _board is not null;
+    private bool _beijing = true;
+    public bool IncludeBeijing { get => _beijing; set { if (Set(ref _beijing, value)) Filter(); } }
 
     public IReadOnlyList<MarketOption> Markets { get; } = new[]
         { new MarketOption(null, "沪深全部"), new MarketOption(Market.SH, "沪市"), new MarketOption(Market.SZ, "深市") };
@@ -60,7 +74,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     public bool Busy { get => _busy; private set { Set(ref _busy, value); OnPropertyChanged(nameof(CanRefresh)); OnPropertyChanged(nameof(EmptyMessage)); } }
     public bool CanRefresh => _active && !Busy && DateTimeOffset.UtcNow >= _allowedAt;
     public string Status { get => _status; private set { Set(ref _status, value); OnPropertyChanged(nameof(EmptyMessage)); } }
-    public string EmptyMessage => Busy ? "正在加载全市场行情，请稍候…"
+    public string EmptyMessage => Busy ? "正在加载行情，请稍候…"
         : _snapshot is null ? Status : "暂无符合条件的行情";
     public string SnapshotInfo => _snapshot is null ? "尚未取得完整行情"
         : $"{(_snapshot.Delayed ? "东方财富 · 延迟备用源" : "东方财富")} · 完成 {_snapshot.CompletedAt.ToLocalTime():MM-dd HH:mm:ss} · 耗时 {(_snapshot.CompletedAt - _snapshot.StartedAt).TotalSeconds:0.0}s";
@@ -119,7 +133,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         _nextDue = _allowedAt;
         using var cts = new CancellationTokenSource();
         _request = cts;
-        Status = _snapshot is null ? "正在获取全市场行情…" : "正在刷新，显示上一轮完整行情";
+        Status = _snapshot is null ? "正在获取行情…" : "正在刷新，显示上一轮完整行情";
         var progress = new Progress<(int Page, int Total)>(p =>
         {
             if (ReferenceEquals(_request, cts) && !cts.IsCancellationRequested)
@@ -127,7 +141,8 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         });
         try
         {
-            var snapshot = await _client.FetchAsync(progress, cts.Token);
+            var snapshot = _board is null ? await _client.FetchAsync(progress, cts.Token)
+                : await _client.FetchBoardAsync(_board.Code, progress, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             _snapshot = snapshot;
             Probe.Log($"market watch updated: rows={snapshot.Rows.Count} pages={snapshot.Pages} host={snapshot.Host}");
@@ -166,7 +181,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         {
             Market = _market.Market, Keyword = Keyword, ExcludeSt = ExcludeSt, QuotedOnly = QuotedOnly,
             Boards = (IncludeMain ? ListingBoards.Main : 0) | (IncludeChiNext ? ListingBoards.ChiNext : 0)
-                | (IncludeStar ? ListingBoards.Star : 0), Conditions = Conditions.ToArray(),
+                | (IncludeStar ? ListingBoards.Star : 0) | (SupportsBeijing && IncludeBeijing ? ListingBoards.Beijing : 0), Conditions = Conditions.ToArray(),
         };
         ResultsChanging?.Invoke();
         Rows = query.Apply(_snapshot?.Rows ?? Array.Empty<MarketQuote>(), SortKey, Descending);
@@ -184,11 +199,11 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
 
     private void Clear()
     {
-        _market = Markets[0]; _keyword = ""; _main = _chiNext = _star = true;
+        _market = Markets[0]; _keyword = ""; _main = _chiNext = _star = _beijing = true;
         _excludeSt = _quotedOnly = false; SortKey = nameof(MarketQuote.Code); Descending = false;
         ConditionValue = ""; FilterError = "";
         foreach (var property in new[] { nameof(SelectedMarket), nameof(Keyword), nameof(IncludeMain), nameof(IncludeChiNext),
-            nameof(IncludeStar), nameof(ExcludeSt), nameof(QuotedOnly) }) OnPropertyChanged(property);
+            nameof(IncludeStar), nameof(IncludeBeijing), nameof(ExcludeSt), nameof(QuotedOnly) }) OnPropertyChanged(property);
         Conditions.Clear();
     }
 

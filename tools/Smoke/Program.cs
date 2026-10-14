@@ -10,6 +10,36 @@ Console.OutputEncoding = Encoding.UTF8;
 using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(10) };
 http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 // Optional focused integration check; no desktop UI is opened.
+if (args.Contains("--board-market"))
+{
+    var boardMarketClient = new StockClient.Core.MarketWatch.EastMoneyBoardMarketClient(http);
+    StockClient.Core.MarketWatch.BoardMarketSnapshot? snapshot = null;
+    for (var attempt = 0; attempt < 3 && snapshot is null; attempt++)
+    {
+        try { snapshot = await boardMarketClient.FetchAsync(null, default); }
+        catch (Exception ex) { Console.WriteLine($"board source attempt {attempt + 1}: {ex.Message}"); }
+    }
+    if (snapshot is null) throw new Exception("板块行情所有主机失败");
+    Console.WriteLine($"板块数={snapshot.Rows.Count} 来源={snapshot.Host}");
+    foreach (var kind in Enum.GetValues<StockClient.Core.Boards.BoardKind>())
+    {
+        var rows = snapshot.Rows.Where(r => r.Board.Kind == kind).ToArray();
+        if (rows.Length == 0 || rows.All(r => r.Percent is null)) throw new Exception("板块报价为空: " + kind);
+        Console.WriteLine($"{kind}: {rows.Length}, 上涨={rows.Count(r => r.Percent > 0)}, 下跌={rows.Count(r => r.Percent < 0)}");
+    }
+    var board = snapshot.Rows.FirstOrDefault(r => r.Name == "电池") ?? snapshot.Rows[0];
+    var membersClient = new StockClient.Core.MarketWatch.EastMoneyMarketClient(http);
+    StockClient.Core.MarketWatch.MarketSnapshot? members = null;
+    for (var attempt = 0; attempt < 3 && members is null; attempt++)
+    {
+        try { members = await membersClient.FetchBoardAsync(board.Code, null, default); }
+        catch (Exception ex) { Console.WriteLine($"member source attempt {attempt + 1}: {ex.Message}"); }
+    }
+    if (members is null || members.Rows.Count == 0 || members.Rows.Select(r => r.Code).Distinct().Count() != members.Rows.Count)
+        throw new Exception("板块成分股行情不完整");
+    Console.WriteLine($"{board.Name} {board.Code} 成分股={members.Rows.Count} 页数={members.Pages} 北交所={members.Rows.Count(r => r.Contract.Market == Market.BJ)} 来源={members.Host}");
+    return;
+}
 if (args.Contains("--market"))
 {
     var marketClient = new StockClient.Core.MarketWatch.EastMoneyMarketClient(http);

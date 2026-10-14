@@ -89,6 +89,7 @@ public partial class MainWindow : FluentWindow
         _marketWatchVm = new MarketWatchViewModel(Dispatcher);
         MarketWatch.Initialize(_marketWatchVm);
         MarketWatch.OpenContract += contract => OpenKline(contract);
+        BoardWatch.OpenContract += contract => OpenKline(contract);
 
         _klineHttp = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
         _klineHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
@@ -317,6 +318,7 @@ public partial class MainWindow : FluentWindow
 
             _pingTimer?.Stop();
             _marketWatchWindow?.Close();
+            BoardWatch.Dispose();
             MarketWatch.Dispose();
             _marketWatchVm.Dispose();
             await _presence.DisposeAsync();

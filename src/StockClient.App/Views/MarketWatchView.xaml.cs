@@ -72,11 +72,19 @@ public partial class MarketWatchView : UserControl
 
     public void Initialize(MarketWatchViewModel vm)
     {
-        if (_vm is not null) throw new InvalidOperationException("Market view already initialized");
+        if (ReferenceEquals(_vm, vm)) return;
+        if (_vm is not null)
+        {
+            _vm.SetActive(this, false);
+            _vm.ResultsChanging -= CaptureSelection;
+            _vm.ResultsChanged -= RestoreSelection;
+        }
+        _selectedCode = null;
         _vm = vm;
         DataContext = vm;
         vm.ResultsChanging += CaptureSelection;
         vm.ResultsChanged += RestoreSelection;
+        RestoreSelection();
         UpdateActive();
     }
 

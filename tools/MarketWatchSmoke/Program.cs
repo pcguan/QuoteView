@@ -15,7 +15,7 @@ internal static class Program
         Exception? error = null;
         dispatcher.BeginInvoke(new Action(async () =>
         {
-            try { TestLayouts(); await TestPolling(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
+            try { TestLayouts(); await TestPolling(dispatcher); await TestBoards(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
             catch (Exception ex) { error = ex; }
             finally { dispatcher.BeginInvokeShutdown(DispatcherPriority.Background); }
         }));
@@ -99,4 +99,62 @@ internal static class Program
         await Idle(canceled);
         Check(handler.Canceled == 1 && canceled.Schedule == "已暂停" && !canceled.Status.Contains("失败"), "closing last view must cancel without backoff failure");
     }
+    private static async Task TestBoards(Dispatcher dispatcher)
+    {
+        var handler = DirectHttp.Handler = new PendingHandler
+        {
+            Response = r => r.RequestUri!.Query.Contains("t:2")
+                ? """{"data":{"total":3,"diff":[{"f12":"BK0001","f14":"上涨","f3":5},{"f12":"BK0002","f14":"下跌","f3":-3},{"f12":"BK0003","f14":"平盘","f3":0}]}}"""
+                : r.RequestUri.Query.Contains("t:3")
+                    ? """{"data":{"total":1,"diff":[{"f12":"BK0004","f14":"概念","f3":2}]}}"""
+                    : """{"data":{"total":1,"diff":[{"f12":"BK0005","f14":"地区","f3":"-"}]}}""",
+        };
+        handler.Ready.SetResult(true);
+        using var rankings = new BoardWatchViewModel(dispatcher);
+        rankings.SetActive(true);
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (rankings.Busy && DateTime.UtcNow < deadline) await Task.Delay(10);
+        Check(!rankings.Busy && rankings.Gainers.Count == 1 && rankings.Losers.Count == 1 && rankings.Neutral.Count == 1, "board rankings populated incorrectly");
+        rankings.SelectedKind = rankings.Kinds[1];
+        Check(rankings.Gainers.Single().Code == "BK0004" && rankings.Losers.Count == 0 && handler.Calls == 3, "category switch should use same complete snapshot");
+        rankings.Keyword = "不存在";
+        Check(rankings.Gainers.Count == 0, "board keyword filtering");
+        rankings.SetActive(false);
+        Check(rankings.Schedule == "已暂停", "board timer must stop when hidden");
+
+        handler = DirectHttp.Handler = new PendingHandler
+        {
+            Response = _ => """{"data":{"total":1,"diff":[{"f12":"920001","f13":0,"f14":"北交所测试","f2":12.34}]}}""",
+        };
+        handler.Ready.SetResult(true);
+        using var members = new MarketWatchViewModel(dispatcher, new StockClient.Core.Boards.Board
+            { Code = "BK1033", Name = "电池", Kind = StockClient.Core.Boards.BoardKind.Industry });
+        var view = new object();
+        members.SetActive(view, true);
+        await Idle(members);
+        Check(members.Rows.Count == 1 && members.SupportsBeijing && members.Title.Contains("电池"), "board detail must show all markets by default");
+        members.IncludeBeijing = false;
+        Check(members.Rows.Count == 0, "Beijing filter");
+        members.ClearCommand.Execute(null);
+        Check(members.Rows.Count == 1 && members.IncludeBeijing, "clear must restore all board members");
+        members.SetActive(view, false);
+
+        var oldHandler = DirectHttp.Handler = new PendingHandler();
+        using var oldBoard = new MarketWatchViewModel(dispatcher, new StockClient.Core.Boards.Board
+            { Code = "BK0001", Name = "旧板块", Kind = StockClient.Core.Boards.BoardKind.Industry });
+        oldBoard.SetActive(view, true);
+        oldBoard.SetActive(view, false);
+        var newHandler = DirectHttp.Handler = new PendingHandler();
+        newHandler.Ready.SetResult(true);
+        using var newBoard = new MarketWatchViewModel(dispatcher, new StockClient.Core.Boards.Board
+            { Code = "BK0002", Name = "新板块", Kind = StockClient.Core.Boards.BoardKind.Industry });
+        newBoard.SetActive(view, true);
+        oldHandler.Ready.SetResult(true);
+        await Idle(oldBoard);
+        await Idle(newBoard);
+        Check(oldHandler.Canceled == 1 && oldBoard.Rows.Count == 0 && newBoard.Rows.Count == 1
+            && newBoard.Title.Contains("新板块"), "switching boards must cancel old request without mixing rows");
+        newBoard.SetActive(view, false);
+    }
+
 }

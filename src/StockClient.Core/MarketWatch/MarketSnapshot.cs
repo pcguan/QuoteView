@@ -8,7 +8,7 @@ public sealed record MarketQuote
     public required Contract Contract { get; init; }
     public string Code => Contract.Code;
     public string Name => Contract.Name;
-    public string MarketName => Contract.Market == Market.SH ? "沪市" : "深市";
+    public string MarketName => Contract.Market switch { Market.SH => "沪市", Market.SZ => "深市", Market.BJ => "北交所", _ => Contract.Market.ToString() };
     public string BoardName => Contract.TypeDisplay;
     public string Industry => Contract.Industry ?? "";
     public string Concepts => Contract.Concepts ?? "";
