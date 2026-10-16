@@ -13,6 +13,8 @@ namespace StockClient.App
         public static void SaveColumns(string key, List<QuoteColumnState> columns)
         { Layouts[key] = columns; ColumnsChanged?.Invoke(key); }
     }
+    public static class Tones
+    { public const string UpHex = "#EF5350", DownHex = "#26A69A"; }
     public static class Probe
     { public static void Log(string message) => Console.WriteLine(message); }
 }

@@ -13,5 +13,8 @@
     <Compile Include="..\..\src\StockClient.App\ViewModels\ObservableObject.cs" Link="ObservableObject.cs" />
     <Compile Include="..\..\src\StockClient.App\MarketColumnLayout.cs" Link="MarketColumnLayout.cs" />
     <Compile Include="..\..\src\StockClient.App\ColumnMenu.cs" Link="ColumnMenu.cs" />
+    <Compile Include="..\..\src\StockClient.App\Views\TradeTapeView.xaml.cs" Link="TradeTapeView.xaml.cs" />
+    <Compile Include="..\..\src\StockClient.App\Views\TradeColors.cs" Link="TradeColors.cs" />
+    <Page Include="..\..\src\StockClient.App\Views\TradeTapeView.xaml" Link="TradeTapeView.xaml" />
   </ItemGroup>
 </Project>

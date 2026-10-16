@@ -542,7 +542,7 @@ public partial class KlineWindow : Window
     private void RenderTape()
     {
         if (!_vm.HasTape) return;
-        Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan, _vm.TickPrePrice);
+        Tape.SetTicks(_vm.Ticks, Decimals(_vm.Live), AppPrefs.BigTradeWan, _vm.TickPrePrice, sourceKey: _vm.Contract.Code);
     }
 
     /// <summary>Opens the full-day 成交明细 in its own window (stats + filter + paging).</summary>
