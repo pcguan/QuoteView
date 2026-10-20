@@ -52,6 +52,7 @@ public sealed class TrendRepository
 
     public async Task<TrendSeries?> GetAsync(Contract contract, CancellationToken cancellationToken)
     {
+        if (IndexCatalog.IsQuoteOnly(contract.Code)) return null;
         var date = _clock.TradingDate(contract.Market);
         var settled = _clock.IsAfterClose(contract.Market, _now());
 

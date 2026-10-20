@@ -16,10 +16,12 @@ namespace StockClient.Core.Quotes;
 public sealed class TencentQuoteClient
 {
     private readonly HttpClient _http;
+    private readonly OverseasIndexQuoteClient _indices;
 
     public TencentQuoteClient(HttpClient http)
     {
         _http = http;
+        _indices = new OverseasIndexQuoteClient(http);
         GbkText.EnsureRegistered();
     }
 
@@ -34,6 +36,23 @@ public sealed class TencentQuoteClient
 
     public async Task<IReadOnlyList<Quote>> GetQuotesAsync(
         IReadOnlyList<string> codes, CancellationToken cancellationToken)
+    {
+        if (codes.Count == 0) return Array.Empty<Quote>();
+        var special = codes.Where(IndexCatalog.IsQuoteOnly).ToArray();
+        if (special.Length == 0) return await FetchRegularAsync(codes, cancellationToken);
+        var regular = codes.Where(c => !IndexCatalog.IsQuoteOnly(c)).ToArray();
+        var indexTask = _indices.GetQuotesAsync(special, cancellationToken);
+        IReadOnlyList<Quote> normal = Array.Empty<Quote>();
+        try { normal = await FetchRegularAsync(regular, cancellationToken); }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        { normal = regular.Select(Quote.Missing).ToArray(); }
+        var combined = normal.Concat(await indexTask)
+            .GroupBy(q => q.Code, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        return codes.Select(c => combined.GetValueOrDefault(c) ?? Quote.Missing(c)).ToArray();
+    }
+
+    private async Task<IReadOnlyList<Quote>> FetchRegularAsync(IReadOnlyList<string> codes, CancellationToken cancellationToken)
     {
         if (codes.Count == 0) return Array.Empty<Quote>();
         if (codes.Count <= ChunkSize) return await FetchAsync(codes, cancellationToken);

@@ -61,6 +61,9 @@ public sealed class KlineRepository
     public async Task<(KlineSeries Series, string Source)> GetAsync(
         Contract contract, KlinePeriod period, KlineAdjust adjust, int count, CancellationToken cancellationToken)
     {
+        if (IndexCatalog.IsQuoteOnly(contract.Code))
+            throw new NotSupportedException("该指数当前仅支持延迟报价，暂不提供K线");
+
         // Weekend-aware: Saturday and Sunday resolve back to Friday's settled
         // session, so a whole weekend reads the cache instead of re-pulling
         // history that cannot change (see IMarketClock.KlineDay).
@@ -72,7 +75,7 @@ public sealed class KlineRepository
 
         // These overseas benchmarks have a working dedicated Tencent history
         // route. Prefer it to avoid waiting for failed stock/index host guesses.
-        if (IndexCatalog.IsOverseasIndex(contract.Code))
+        if (IndexCatalog.HasTencentHistory(contract.Code))
         {
             try
             {

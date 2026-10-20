@@ -87,6 +87,15 @@ public sealed record Quote
     /// <summary>Provider timestamp; the format differs per market.</summary>
     public string Time { get; init; } = "";
 
+    public string Source { get; init; } = "";
+    public int DelayMinutes { get; init; }
+    public bool RefreshFailed { get; init; }
+    public string DataNotice => string.Join(" · ", new[]
+    {
+        DelayMinutes > 0 ? $"延迟{DelayMinutes}分钟" : "",
+        RefreshFailed ? "更新失败" : "",
+    }.Where(s => s.Length > 0));
+
     // Structured numerics for grid columns, normalized per market at parse time
     // (amounts to the raw currency unit, caps from 亿 to raw). Null = the market
     // doesn't report it — distinct from a genuine 0. The raw per-market strings

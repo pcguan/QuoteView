@@ -67,7 +67,9 @@ public sealed class QuoteRow : ObservableObject
         private set => Set(ref _quote, value);
     }
 
-    public string Name => _quote.IsMissing ? "无效代码" : _quote.Name;
+    public string Name => _quote.IsMissing
+        ? IndexCatalog.IsQuoteOnly(Code) ? $"{IndexCatalog.All.Single(c => c.Code.Equals(Code, StringComparison.OrdinalIgnoreCase)).Name}（报价暂不可用）" : "无效代码"
+        : _quote.DataNotice.Length > 0 ? $"{_quote.Name}（{_quote.DataNotice}）" : _quote.Name;
     public double Now => _quote.Now;
     public double Yesterday => _quote.Yesterday;
     public double Open => _quote.Open;
@@ -253,7 +255,9 @@ public sealed class QuoteRow : ObservableObject
 
     /// <summary>Exchange time, with a 停 marker when the row looks halted, so a
     /// frozen 涨跌幅 isn't read as live.</summary>
-    public string TimeDisplay => _isStale ? $"{_quote.Time} 停" : _quote.Time;
+    public string TimeDisplay => _quote.DataNotice.Length > 0
+        ? $"{_quote.Time} {_quote.DataNotice}".Trim()
+        : _isStale ? $"{_quote.Time} 停" : _quote.Time;
 
     public void ClearFlash() => Flash = 0;
 }
@@ -1217,7 +1221,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         foreach (var row in _rows.Values)
         {
             var m = CodeMapper.MarketOf(row.Code);
-            var stale = m.Length > 0 && members.GetValueOrDefault(m) > 1
+            var stale = row.Quote.DelayMinutes == 0 && m.Length > 0 && members.GetValueOrDefault(m) > 1
                 && !row.IsMissing && row.Now > 0
                 && activity.TryGetValue(m, out var last)
                 && last - row.LastChange > HaltAfter;

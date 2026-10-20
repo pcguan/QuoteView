@@ -22,6 +22,16 @@ public sealed class IndexSearchTests : IDisposable
     [InlineData("shangzhengzhishu", "SH000001")]
     [InlineData("sh000001", "SH000001")]
     [InlineData("399006", "SZ399006")]
+    [InlineData("SOX", "US.SOX")]
+    [InlineData("费城半导体", "US.SOX")]
+    [InlineData("US.SOX", "US.SOX")]
+    [InlineData("S5INFT", "US.S5INFT")]
+    [InlineData("标普500信息技术指数", "US.S5INFT")]
+    [InlineData("US.S5INFT", "US.S5INFT")]
+    [InlineData("NYFANG", "US.NYFANG")]
+    [InlineData("FANG+", "US.NYFANG")]
+    [InlineData("NYSE FANG+指数", "US.NYFANG")]
+    [InlineData("US.NYFANG", "US.NYFANG")]
     [InlineData("US.NDX", "US.NDX")]
     [InlineData("us.ndx", "US.NDX")]
     [InlineData("纳斯达克100", "US.NDX")]
@@ -126,7 +136,7 @@ public sealed class IndexSearchTests : IDisposable
         await repo.EnsureMarketAsync(Market.US);
         Assert.Equal("US.IXIC", repo.Search("COMP")[0].Code);
         Assert.Equal("USCOMP", repo.Search("USCOMP")[0].Code);
-        Assert.Equal(3, repo.Browse(Market.US, ContractType.Index).Count);
+        Assert.Equal(6, repo.Browse(Market.US, ContractType.Index).Count);
         Assert.Equal("100.NDX100", repo.Find("US.NDX")!.EastMoneySecId);
         Assert.Equal("100.SPX", repo.Find("US.INX")!.EastMoneySecId);
         Assert.Equal("100.NDX", repo.Find("US.IXIC")!.EastMoneySecId);

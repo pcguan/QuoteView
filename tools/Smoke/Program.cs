@@ -64,13 +64,20 @@ if (args.Contains("--us-indices"))
         ("纳斯达克综合指数", "US.IXIC"), ("IXIC", "US.IXIC"), ("COMP", "US.IXIC") })
         if (usRepo.Search(query).FirstOrDefault()?.Code != expected) throw new Exception("指数搜索失败: " + query);
     var usIndices = usRepo.Browse(Market.US, ContractType.Index);
-    if (usIndices.Count != 3) throw new Exception("海外指数目录不完整");
+    if (usIndices.Count != 6) throw new Exception("海外指数目录不完整");
     var usQuotes = await new TencentQuoteClient(http).GetQuotesAsync(usIndices.Select(c => c.Code).ToArray(), default);
     var usKlines = new TencentKlineClient(http);
     foreach (var index in usIndices)
     {
         var quote = usQuotes.Single(q => q.Code == index.Code);
         if (quote.IsMissing || quote.Now <= 0) throw new Exception("正式客户端报价失败: " + index.Code);
+        if (IndexCatalog.IsQuoteOnly(index.Code))
+        {
+            if (quote.DelayMinutes != (index.Code == "US.SOX" ? 15 : 10) || quote.RefreshFailed)
+                throw new Exception("延迟指数报价状态异常: " + index.Code);
+            Console.WriteLine($"{index.Code} {quote.Name} 点位={quote.Now} {quote.DataNotice} 来源={quote.Source}");
+            continue;
+        }
         foreach (var period in new[] { KlinePeriod.Day, KlinePeriod.Week, KlinePeriod.Month })
         {
             var series = await usKlines.FetchAsync(index, period, KlineAdjust.None, 30, default);
@@ -79,7 +86,7 @@ if (args.Contains("--us-indices"))
             Console.WriteLine($"{index.Code} {index.Name} 点位={quote.Now} {period}={series.Candles.Count} 末条={series.Candles[^1].Date} secid={index.EastMoneySecId}");
         }
     }
-    Console.WriteLine("海外3指数：搜索/正式报价/日周月K线通过");
+    Console.WriteLine("海外6指数：搜索/正式报价通过；原3指数日周月K线通过");
     return;
 }
 if (args.Contains("--indices"))

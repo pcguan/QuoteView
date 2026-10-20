@@ -293,7 +293,8 @@ public sealed class KlineViewModel : ObservableObject
             if (cts.IsCancellationRequested || !IsTrend) return;
 
             if (series is not null) Trend = series;
-            Error = Trend is null || Trend.Points.Count == 0 ? "没有分时数据" : "";
+            Error = IndexCatalog.IsQuoteOnly(_contract.Code) ? "该指数当前仅支持延迟报价，暂不提供分时及逐笔数据"
+                : Trend is null || Trend.Points.Count == 0 ? "没有分时数据" : "";
             TrendLoaded?.Invoke();
         }
         catch (OperationCanceledException)

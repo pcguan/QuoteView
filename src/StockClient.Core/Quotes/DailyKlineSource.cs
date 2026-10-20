@@ -63,6 +63,7 @@ public sealed class DailyKlineSource
 
     public async Task<KlineSeries?> FetchAsync(Contract contract, CancellationToken cancellationToken)
     {
+        if (IndexCatalog.IsQuoteOnly(contract.Code)) return null;
         if (contract.Market == Market.KR) return await KoreaAsync(contract, cancellationToken);
 
         // SH/SZ/HK/US: Tencent FIRST — full history, same vendor as the quote

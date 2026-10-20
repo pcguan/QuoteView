@@ -58,6 +58,7 @@ nginx 三条 location 分工：`/quoteview/`（静态：更新+简报）、`/quo
 | GET/POST | /settings | Bearer | 账户级设置=模板库+合约备注（登录拉取、变更上推）；列显隐/排序、轮换、当前模板、亮度等为客户端本地，不同步 |
 | GET | /status | - | 健康探针，只回 `{"ok","last_sweep"}`；账户数/合约并集等业务数据只在管理台看 |
 | GET | /groups | Bearer | 账户的分组（切换用户时客户端恢复用） |
+| GET | /overseas-indices | - | 固定 SOX/S5INFT/NYFANG 延迟报价；全客户端共用60秒缓存，失败保留并标记旧值，不接受参数 |
 | GET | /kline | Bearer | K 线代理（secid/klt/fqt/lmt 白名单校验，5 分钟缓存，空响应不缓存） |
 | GET | /admin | Basic(账户密码) | Web 管理台，仅 admin/sysadmin 角色可进 |
 | POST | /password | Bearer | 自助改密（校验旧密码；其他会话失效、当前保留） |
@@ -102,3 +103,9 @@ curl -s https://nas.pcguan.cn/quoteview/api/status
 日志 `tape repair` 给出序号起止、目标序号、新增条数及失败页。
 
 离线回归：`python3 -m unittest discover -s server/tests -v`。
+
+## 海外延迟指数
+
+`/overseas-indices` 只抓取 TradingView 的 `NASDAQ:SOX`、`SP:S5INFT`、`ICEUS:NYFANG`，分别延迟15/10/10分钟。一个请求取三只，跨客户端共用60秒缓存与单一在途请求；失败同样冷却60秒，保留旧值并逐行标记 `stale`，不将取数时间或日线时间冒充行情时间。它只返回固定公开市场数据，不含账户内容、不接受URL/代码参数。
+
+若服务器直连上游超时，在部署机 `cfg/server.env` 设置 `QV_INDEX_PROXY=http://<出口代理>:<端口>` 后重建容器；只影响这一个境外数据源，国内接口保持原有路由。默认留空直连；客户端读取国内服务，无需配置海外代理。

@@ -26,6 +26,7 @@ import gzip
 import hashlib
 import ipaddress
 import json
+import math
 from collections import Counter
 import os
 import re
@@ -1291,6 +1292,55 @@ def fetch_trend(code):
 KLINES = os.path.join(DATA, "klines")
 KLINE_TTL_S = 300
 _kline_lock = threading.Lock()
+
+
+# Public, fixed-symbol delayed market data only: no account data or arbitrary
+# upstream URL/ticker can be requested. One refresh serves all clients.
+INDEX_SYMBOLS = ("NASDAQ:SOX", "SP:S5INFT", "ICEUS:NYFANG")
+INDEX_COLUMNS = ("close", "change", "change_abs", "open", "high", "low", "update_mode")
+_index_lock = threading.Lock()
+_index_rows = {}
+_index_next = 0
+
+
+def overseas_indices():
+    global _index_next, _index_rows
+    if not _index_lock.acquire(blocking=False):
+        return {"data": list(_index_rows.values())} if _index_rows else None
+    try:
+        if time.monotonic() >= _index_next:
+            old = {k: dict(v, stale=True) for k, v in _index_rows.items()}
+            try:
+                payload = json.dumps({"symbols": {"tickers": INDEX_SYMBOLS},
+                                      "columns": INDEX_COLUMNS}).encode()
+                req = urllib.request.Request("https://scanner.tradingview.com/america/scan", payload,
+                    {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+                # Only this foreign feed uses an optional egress proxy. Existing
+                # Tencent/EastMoney/account traffic keeps its original routing.
+                proxy = os.environ.get("QV_INDEX_PROXY", "").strip()
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler(
+                    {"https": proxy} if proxy else {}))
+                with opener.open(req, timeout=8) as response:
+                    doc = json.loads(response.read())
+                for row in doc.get("data", []):
+                    symbol, values = row.get("s"), row.get("d")
+                    if symbol not in INDEX_SYMBOLS or not isinstance(values, list) or len(values) != len(INDEX_COLUMNS):
+                        continue
+                    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+                               for v in values[:3]) or values[0] <= 0:
+                        continue
+                    if not isinstance(values[6], str) or not re.fullmatch(r"delayed_streaming_[1-9][0-9]*", values[6]):
+                        continue
+                    old[symbol] = {"s": symbol, "d": values, "stale": False}
+            except Exception as ex:
+                log("overseas index refresh failed: %s" % type(ex).__name__)
+            # Assign a new dict; readers during refresh retain the previous
+            # immutable snapshot rather than iterating a dictionary being edited.
+            _index_rows = old
+            _index_next = time.monotonic() + 60
+        return {"data": list(_index_rows.values())} if _index_rows else None
+    finally:
+        _index_lock.release()
 
 
 def kline_body(secid, klt, fqt, lmt):
@@ -2970,6 +3020,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._bad("not found", 404)
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if url.path == "/overseas-indices":
+            # Parameters are deliberately unsupported: this is a fixed public
+            # benchmark snapshot, never a general proxy.
+            if url.query:
+                return self._bad("parameters not supported")
+            snapshot = overseas_indices()
+            if snapshot is None:
+                return self._bad("upstream unavailable", 503)
+            self.send_response(200)
+            body = json.dumps(snapshot, ensure_ascii=False).encode()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

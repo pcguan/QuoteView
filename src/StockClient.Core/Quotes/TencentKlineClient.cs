@@ -35,11 +35,13 @@ public sealed class TencentKlineClient
         Contract contract, KlinePeriod period, KlineAdjust adjust, int count,
         CancellationToken cancellationToken)
     {
+        if (IndexCatalog.IsQuoteOnly(contract.Code))
+            throw new NotSupportedException("该指数当前仅支持延迟报价，暂不提供K线");
         var api = ToKlineApiCode(contract);
         var span = Span(period);
         // Index history uses the US endpoint and a fixed adjustment token;
         // an index has no corporate-action adjustment to apply.
-        var (endpoint, adjustParam, prefix) = IndexCatalog.IsOverseasIndex(contract.Code)
+        var (endpoint, adjustParam, prefix) = IndexCatalog.HasTencentHistory(contract.Code)
             ? ("usfqkline/get", ",qfq", "qfq") : AdjustParts(adjust);
 
         var url = $"https://web.ifzq.gtimg.cn/appstock/app/{endpoint}" +
@@ -72,7 +74,7 @@ public sealed class TencentKlineClient
     public static string ToKlineApiCode(Contract contract)
     {
         var api = TencentQuoteClient.ToApiCode(contract.Code);
-        if (contract.Market != Market.US || IndexCatalog.IsOverseasIndex(contract.Code)) return api;
+        if (contract.Market != Market.US || IndexCatalog.HasTencentHistory(contract.Code)) return api;
 
         var suffix = (contract.MarketNumber ?? 105) switch
         {

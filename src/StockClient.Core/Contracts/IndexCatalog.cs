@@ -24,10 +24,21 @@ public static class IndexCatalog
         CreateUs("US.NDX", "纳斯达克100", "NDX100", "NDX", "NDX100", "USNDX", "纳斯达克100指数", "纳指100"),
         CreateUs("US.INX", "标普500", "SPX", "SPX", "INX", "USSPX", "USINX", "标普500指数", "标准普尔500指数"),
         CreateUs("US.IXIC", "纳斯达克综合指数", "NDX", "IXIC", "COMP", "USIXIC", "纳斯达克", "纳指", "纳斯达克综合"),
+        Create("US.SOX", "费城半导体指数", "SOX", "费城半导体", "PHLX Semiconductor")
+            with { MarketNumber = 251, EastMoneySymbol = "SOX" },
+        Create("US.S5INFT", "标普500信息技术指数", "S5INFT", "标普信息技术", "标普500信息技术", "SP:S5INFT")
+            with { MarketNumber = null },
+        Create("US.NYFANG", "NYSE FANG+指数", "NYFANG", "FANG+", "NYSE FANG+", "纽交所FANG+指数", "ICEUS:NYFANG")
+            with { MarketNumber = null },
     });
 
     public static bool IsOverseasIndex(string code) => All.Any(c => c.Market == Market.US
         && c.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Verified quote-only feeds; never guess stock history endpoints.</summary>
+    public static bool IsQuoteOnly(string code) => code.ToUpperInvariant() is "US.SOX" or "US.S5INFT" or "US.NYFANG";
+
+    public static bool HasTencentHistory(string code) => IsOverseasIndex(code) && !IsQuoteOnly(code);
 
     private static Contract CreateUs(string code, string name, string eastMoneySymbol, params string[] aliases) =>
         Create(code, name, aliases) with { MarketNumber = 100, EastMoneySymbol = eastMoneySymbol };
