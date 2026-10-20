@@ -70,6 +70,19 @@ public sealed class KlineRepository
         if (cached is not null && IsFresh(cached, contract.Market, date, settled))
             return (cached, Label(cached));
 
+        // These overseas benchmarks have a working dedicated Tencent history
+        // route. Prefer it to avoid waiting for failed stock/index host guesses.
+        if (IndexCatalog.IsOverseasIndex(contract.Code))
+        {
+            try
+            {
+                var index = await _tencent.FetchAsync(contract, period, adjust, count, cancellationToken);
+                if (index.Candles.Count > 0 && HasTodaysCandle(index, period, date, settled))
+                    return Store(index with { Source = "腾讯" }, date, settled);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested) { }
+        }
+
         // Server first: one upstream hit serves every client.
         if (_server is not null)
         {

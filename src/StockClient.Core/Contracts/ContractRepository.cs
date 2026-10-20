@@ -31,7 +31,7 @@ public sealed class ContractRepository
         _client = client;
         _cache = cache;
         _clock = clock;
-        foreach (var market in new[] { Market.SH, Market.SZ })
+        foreach (var market in IndexCatalog.All.Select(c => c.Market).Distinct())
             _loaded[market] = IndexCatalog.Merge(market, Array.Empty<Contract>());
     }
 

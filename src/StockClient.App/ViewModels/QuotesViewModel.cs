@@ -389,10 +389,10 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     // shows 昨日涨幅 immediately instead of re-crawling every contract.
     private readonly Dictionary<string, IReadOnlyList<Kline>> _daily = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (DateOnly Stamp, bool Settled)> _dailyMeta = new(StringComparer.OrdinalIgnoreCase);
-    private readonly DailyCloseCache _dailyCache = new();
+    private readonly DailyCloseCache _dailyCache;
 
     /// <summary>Machine-local price alerts, evaluated on every tick.</summary>
-    public Services.AlertStore Alerts { get; } = new();
+    public Services.AlertStore Alerts { get; }
 
     /// <summary>Raised when an alert crosses its threshold — MainWindow pops a
     /// tray balloon or flashes the taskbar. Carries the Quote (not a row): an
@@ -410,7 +410,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     // Last-known fund-flow extras, persisted: after the close they ARE the
     // day's final numbers, so rows show them instantly instead of blank-until-
     // the-poll (盘中 the live poll overwrites within seconds).
-    private readonly ExtraCache _extraCache = new();
+    private readonly ExtraCache _extraCache;
     private readonly Dictionary<string, QuoteExtra> _extrasKnown;
     private DateTimeOffset _extrasSavedAt = DateTimeOffset.MinValue;
 
@@ -426,7 +426,7 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
     private string _error = "";
 
     public QuotesViewModel(Dispatcher dispatcher, ContractRepository contracts,
-        Func<Contract, CancellationToken, Task<KlineSeries?>>? fetchDaily = null)
+        Func<Contract, CancellationToken, Task<KlineSeries?>>? fetchDaily = null, string? storageRoot = null)
     {
         _dispatcher = dispatcher;
         _contracts = contracts;
@@ -435,7 +435,12 @@ public sealed class QuotesViewModel : ObservableObject, IAsyncDisposable
         _http = Services.DirectHttp.Create(TimeSpan.FromSeconds(8));
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; StockClient/1.0)");
 
-        _store = new GroupStore();
+        // Explicit storage keeps isolated client checks away from a real profile.
+        string? LocalPath(string name) => storageRoot is null ? null : System.IO.Path.Combine(storageRoot, name);
+        _store = new GroupStore(LocalPath("groups.json"));
+        _dailyCache = new DailyCloseCache(LocalPath("daily.json"));
+        _extraCache = new ExtraCache(LocalPath("extras.json"));
+        Alerts = new Services.AlertStore(LocalPath("alerts.json"));
         _config = _store.Load();
 
         _poller = new QuotePoller(new TencentQuoteClient(_http));

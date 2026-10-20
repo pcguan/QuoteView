@@ -16,5 +16,7 @@
     <Compile Include="..\..\src\StockClient.App\Views\TradeTapeView.xaml.cs" Link="TradeTapeView.xaml.cs" />
     <Compile Include="..\..\src\StockClient.App\Views\TradeColors.cs" Link="TradeColors.cs" />
     <Page Include="..\..\src\StockClient.App\Views\TradeTapeView.xaml" Link="TradeTapeView.xaml" />
+    <Compile Include="..\..\src\StockClient.App\ViewModels\QuotesViewModel.cs" Link="QuotesViewModel.cs" />
+    <Compile Include="..\..\src\StockClient.App\Services\AlertStore.cs" Link="AlertStore.cs" />
   </ItemGroup>
 </Project>

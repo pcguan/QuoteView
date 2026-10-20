@@ -56,12 +56,38 @@ if (args.Contains("--market"))
     Console.WriteLine($"创业板过滤={filtered.Count}，涨跌幅排序首行={filtered[0].Code} {filtered[0].Percent}，缺报价={snapshot.Rows.Count(r => r.Price is null)}");
     return;
 }
+if (args.Contains("--us-indices"))
+{
+    var usRepo = new ContractRepository(new EastMoneyContractClient(http), new ContractCache(), new MarketClock());
+    foreach (var (query, expected) in new[] { ("US.NDX", "US.NDX"), ("纳斯达克100", "US.NDX"), ("NDX", "US.NDX"),
+        ("US.INX", "US.INX"), ("标普500", "US.INX"), ("SPX", "US.INX"), ("US.IXIC", "US.IXIC"),
+        ("纳斯达克综合指数", "US.IXIC"), ("IXIC", "US.IXIC"), ("COMP", "US.IXIC") })
+        if (usRepo.Search(query).FirstOrDefault()?.Code != expected) throw new Exception("指数搜索失败: " + query);
+    var usIndices = usRepo.Browse(Market.US, ContractType.Index);
+    if (usIndices.Count != 3) throw new Exception("海外指数目录不完整");
+    var usQuotes = await new TencentQuoteClient(http).GetQuotesAsync(usIndices.Select(c => c.Code).ToArray(), default);
+    var usKlines = new TencentKlineClient(http);
+    foreach (var index in usIndices)
+    {
+        var quote = usQuotes.Single(q => q.Code == index.Code);
+        if (quote.IsMissing || quote.Now <= 0) throw new Exception("正式客户端报价失败: " + index.Code);
+        foreach (var period in new[] { KlinePeriod.Day, KlinePeriod.Week, KlinePeriod.Month })
+        {
+            var series = await usKlines.FetchAsync(index, period, KlineAdjust.None, 30, default);
+            if (series.Candles.Count < 20 || series.Candles.Any(k => k.Close <= 0))
+                throw new Exception("指数K线失败: " + index.Code + " " + period);
+            Console.WriteLine($"{index.Code} {index.Name} 点位={quote.Now} {period}={series.Candles.Count} 末条={series.Candles[^1].Date} secid={index.EastMoneySecId}");
+        }
+    }
+    Console.WriteLine("海外3指数：搜索/正式报价/日周月K线通过");
+    return;
+}
 if (args.Contains("--indices"))
 {
     var repo = new ContractRepository(new EastMoneyContractClient(http), new ContractCache(), new MarketClock());
     foreach (var (query, code) in new[] { ("上证指数", "SH000001"), ("深证指数", "SZ399001"), ("创业板指数", "SZ399006") })
         if (repo.Search(query).FirstOrDefault()?.Code != code) throw new Exception($"指数搜索失败: {query}");
-    var indices = repo.Browse(type: ContractType.Index);
+    var indices = repo.Browse(type: ContractType.Index).Where(c => c.Market is Market.SH or Market.SZ).ToArray();
     var live = await new TencentQuoteClient(http).GetQuotesAsync(indices.Select(c => c.Code).ToArray(), default);
     var klines = new TencentKlineClient(http);
     foreach (var contract in indices)
@@ -76,7 +102,7 @@ if (args.Contains("--indices"))
             throw new Exception($"指数日线失败: {contract.Code}");
         Console.WriteLine($"{contract.Code} {quote.Name} 点位={quote.Now} 日线={series.Candles.Count} secid={contract.EastMoneySecId}");
     }
-    Console.WriteLine($"{indices.Count} 个指数搜索、行情、日线验证通过");
+    Console.WriteLine($"{indices.Length} 个指数搜索、行情、日线验证通过");
     return;
 }
 if (args.Contains("--boards"))

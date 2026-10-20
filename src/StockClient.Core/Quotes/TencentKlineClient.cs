@@ -37,7 +37,10 @@ public sealed class TencentKlineClient
     {
         var api = ToKlineApiCode(contract);
         var span = Span(period);
-        var (endpoint, adjustParam, prefix) = AdjustParts(adjust);
+        // Index history uses the US endpoint and a fixed adjustment token;
+        // an index has no corporate-action adjustment to apply.
+        var (endpoint, adjustParam, prefix) = IndexCatalog.IsOverseasIndex(contract.Code)
+            ? ("usfqkline/get", ",qfq", "qfq") : AdjustParts(adjust);
 
         var url = $"https://web.ifzq.gtimg.cn/appstock/app/{endpoint}" +
                   $"?param={api},{span},,,{Math.Max(1, count)}{adjustParam}";
@@ -69,7 +72,7 @@ public sealed class TencentKlineClient
     public static string ToKlineApiCode(Contract contract)
     {
         var api = TencentQuoteClient.ToApiCode(contract.Code);
-        if (contract.Market != Market.US) return api;
+        if (contract.Market != Market.US || IndexCatalog.IsOverseasIndex(contract.Code)) return api;
 
         var suffix = (contract.MarketNumber ?? 105) switch
         {

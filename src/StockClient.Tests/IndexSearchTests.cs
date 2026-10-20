@@ -22,6 +22,21 @@ public sealed class IndexSearchTests : IDisposable
     [InlineData("shangzhengzhishu", "SH000001")]
     [InlineData("sh000001", "SH000001")]
     [InlineData("399006", "SZ399006")]
+    [InlineData("US.NDX", "US.NDX")]
+    [InlineData("us.ndx", "US.NDX")]
+    [InlineData("纳斯达克100", "US.NDX")]
+    [InlineData("NDX", "US.NDX")]
+    [InlineData("NDX100", "US.NDX")]
+    [InlineData("纳指100", "US.NDX")]
+    [InlineData("US.INX", "US.INX")]
+    [InlineData("SPX", "US.INX")]
+    [InlineData("标普500", "US.INX")]
+    [InlineData("标准普尔500指数", "US.INX")]
+    [InlineData("US.IXIC", "US.IXIC")]
+    [InlineData("IXIC", "US.IXIC")]
+    [InlineData("COMP", "US.IXIC")]
+    [InlineData("纳斯达克综合指数", "US.IXIC")]
+    [InlineData("纳斯达克", "US.IXIC")]
     public void Names_aliases_pinyin_and_codes_work_before_network_loading(string query, string expected)
     {
         Assert.Equal(expected, Repo().Search(query)[0].Code);
@@ -98,6 +113,33 @@ public sealed class IndexSearchTests : IDisposable
         Assert.Null(quote.LimitUp);
         Assert.Null(quote.LimitDown);
         Assert.DoesNotContain(quote.Extras, f => f.Label is "涨停价" or "跌停价");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task Us_cache_refresh_preserves_overseas_indices_and_the_comp_company(int days)
+    {
+        var company = new Contract { Code = "USCOMP", Name = "Compass, Inc.", MarketNumber = 106, Type = ContractType.Stock };
+        Cache.Save(Market.US, _clock.TradingDate(Market.US).AddDays(days), new[] { company });
+        var repo = Repo();
+        await repo.EnsureMarketAsync(Market.US);
+        Assert.Equal("US.IXIC", repo.Search("COMP")[0].Code);
+        Assert.Equal("USCOMP", repo.Search("USCOMP")[0].Code);
+        Assert.Equal(3, repo.Browse(Market.US, ContractType.Index).Count);
+        Assert.Equal("100.NDX100", repo.Find("US.NDX")!.EastMoneySecId);
+        Assert.Equal("100.SPX", repo.Find("US.INX")!.EastMoneySecId);
+        Assert.Equal("100.NDX", repo.Find("US.IXIC")!.EastMoneySecId);
+    }
+
+    [Fact]
+    public void Vendor_symbol_override_survives_serialization()
+    {
+        var index = Repo().Find("US.NDX")!;
+        var roundTrip = System.Text.Json.JsonSerializer.Deserialize<Contract>(System.Text.Json.JsonSerializer.Serialize(index))!;
+        Assert.Equal("100.NDX100", roundTrip.EastMoneySecId);
+        Assert.Contains("NDX", roundTrip.SearchAliases);
+        Assert.Equal("105.AAPL", new Contract { Code = "USAAPL", Name = "Apple" }.EastMoneySecId);
     }
 
     private static readonly Contract Stock = new()

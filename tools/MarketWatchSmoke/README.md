@@ -10,6 +10,8 @@ dotnet run --project tools/MarketWatchSmoke -c Release
 
 链接正式 TradeTapeView XAML/渲染代码，在有限尺寸下测量虚拟化列表，复现并回归验证历史补齐、顶部增量、仅滚动一行、显示参数变化、同条成交修订、连续刷新、用户导航优先、清空及顺序回放时的滚动位置。
 
+链接正式 QuotesViewModel，在独立临时配置和受控报价下验证海外指数的搜索候选、添加到分组、保存、报价更新与重复检测，以及简洁面板的搜索入口。
+
 不启动窗口、不调用真实接口、不读写用户配置。
 
-真实接口验证使用 `dotnet run --project tools/Smoke -- --market` 或 `--board-market`。
+真实接口验证使用 `dotnet run --project tools/Smoke -- --market` 或 `--board-market`；海外三指数使用 `--us-indices`。

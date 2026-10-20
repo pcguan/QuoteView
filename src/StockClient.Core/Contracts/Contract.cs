@@ -66,6 +66,11 @@ public sealed record Contract
     [JsonPropertyName("mkt")]
     public int? MarketNumber { get; init; }
 
+    /// <summary>Vendor symbol when it differs from the normalized code (US index tickers).</summary>
+    [JsonPropertyName("emSymbol")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EastMoneySymbol { get; init; }
+
     [JsonIgnore]
     public Market Market => Enum.Parse<Market>(Code[..2]);
 
@@ -89,7 +94,7 @@ public sealed record Contract
                 _ => 105,
             };
 
-            return $"{number}.{Code[2..]}";
+            return $"{number}.{(string.IsNullOrWhiteSpace(EastMoneySymbol) ? Code[2..] : EastMoneySymbol)}";
         }
     }
 

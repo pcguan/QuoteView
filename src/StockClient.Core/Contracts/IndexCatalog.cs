@@ -3,7 +3,7 @@ using TinyPinyin;
 namespace StockClient.Core.Contracts;
 
 /// <summary>
-/// Common mainland benchmarks omitted by the stock/ETF list filters. Only static
+/// Common benchmarks omitted by the stock/ETF list filters. Only static
 /// identities live here; prices and charts use the normal live data clients.
 /// Merged in memory so old caches and an unavailable list endpoint cannot hide them.
 /// </summary>
@@ -21,7 +21,16 @@ public static class IndexCatalog
         Create("SH000688", "科创50", "科创50指数", "上证科创板50成份指数"),
         Create("SZ399106", "深证综指", "深证综合指数"),
         Create("SZ399330", "深证100", "深证100指数"),
+        CreateUs("US.NDX", "纳斯达克100", "NDX100", "NDX", "NDX100", "USNDX", "纳斯达克100指数", "纳指100"),
+        CreateUs("US.INX", "标普500", "SPX", "SPX", "INX", "USSPX", "USINX", "标普500指数", "标准普尔500指数"),
+        CreateUs("US.IXIC", "纳斯达克综合指数", "NDX", "IXIC", "COMP", "USIXIC", "纳斯达克", "纳指", "纳斯达克综合"),
     });
+
+    public static bool IsOverseasIndex(string code) => All.Any(c => c.Market == Market.US
+        && c.Code.Equals(code, StringComparison.OrdinalIgnoreCase));
+
+    private static Contract CreateUs(string code, string name, string eastMoneySymbol, params string[] aliases) =>
+        Create(code, name, aliases) with { MarketNumber = 100, EastMoneySymbol = eastMoneySymbol };
 
     public static bool MatchesExactly(string keyword)
     {
