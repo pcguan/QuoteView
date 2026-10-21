@@ -7,6 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\StockClient.App\Views\PanelMouseGestures.cs" Link="PanelMouseGestures.cs" />
     <ProjectReference Include="..\..\src\StockClient.Core\StockClient.Core.csproj" />
     <Compile Include="..\..\src\StockClient.App\ViewModels\MarketWatchViewModel.cs" Link="MarketWatchViewModel.cs" />
     <Compile Include="..\..\src\StockClient.App\ViewModels\BoardWatchViewModel.cs" Link="BoardWatchViewModel.cs" />

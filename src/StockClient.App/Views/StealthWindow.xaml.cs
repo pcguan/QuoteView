@@ -106,6 +106,7 @@ public partial class StealthWindow : Window
     private QuoteRow? _contextRow;
     private GroupRow? _contextGroup;
     private bool _editingContracts;
+    private readonly PanelMouseGestures _mouseGestures = new();
 
     // Charts of the anchor (current) contract only — one contract at a time, so
     // the request load stays minimal. The order book needs no request at all: it
@@ -208,9 +209,26 @@ public partial class StealthWindow : Window
         _appliedChart = config.Chart; // initial state is placed as-is; only changes shift Top
         _vm.StealthTick += OnTick;
 
+        PreviewMouseRightButtonDown += (_, _) => _mouseGestures.RightDown();
+        PreviewMouseRightButtonUp += (_, e) =>
+        {
+            if (_mouseGestures.RightWheelUsed) e.Handled = true;
+        };
+        PreviewMouseLeftButtonUp += (_, _) => _mouseGestures.LeftUp();
+        PreviewMouseMove += (_, e) =>
+        {
+            if (_mouseGestures.TryBeginDrag(e.GetPosition(this), e.LeftButton == MouseButtonState.Pressed,
+                SystemParameters.MinimumHorizontalDragDistance, SystemParameters.MinimumVerticalDragDistance))
+            {
+                DragMove();
+                e.Handled = true;
+            }
+        };
+
         Root.ContextMenu = BuildMenu();
         Root.ContextMenuOpening += (_, e) =>
         {
+            if (_mouseGestures.RightWheelUsed) { e.Handled = true; return; }
             _contextGroup = _vm.ActiveGroup;
             _contextRow = null;
             for (var node = e.OriginalSource as DependencyObject; node is not null;
@@ -1017,7 +1035,7 @@ public partial class StealthWindow : Window
     {
         var before = _config.Shade;
         _config.Shade = Math.Clamp(_config.Shade + step, 0, MaxShade);
-        // Any path into blackout (Win+Alt+Down, Shift+wheel) records the shade
+        // Any path into blackout (Win+Alt+Down, right-button wheel) records the shade
         // to come back to — same as double-click hide — so RestoreBrightness
         // returns the pre-hide brightness whichever gesture put it to sleep.
         if (_config.Shade == 0 && before > 0) AppPrefs.PanelShadeRestore = before;
@@ -1072,7 +1090,7 @@ public partial class StealthWindow : Window
         // Coming back from invisible: while shade was 0 the ticks only reached
         // _pendingRows, so without this the panel reappears showing the quotes it
         // went dark on. Caught here rather than at each caller because every way
-        // up — Win+Alt+Up, Shift+wheel, the ghost double-click, the settings
+        // up — Win+Alt+Up, right-button wheel, the ghost double-click, the settings
         // slider — passes through ApplyShade. Queued, never called inline: Render
         // calls back into this method.
         var was = _appliedShade;
@@ -1265,11 +1283,11 @@ public partial class StealthWindow : Window
         prev.Click += (_, _) => _vm.StealthStep(-1);
         menu.Items.Add(prev);
 
-        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "Win+Alt+PageDown" };
+        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "按住左键+滚轮下 / Win+Alt+PageDown" };
         nextGroup.Click += (_, _) => _vm.StealthStepGroup(1);
         menu.Items.Add(nextGroup);
 
-        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "Win+Alt+PageUp" };
+        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "按住左键+滚轮上 / Win+Alt+PageUp" };
         prevGroup.Click += (_, _) => _vm.StealthStepGroup(-1);
         menu.Items.Add(prevGroup);
 
@@ -1519,7 +1537,9 @@ public partial class StealthWindow : Window
             if (delta != 0)
             {
                 _wheelHits++;
-                StepByWheel(delta);
+                var buttons = wParam.ToInt64() & 0xFFFF;
+                var action = _mouseGestures.Wheel((buttons & 0x0001) != 0, (buttons & 0x0002) != 0);
+                ApplyWheel(delta, action);
                 handled = true;
             }
 
@@ -1602,11 +1622,10 @@ public partial class StealthWindow : Window
         Probe.Log($"Root_Drag clicks={e.ClickCount} before: size={ActualWidth:F0}x{ActualHeight:F0} " +
                   $"pos={Left:F0},{Top:F0} opacity={ContentOpacity:F2} children={Rows.Children.Count}");
 
-        if (e.ClickCount == 1)
-        {
-            DragMove();
-        }
-        else if (e.ClickCount == 2)
+        var previousWasWheel = _mouseGestures.LeftWheelUsed;
+        _mouseGestures.LeftDown(e.GetPosition(this));
+        e.Handled = true;
+        if (e.ClickCount == 2 && !previousWasWheel)
         {
             // Double-click = instant blackout: shade straight to 0, the same
             // endpoint holding Win+Alt+Down reaches one step at a time. The
@@ -1663,17 +1682,8 @@ public partial class StealthWindow : Window
         }
     }
 
-    /// <summary>
-    /// Wheel steps the contract — the one mouse gesture kept, because it has no
-    /// keyboard-free equivalent. Clicks were tried for stepping groups and dropped:
-    /// left click collides with dragging the panel (its only way to be positioned)
-    /// and right click with the menu, and both already have hotkeys.
-    ///
-    /// Only fires while the pointer is over the panel — this is an ordinary routed
-    /// event, not a global hook, so other windows keep their own wheel. It does
-    /// rely on Windows routing the wheel to the hovered window rather than the
-    /// focused one (MouseWheelRouting=2, the default); the panel never takes focus.
-    /// </summary>
+    /// <summary>Hover wheel walks contracts; held left/right selects group/shade.
+    /// A low-level hook also reaches the inactive or fully hidden panel.</summary>
     // A low-level mouse hook, because neither higher layer can be relied on.
     //
     // Measured from the log: while it works, WM_MOUSEWHEEL arrives for every
@@ -1780,7 +1790,7 @@ public partial class StealthWindow : Window
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
         }
 
-        // Sticky footprint: a group switch (Ctrl+wheel) RESIZES the panel — the
+        // Sticky footprint: a group switch (left-button wheel) RESIZES the panel — the
         // column floors reset per group — and a shrink drops the pointer off
         // the window mid-gesture, so the next notch fell through to whatever
         // was underneath (a browser zooming was how it surfaced). For a short
@@ -1798,13 +1808,13 @@ public partial class StealthWindow : Window
         if (delta == 0) return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
 
         // Hidden (shade 0) = the area belongs to the windows underneath. Only
-        // Shift+wheel keeps working there, as the gesture that brings the
-        // panel back; plain and Ctrl wheel scroll whatever is below. Keys are
+        // right-button wheel keeps working there, as the gesture that brings the
+        // panel back; plain and left-button wheel scroll whatever is below. Keys are
         // read via GetAsyncKeyState because a low-level hook carries no
         // modifier state of its own.
-        var shift = (Native.GetAsyncKeyState(Native.VkShift) & 0x8000) != 0;
-        var ctrl = (Native.GetAsyncKeyState(Native.VkControl) & 0x8000) != 0;
-        if (_config.Shade == 0 && !shift)
+        var right = (Native.GetAsyncKeyState(Native.VkRButton) & 0x8000) != 0;
+        var left = (Native.GetAsyncKeyState(Native.VkLButton) & 0x8000) != 0;
+        if (_config.Shade == 0 && !right)
         {
             _wheelPassed++;
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
@@ -1823,16 +1833,16 @@ public partial class StealthWindow : Window
             : rect;
         _stickyUntil = data.Time + 800;
 
-        // Modifier routing: plain wheel walks contracts, Shift+wheel steps the
-        // shade (up = brighter), Ctrl+wheel cycles groups.
+        // Record the held buttons synchronously: releasing before the posted
+        // action executes must still suppress the right-click menu and drag.
+        var action = _mouseGestures.Wheel(left, right);
+        // Plain wheel walks contracts; held right adjusts shade; held left cycles groups.
         // Posted, not run inline: the hook has a system timeout, and stepping the
         // contract redraws the panel.
         Dispatcher.BeginInvoke(new Action(() =>
         {
             if (_editingContracts || Root.ContextMenu?.IsOpen == true) return;
-            if (shift) StepShade(delta > 0 ? 1 : -1);
-            else if (ctrl) _vm.StealthStepGroup(delta > 0 ? -1 : 1);
-            else StepByWheel(delta);
+            ApplyWheel(delta, action);
         }), DispatcherPriority.Input);
 
         // Swallowed, so the window underneath doesn't scroll as well.
@@ -1850,8 +1860,17 @@ public partial class StealthWindow : Window
         if (_editingContracts || Root.ContextMenu?.IsOpen == true) return;
         if (e.Delta == 0) return;
 
-        StepByWheel(e.Delta);
+        var action = _mouseGestures.Wheel(e.LeftButton == MouseButtonState.Pressed,
+            e.RightButton == MouseButtonState.Pressed);
+        ApplyWheel(e.Delta, action);
         e.Handled = true;
+    }
+
+    private void ApplyWheel(int delta, PanelWheelAction action)
+    {
+        if (action == PanelWheelAction.Shade) StepShade(delta > 0 ? 1 : -1);
+        else if (action == PanelWheelAction.Group) _vm.StealthStepGroup(delta > 0 ? -1 : 1);
+        else StepByWheel(delta);
     }
 
     /// <summary>

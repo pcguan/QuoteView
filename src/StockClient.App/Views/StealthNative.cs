@@ -93,6 +93,8 @@ internal static class Native
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
 
+    public const int VkLButton = 0x01;
+    public const int VkRButton = 0x02;
     public const int VkShift = 0x10;
     public const int VkControl = 0x11;
     public const int VkLWin = 0x5B;

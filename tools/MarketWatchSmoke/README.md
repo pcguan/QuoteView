@@ -12,6 +12,8 @@ dotnet run --project tools/MarketWatchSmoke -c Release
 
 链接正式 QuotesViewModel，在独立临时配置和受控报价下验证海外指数的搜索候选、添加到分组、保存、报价更新与重复检测，以及简洁面板的搜索入口。
 
+链接正式面板鼠标手势状态代码，验证右键滚轮与菜单隔离、左键滚轮与拖动隔离、轻微抖动、释放按键、双键优先级及下一次操作状态恢复。
+
 不启动窗口、不调用真实接口、不读写用户配置。
 
 真实接口验证使用 `dotnet run --project tools/Smoke -- --market` 或 `--board-market`；海外三指数使用 `--us-indices`。

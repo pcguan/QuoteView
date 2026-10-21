@@ -15,7 +15,7 @@ internal static class Program
         Exception? error = null;
         dispatcher.BeginInvoke(new Action(async () =>
         {
-            try { TestLayouts(); await TestPolling(dispatcher); await TestBoards(dispatcher); await TapeScrollChecks.Run(); await OverseasAddChecks.Run(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
+            try { PanelMouseGestureChecks.Run(); TestLayouts(); await TestPolling(dispatcher); await TestBoards(dispatcher); await TapeScrollChecks.Run(); await OverseasAddChecks.Run(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
             catch (Exception ex) { error = ex; }
             finally { dispatcher.BeginInvokeShutdown(DispatcherPriority.Background); }
         }));

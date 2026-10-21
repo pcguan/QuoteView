@@ -11,7 +11,7 @@ namespace StockClient.App.Views;
 /// App-consistent chrome for a window, attached once after InitializeComponent:
 ///   · a DARK native title bar (DWM immersive dark mode), so the standalone
 ///     windows match the dark content instead of showing a white caption bar;
-///   · Shift+滚轮 dims the window — the same "亮度" gesture the stealth panel uses.
+///   · Shift+滚轮 dims ordinary windows (the stealth panel has its own mouse gestures).
 ///
 /// The dim is a black SCRIM laid over the content, NOT Window.Opacity. Reducing a
 /// window's opacity looked white on the main window: it uses a Mica (transparent)
