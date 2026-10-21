@@ -16,7 +16,8 @@
     Left press waits for the system drag threshold before DragMove, leaving
     hold-left + wheel available for groups. Hold-right + wheel adjusts shade;
     releasing after scrolling suppresses the context menu. A plain right click
-    still opens the menu and a plain wheel still walks contracts.
+    still opens the menu and a plain wheel still walks contracts. Shift/Ctrl
+    wheel remain keyboard alternatives for shade/groups respectively.
   -->
   <!--
     No ToolTip here, deliberately.

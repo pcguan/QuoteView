@@ -21,22 +21,16 @@ internal sealed class PanelMouseGestures
     public void LeftUp() => _dragOrigin = null;
     public void RightDown() => RightWheelUsed = false;
 
-    public PanelWheelAction Wheel(bool left, bool right)
+    // Explicit mouse chords win; with no button held, retain Shift before Ctrl.
+    public static PanelWheelAction ResolveWheel(bool left, bool right, bool shift, bool ctrl) =>
+        right ? PanelWheelAction.Shade : left ? PanelWheelAction.Group
+            : shift ? PanelWheelAction.Shade : ctrl ? PanelWheelAction.Group : PanelWheelAction.Contract;
+
+    public PanelWheelAction Wheel(bool left, bool right, bool shift = false, bool ctrl = false)
     {
-        // Right takes priority when both buttons are held.
-        if (right)
-        {
-            RightWheelUsed = true;
-            if (left) { LeftWheelUsed = true; _dragOrigin = null; }
-            return PanelWheelAction.Shade;
-        }
-        if (left)
-        {
-            LeftWheelUsed = true;
-            _dragOrigin = null;
-            return PanelWheelAction.Group;
-        }
-        return PanelWheelAction.Contract;
+        if (right) RightWheelUsed = true;
+        if (left) { LeftWheelUsed = true; _dragOrigin = null; }
+        return ResolveWheel(left, right, shift, ctrl);
     }
 
     public bool TryBeginDrag(Point position, bool leftPressed, double horizontalThreshold, double verticalThreshold)

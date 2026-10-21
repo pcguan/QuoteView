@@ -1283,11 +1283,11 @@ public partial class StealthWindow : Window
         prev.Click += (_, _) => _vm.StealthStep(-1);
         menu.Items.Add(prev);
 
-        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "按住左键+滚轮下 / Win+Alt+PageDown" };
+        var nextGroup = new MenuItem { Header = "下一个分组", InputGestureText = "左键/Ctrl+滚轮下 / Win+Alt+PageDown" };
         nextGroup.Click += (_, _) => _vm.StealthStepGroup(1);
         menu.Items.Add(nextGroup);
 
-        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "按住左键+滚轮上 / Win+Alt+PageUp" };
+        var prevGroup = new MenuItem { Header = "上一个分组", InputGestureText = "左键/Ctrl+滚轮上 / Win+Alt+PageUp" };
         prevGroup.Click += (_, _) => _vm.StealthStepGroup(-1);
         menu.Items.Add(prevGroup);
 
@@ -1538,7 +1538,8 @@ public partial class StealthWindow : Window
             {
                 _wheelHits++;
                 var buttons = wParam.ToInt64() & 0xFFFF;
-                var action = _mouseGestures.Wheel((buttons & 0x0001) != 0, (buttons & 0x0002) != 0);
+                var action = _mouseGestures.Wheel((buttons & 0x0001) != 0, (buttons & 0x0002) != 0,
+                    (buttons & 0x0004) != 0, (buttons & 0x0008) != 0);
                 ApplyWheel(delta, action);
                 handled = true;
             }
@@ -1808,13 +1809,15 @@ public partial class StealthWindow : Window
         if (delta == 0) return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
 
         // Hidden (shade 0) = the area belongs to the windows underneath. Only
-        // right-button wheel keeps working there, as the gesture that brings the
-        // panel back; plain and left-button wheel scroll whatever is below. Keys are
+        // right-button wheel and Shift+wheel can bring the panel back.
+        // Contract/group gestures scroll whatever is below. Keys are
         // read via GetAsyncKeyState because a low-level hook carries no
         // modifier state of its own.
         var right = (Native.GetAsyncKeyState(Native.VkRButton) & 0x8000) != 0;
         var left = (Native.GetAsyncKeyState(Native.VkLButton) & 0x8000) != 0;
-        if (_config.Shade == 0 && !right)
+        var shift = (Native.GetAsyncKeyState(Native.VkShift) & 0x8000) != 0;
+        var ctrl = (Native.GetAsyncKeyState(Native.VkControl) & 0x8000) != 0;
+        if (_config.Shade == 0 && PanelMouseGestures.ResolveWheel(left, right, shift, ctrl) != PanelWheelAction.Shade)
         {
             _wheelPassed++;
             return Native.CallNextHookEx(_wheelHook, code, wParam, lParam);
@@ -1835,8 +1838,8 @@ public partial class StealthWindow : Window
 
         // Record the held buttons synchronously: releasing before the posted
         // action executes must still suppress the right-click menu and drag.
-        var action = _mouseGestures.Wheel(left, right);
-        // Plain wheel walks contracts; held right adjusts shade; held left cycles groups.
+        var action = _mouseGestures.Wheel(left, right, shift, ctrl);
+        // Plain wheel walks contracts; right/Shift adjusts shade; left/Ctrl cycles groups.
         // Posted, not run inline: the hook has a system timeout, and stepping the
         // contract redraws the panel.
         Dispatcher.BeginInvoke(new Action(() =>
@@ -1861,7 +1864,8 @@ public partial class StealthWindow : Window
         if (e.Delta == 0) return;
 
         var action = _mouseGestures.Wheel(e.LeftButton == MouseButtonState.Pressed,
-            e.RightButton == MouseButtonState.Pressed);
+            e.RightButton == MouseButtonState.Pressed,
+            (Keyboard.Modifiers & ModifierKeys.Shift) != 0, (Keyboard.Modifiers & ModifierKeys.Control) != 0);
         ApplyWheel(e.Delta, action);
         e.Handled = true;
     }

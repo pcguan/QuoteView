@@ -957,7 +957,7 @@ public partial class MainWindow : FluentWindow
         {
             AppPrefs.StealthIntroShown = true;
             _tray?.ShowBalloonTip(9000, "简洁面板已开启",
-                "双击面板变暗/隐身，原位再双击恢复；按住右键+滚轮调亮度、按住左键+滚轮切分组、"
+                "双击面板变暗/隐身，原位再双击恢复；按住右键或Shift+滚轮调亮度、按住左键或Ctrl+滚轮切分组、"
                 + "滚轮切合约。Win+Alt+End 在主窗口与面板间切换。右键面板有全部操作。",
                 System.Windows.Forms.ToolTipIcon.Info);
         }

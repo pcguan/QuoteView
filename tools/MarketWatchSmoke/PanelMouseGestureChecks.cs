@@ -35,6 +35,15 @@ internal static class PanelMouseGestureChecks
         input.LeftDown(start); input.RightDown();
         Check(input.Wheel(true, true) == PanelWheelAction.Shade, "right button takes priority when both held");
         Check(!input.TryBeginDrag(moved, true, 4, 4), "dual-button wheel must not accidentally drag");
-        Console.WriteLine("PASS: panel held-right shade/menu suppression, held-left groups/deferred drag, jitter/release/reset/both-button priority; no desktop input");
+        var keyboard = new PanelMouseGestures();
+        Check(keyboard.Wheel(false, false, shift: true) == PanelWheelAction.Shade, "Shift wheel must retain brightness control");
+        Check(keyboard.Wheel(false, false, ctrl: true) == PanelWheelAction.Group, "Ctrl wheel must retain group navigation");
+        Check(!keyboard.RightWheelUsed && !keyboard.LeftWheelUsed, "keyboard wheel alone must not suppress future clicks");
+        Check(keyboard.Wheel(false, false, true, true) == PanelWheelAction.Shade, "original Shift before Ctrl priority must remain");
+        Check(keyboard.Wheel(true, false, shift: true) == PanelWheelAction.Group, "explicit left chord wins over keyboard modifier");
+        Check(keyboard.Wheel(false, true, ctrl: true) == PanelWheelAction.Shade, "explicit right chord wins over keyboard modifier");
+        Check(PanelMouseGestures.ResolveWheel(false, false, true, false) == PanelWheelAction.Shade,
+            "hidden panel must accept Shift wheel to restore brightness");
+        Console.WriteLine("PASS: keyboard Shift/Ctrl wheel compatibility; panel held-right shade/menu suppression, held-left groups/deferred drag, jitter/release/reset/both-button priority; no desktop input");
     }
 }
