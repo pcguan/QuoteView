@@ -17,6 +17,13 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
 {
     private readonly HttpClient _http = Services.DirectHttp.Create(TimeSpan.FromSeconds(15));
     private readonly EastMoneyMarketClient _client;
+    private readonly LiveMarketClient _liveClient;
+    private CancellationTokenSource? _extensionRequest;
+    private DateTimeOffset _extensionsDue;
+    private readonly Dictionary<string, MarketQuote> _extensions = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlySet<string> _extensionUpdated = new HashSet<string>();
+    private bool _extensionsAttempted;
+    private string _extensionStatus = "扩展待更新", _errorDetail = "", _extensionError = "";
     private readonly Board? _board;
     private readonly DispatcherTimer _timer;
     private CancellationTokenSource? _request;
@@ -30,7 +37,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     private MarketOption _market = new(null, "沪深全部");
     private IReadOnlyList<MarketQuote> _rows = Array.Empty<MarketQuote>();
 
-    public MarketWatchViewModel(Dispatcher dispatcher, Board? board = null)
+    public MarketWatchViewModel(Dispatcher dispatcher, Board? board = null, LiveMarketClient? liveClient = null)
     {
         _board = board;
         if (board is not null)
@@ -42,6 +49,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         }
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; QuoteView/1.0)");
         _client = new EastMoneyMarketClient(_http);
+        _liveClient = liveClient ?? new LiveMarketClient(_http);
         _timer = new DispatcherTimer(DispatcherPriority.Background, dispatcher) { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => Tick();
         RefreshCommand = new RelayCommand(_ => _ = RefreshAsync(), _ => CanRefresh);
@@ -76,8 +84,12 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     public string Status { get => _status; private set { Set(ref _status, value); OnPropertyChanged(nameof(EmptyMessage)); } }
     public string EmptyMessage => Busy ? "正在加载行情，请稍候…"
         : _snapshot is null ? Status : "暂无符合条件的行情";
-    public string SnapshotInfo => _snapshot is null ? "尚未取得完整行情"
+    public string SnapshotInfo => _snapshot is null ? "尚未取得行情"
+        : _board is null ? $"腾讯 · 本轮 {_snapshot.UpdatedCount ?? 0:N0}/{_snapshot.Rows.Count:N0} · {_extensionStatus}" + (_snapshot.DirectoryUnconfirmed ? " · 目录覆盖未确认" : "")
         : $"{(_snapshot.Delayed ? "东方财富 · 延迟备用源" : "东方财富")} · 完成 {_snapshot.CompletedAt.ToLocalTime():MM-dd HH:mm:ss} · 耗时 {(_snapshot.CompletedAt - _snapshot.StartedAt).TotalSeconds:0.0}s";
+    public string ErrorDetail => string.Join("\n", new[] { _errorDetail, _extensionError }.Where(s => s.Length > 0));
+    public string DataDetails => _board is not null ? "东方财富板块成分股行情；各合约上游时间见行情时间列。" : string.Join("\n", new[] { _snapshot?.DirectoryInfo ?? "", ErrorDetail,
+        "价格等基础字段来自腾讯；动态市盈率、涨速、资金流及行业/概念等来自东方财富。扩展字段约5分钟更新，独立于基础报价；空值表示未取得数据。每行分别显示行情时间和扩展采集时间。" });
     public string ResultCount => $"{Rows.Count:N0} / {_snapshot?.Rows.Count ?? 0:N0}";
     public string Schedule => !_active ? "已暂停"
         : _nextDue == default ? "首次加载" : $"下次刷新 {_nextDue.ToLocalTime():HH:mm:ss} · "
@@ -107,7 +119,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         if (_disposed || _active == active) return;
         _active = active;
         if (active) { _timer.Start(); Tick(); }
-        else { _timer.Stop(); _request?.Cancel(); Status = "已暂停刷新"; }
+        else { _timer.Stop(); _request?.Cancel(); _extensionRequest?.Cancel(); Status = "已暂停刷新"; }
         OnPropertyChanged(nameof(Schedule));
         OnPropertyChanged(nameof(CanRefresh));
     }
@@ -122,6 +134,8 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(Schedule));
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
         if (!Busy && DateTimeOffset.UtcNow >= _nextDue) _ = RefreshAsync();
+        if (_board is null && _snapshot is not null && _extensionRequest is null && DateTimeOffset.UtcNow >= _extensionsDue)
+            _ = RefreshExtensionsAsync();
     }
 
     private async Task RefreshAsync()
@@ -133,7 +147,7 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         _nextDue = _allowedAt;
         using var cts = new CancellationTokenSource();
         _request = cts;
-        Status = _snapshot is null ? "正在获取行情…" : "正在刷新，显示上一轮完整行情";
+        Status = _snapshot is null ? "正在获取行情…" : "正在刷新，显示已取得的行情";
         var progress = new Progress<(int Page, int Total)>(p =>
         {
             if (ReferenceEquals(_request, cts) && !cts.IsCancellationRequested)
@@ -141,20 +155,36 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
         });
         try
         {
-            var snapshot = _board is null ? await _client.FetchAsync(progress, cts.Token)
+            var partial = new Progress<MarketSnapshot>(value =>
+            {
+                if (!ReferenceEquals(_request, cts) || cts.IsCancellationRequested || !_active) return;
+                Publish(value);
+                Status = $"基础行情已取得 {value.UpdatedCount:N0}/{value.Rows.Count:N0} · 正在继续刷新";
+            });
+            var snapshot = _board is null ? await _liveClient.FetchAsync(progress, cts.Token, partial)
                 : await _client.FetchBoardAsync(_board.Code, progress, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
-            _snapshot = snapshot;
-            Probe.Log($"market watch updated: rows={snapshot.Rows.Count} pages={snapshot.Pages} host={snapshot.Host}");
-            _failures = 0;
+            Publish(snapshot);
+            Probe.Log($"market watch updated: rows={snapshot.Rows.Count} pages={snapshot.Pages} host={snapshot.Host} updated={snapshot.UpdatedCount} errors={snapshot.ErrorDetail}");
+            if (snapshot.UpdatedCount is null or > 0) _failures = 0;
             _nextDue = started + (MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? MarketRefreshPolicy.Interval : MarketRefreshPolicy.ClosedInterval);
             // A very slow refresh must not immediately start another whole crawl.
             if (_nextDue <= DateTimeOffset.UtcNow) _nextDue = DateTimeOffset.UtcNow + MarketRefreshPolicy.Interval;
             _allowedAt = MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? _nextDue : started + MarketRefreshPolicy.Interval;
             Status = snapshot.Delayed ? "已更新 · 当前使用延迟备用行情" : "已更新";
-            OnPropertyChanged(nameof(SnapshotInfo));
-            OnPropertyChanged(nameof(EmptyMessage));
-            Filter();
+            if (_board is null)
+            {
+                if (snapshot.UpdatedCount == 0)
+                {
+                    var delay = MarketRefreshPolicy.FailureDelay(++_failures);
+                    _allowedAt = _nextDue = DateTimeOffset.UtcNow + delay;
+                    Status = $"基础行情更新失败，{delay.TotalMinutes:0} 分钟后重试 · 保留已有值";
+                }
+                else if (snapshot.UpdatedCount < snapshot.Rows.Count)
+                    Status = $"部分更新 {snapshot.UpdatedCount:N0}/{snapshot.Rows.Count:N0} · 未成功项保留旧值";
+                if (snapshot.ErrorDetail.Length > 0) Status += " · 详情见提示";
+                if (_extensionRequest is null && DateTimeOffset.UtcNow >= _extensionsDue) _ = RefreshExtensionsAsync();
+            }
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
@@ -162,13 +192,64 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
             var delay = MarketRefreshPolicy.FailureDelay(++_failures);
             _allowedAt = _nextDue = DateTimeOffset.UtcNow + delay;
             Status = $"刷新失败，{delay.TotalMinutes:0} 分钟后重试" + (_snapshot is null ? "" : " · 保留上一轮行情");
-            Probe.Log($"market watch refresh failed: {ex.GetType().Name}: {ex.Message}");
+            _errorDetail = MarketDataErrors.Describe(ex);
+            OnPropertyChanged(nameof(ErrorDetail)); OnPropertyChanged(nameof(DataDetails));
+            Probe.Log($"market watch refresh failed: {ex}");
         }
         finally
         {
             _request = null;
             Busy = false;
             OnPropertyChanged(nameof(Schedule));
+        }
+    }
+
+    private void Publish(MarketSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        _errorDetail = snapshot.ErrorDetail;
+        OnPropertyChanged(nameof(SnapshotInfo)); OnPropertyChanged(nameof(EmptyMessage));
+        OnPropertyChanged(nameof(ErrorDetail)); OnPropertyChanged(nameof(DataDetails));
+        Filter();
+    }
+
+    private async Task RefreshExtensionsAsync()
+    {
+        if (_disposed || !_active || _extensionRequest is not null) return;
+        using var cts = new CancellationTokenSource();
+        _extensionRequest = cts;
+        _extensionStatus = "扩展更新中";
+        OnPropertyChanged(nameof(SnapshotInfo));
+        try
+        {
+            var result = await _client.FetchExtensionsAsync(cts.Token);
+            cts.Token.ThrowIfCancellationRequested();
+            foreach (var row in result.Rows) _extensions[row.Code] = row;
+            _extensionUpdated = result.UpdatedCodes;
+            _extensionsAttempted = true;
+            _extensionError = result.ErrorDetail.Length > 0 ? "扩展字段：" + result.ErrorDetail : "";
+            _extensionStatus = result.Rows.Count == 0 ? "扩展更新失败"
+                : result.ErrorDetail.Length > 0 ? $"扩展部分更新 {result.Rows.Count:N0} 只" : "扩展已更新";
+            if (_snapshot is not null)
+            {
+                var known = _snapshot.Rows.Select(r => r.Code).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                _extensionStatus += $" · {result.UpdatedCodes.Count(known.Contains):N0}/{known.Count:N0}";
+            }
+            Probe.Log($"market extensions updated: rows={result.Rows.Count} host={result.Host} errors={result.ErrorDetail}");
+            Filter();
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { _extensionStatus = "扩展已暂停"; }
+        catch (Exception ex)
+        {
+            _extensionUpdated = new HashSet<string>(); _extensionsAttempted = true;
+            _extensionError = "扩展字段：" + MarketDataErrors.Describe(ex); _extensionStatus = "扩展更新失败";
+            Probe.Log($"market extensions failed: {ex}"); Filter();
+        }
+        finally
+        {
+            _extensionsDue = DateTimeOffset.UtcNow.AddMinutes(MarketRefreshPolicy.IsTradingSession(DateTimeOffset.UtcNow) ? 5 : 15);
+            _extensionRequest = null;
+            OnPropertyChanged(nameof(SnapshotInfo)); OnPropertyChanged(nameof(ErrorDetail)); OnPropertyChanged(nameof(DataDetails));
         }
     }
 
@@ -184,7 +265,9 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
                 | (IncludeStar ? ListingBoards.Star : 0) | (SupportsBeijing && IncludeBeijing ? ListingBoards.Beijing : 0), Conditions = Conditions.ToArray(),
         };
         ResultsChanging?.Invoke();
-        Rows = query.Apply(_snapshot?.Rows ?? Array.Empty<MarketQuote>(), SortKey, Descending);
+        var rows = _snapshot?.Rows ?? Array.Empty<MarketQuote>();
+        Rows = query.Apply(_board is null ? rows.Select(r => MarketExtensionMerge.Apply(r, _extensions.GetValueOrDefault(r.Code),
+            _extensionsAttempted && !_extensionUpdated.Contains(r.Code))) : rows, SortKey, Descending);
         ResultsChanged?.Invoke();
     }
 
@@ -208,5 +291,5 @@ public sealed class MarketWatchViewModel : ObservableObject, IDisposable
     }
 
     public void Dispose()
-    { _disposed = true; _active = false; _timer.Stop(); _request?.Cancel(); _http.Dispose(); }
+    { _disposed = true; _active = false; _timer.Stop(); _request?.Cancel(); _extensionRequest?.Cancel(); _http.Dispose(); }
 }

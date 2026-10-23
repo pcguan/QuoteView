@@ -41,6 +41,8 @@ public partial class MarketWatchView : UserControl
                 col.ElementStyle = style;
             }
         }
+        Column("报价状态", nameof(MarketQuote.QuoteStatus), 150);
+        Column("扩展字段状态/时间", nameof(MarketQuote.ExtensionStatus), 380);
         Column("行业", nameof(MarketQuote.Industry), 130);
         Column("地区", nameof(MarketQuote.Region), 100);
         Column("概念", nameof(MarketQuote.Concepts), 280);
@@ -99,6 +101,15 @@ public partial class MarketWatchView : UserControl
             Header = title, SortMemberPath = property, Width = width,
             Binding = new Binding(property) { StringFormat = format is null ? null : "{0:" + format + "}", TargetNullValue = "—" },
         };
+        if (property is nameof(MarketQuote.Pe) or nameof(MarketQuote.Speed) or nameof(MarketQuote.MainInflow)
+            or nameof(MarketQuote.MainInflowPercent) or nameof(MarketQuote.SuperInflow) or nameof(MarketQuote.BigInflow)
+            or nameof(MarketQuote.MidInflow) or nameof(MarketQuote.SmallInflow) or nameof(MarketQuote.Industry)
+            or nameof(MarketQuote.Region) or nameof(MarketQuote.Concepts) or nameof(MarketQuote.ListedOn))
+        {
+            var style = new Style(typeof(DataGridCell));
+            style.Setters.Add(new Setter(ToolTipProperty, new Binding(nameof(MarketQuote.ExtensionStatus))));
+            column.CellStyle = style;
+        }
         QuoteGrid.Columns.Add(column);
         if (format is not null)
         {

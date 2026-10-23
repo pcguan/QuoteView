@@ -81,8 +81,8 @@
     <DockPanel Grid.Row="2" Margin="2,7,2,0">
       <TextBlock DockPanel.Dock="Right" Text="{Binding Schedule}" Foreground="{StaticResource Faint}" FontSize="11" />
       <StackPanel Orientation="Horizontal">
-        <TextBlock Text="{Binding Status}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0" />
-        <TextBlock Text="{Binding SnapshotInfo}" Foreground="{StaticResource Faint}" FontSize="11" ToolTip="各合约的上游时间见行情时间列；整轮为逐页采集，并非同一瞬间的快照" />
+        <TextBlock Text="{Binding Status}" ToolTip="{Binding ErrorDetail}" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,0,14,0" />
+        <TextBlock Text="{Binding SnapshotInfo}" Foreground="{StaticResource Faint}" FontSize="11" ToolTip="{Binding DataDetails}" />
       </StackPanel>
     </DockPanel>
   </Grid>

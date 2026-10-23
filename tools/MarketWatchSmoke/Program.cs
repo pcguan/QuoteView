@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
@@ -15,7 +16,7 @@ internal static class Program
         Exception? error = null;
         dispatcher.BeginInvoke(new Action(async () =>
         {
-            try { PanelMouseGestureChecks.Run(); TestLayouts(); await TestPolling(dispatcher); await TestBoards(dispatcher); await TapeScrollChecks.Run(); await OverseasAddChecks.Run(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
+            try { PanelMouseGestureChecks.Run(); TestLayouts(); await TestPolling(dispatcher); await TestExtensionIsolation(dispatcher); await TestBoards(dispatcher); await TapeScrollChecks.Run(); await OverseasAddChecks.Run(dispatcher); Console.WriteLine("PASS: layout persistence/sync/reset, header alignment, shared refresh/cancel/cooldown; no desktop windows opened"); }
             catch (Exception ex) { error = ex; }
             finally { dispatcher.BeginInvokeShutdown(DispatcherPriority.Background); }
         }));
@@ -93,7 +94,9 @@ internal static class Program
     private static async Task TestPolling(Dispatcher dispatcher)
     {
         var handler = DirectHttp.Handler = new PendingHandler();
-        using var vm = new MarketWatchViewModel(dispatcher);
+        var root = Path.Combine(Path.GetTempPath(), "qv-market-vm-" + Guid.NewGuid());
+        using var http = DirectHttp.Create(TimeSpan.FromSeconds(10));
+        using var vm = new MarketWatchViewModel(dispatcher, liveClient: new StockClient.Core.MarketWatch.LiveMarketClient(http, root));
         var tab = new object(); var window = new object();
         vm.SetActive(tab, true);
         vm.SetActive(window, true);
@@ -103,19 +106,50 @@ internal static class Program
         handler.Ready.SetResult(true);
         await Idle(vm);
         Check(vm.Rows.Count == 1 && vm.Rows[0].Price == 12.34, "first snapshot must populate rows");
+        var completedCalls = handler.Calls;
         vm.SetActive(window, false);
         Check(vm.Schedule == "已暂停", "last view must stop polling");
         vm.SetActive(tab, true);
-        Check(handler.Calls == 1 && vm.Rows.Count == 1 && !vm.CanRefresh, "reopening must preserve snapshot and cooldown");
+        Check(handler.Calls == completedCalls && vm.Rows.Count == 1 && !vm.CanRefresh, "reopening must preserve snapshot and cooldown");
         vm.SetActive(tab, false);
 
         handler = DirectHttp.Handler = new PendingHandler();
-        using var canceled = new MarketWatchViewModel(dispatcher);
+        using var cancelHttp = DirectHttp.Create(TimeSpan.FromSeconds(10));
+        using var canceled = new MarketWatchViewModel(dispatcher, liveClient: new StockClient.Core.MarketWatch.LiveMarketClient(cancelHttp, root + "-cancel"));
         canceled.SetActive(tab, true);
         canceled.SetActive(tab, false);
         await Idle(canceled);
         Check(handler.Canceled == 1 && canceled.Schedule == "已暂停" && !canceled.Status.Contains("失败"), "closing last view must cancel without backoff failure");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
     }
+    private static async Task TestExtensionIsolation(Dispatcher dispatcher)
+    {
+        // Hold EastMoney indefinitely while two independent Tencent polls complete.
+        var extensions = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = DirectHttp.Handler = new PendingHandler { ResponseAsync = (_, ct) => extensions.Task.WaitAsync(ct) };
+        handler.Ready.SetResult(true);
+        var calls = 0;
+        var contract = new StockClient.Core.Contracts.Contract { Code = "SH600000", Name = "测试", Type = StockClient.Core.Contracts.ContractType.MainBoard };
+        var live = new StockClient.Core.MarketWatch.LiveMarketClient((_, _) => Task.FromResult(
+            new StockClient.Core.MarketWatch.MarketUniverse(new[] { contract }, new DateOnly(2026, 10, 22), "test")), (codes, _) =>
+            Task.FromResult<IReadOnlyList<StockClient.Core.Quotes.Quote>>(new[] { new StockClient.Core.Quotes.Quote
+                { Code = codes[0], Name = "测试", Now = 10 + ++calls } }));
+        using var vm = new MarketWatchViewModel(dispatcher, liveClient: live);
+        var view = new object(); vm.SetActive(view, true); await Idle(vm);
+        Check(vm.Rows[0].Price == 11 && vm.SnapshotInfo.Contains("扩展更新中"), "slow enrichment must not hold base quotes hostage");
+        // Advance only the guard, avoiding a real minute wait in this isolated harness.
+        typeof(MarketWatchViewModel).GetField("_allowedAt", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(vm, DateTimeOffset.MinValue);
+        vm.RefreshCommand.Execute(null); await Idle(vm);
+        Check(vm.Rows[0].Price == 12 && handler.Calls == 1, "base refresh must continue without starting another enrichment");
+        extensions.SetException(new System.Net.Http.HttpRequestException("extension connection closed"));
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!vm.SnapshotInfo.Contains("扩展更新失败") && DateTime.UtcNow < deadline) await Task.Delay(10);
+        Check(vm.Rows[0].Price == 12 && vm.ErrorDetail.Contains("extension connection closed")
+            && vm.Rows[0].ExtensionStatus.Contains("失败") && vm.Status.Contains("已更新"), "extension failure must be visible without failing base refresh");
+        vm.SetActive(view, false);
+    }
+
     private static async Task TestBoards(Dispatcher dispatcher)
     {
         var handler = DirectHttp.Handler = new PendingHandler

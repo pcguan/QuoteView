@@ -42,7 +42,7 @@ if (args.Contains("--board-market"))
 }
 if (args.Contains("--market"))
 {
-    var marketClient = new StockClient.Core.MarketWatch.EastMoneyMarketClient(http);
+    var marketClient = new StockClient.Core.MarketWatch.LiveMarketClient(http, Path.Combine(Path.GetTempPath(), "QuoteViewMarketSmoke"));
     var snapshot = await marketClient.FetchAsync(null, default);
     if (snapshot.Rows.Count < 4000 || snapshot.Rows.Select(r => r.Code).Distinct().Count() != snapshot.Rows.Count)
         throw new Exception("全市场快照不完整");
@@ -51,9 +51,19 @@ if (args.Contains("--market"))
     var filtered = query.Apply(snapshot.Rows, "Percent", true);
     if (filtered.Count == 0 || filtered.Any(r => r.Contract.Type != ContractType.ChiNext || r.Contract.Market != Market.SZ))
         throw new Exception("市场和上市板块过滤失败");
+    Console.WriteLine(snapshot.DirectoryInfo);
+    Console.WriteLine($"本轮更新={snapshot.UpdatedCount} 错误={snapshot.ErrorDetail}");
     Console.WriteLine($"全市场={snapshot.Rows.Count} 页数={snapshot.Pages} 耗时={(snapshot.CompletedAt - snapshot.StartedAt).TotalSeconds:0.0}s 来源={snapshot.Host}");
     foreach (var g in snapshot.Rows.GroupBy(r => r.Contract.Type)) Console.WriteLine($"{g.Key.Display()}={g.Count()}");
     Console.WriteLine($"创业板过滤={filtered.Count}，涨跌幅排序首行={filtered[0].Code} {filtered[0].Percent}，缺报价={snapshot.Rows.Count(r => r.Price is null)}");
+    if (snapshot.ErrorDetail.Length > 0 || snapshot.UpdatedCount != snapshot.Rows.Count) throw new Exception("全市场覆盖未确认，检查以上诊断");
+    if (args.Contains("--market-repeat"))
+    {
+        await Task.Delay(TimeSpan.FromSeconds(60));
+        var next = await marketClient.FetchAsync(null, default);
+        Console.WriteLine($"再次刷新={next.UpdatedCount}/{next.Rows.Count} 批数={next.Pages} 耗时={(next.CompletedAt - next.StartedAt).TotalSeconds:0.0}s 错误={next.ErrorDetail}");
+        if (next.UpdatedCount != next.Rows.Count || next.ErrorDetail.Length > 0) throw new Exception("再次刷新覆盖不完整");
+    }
     return;
 }
 if (args.Contains("--us-indices"))

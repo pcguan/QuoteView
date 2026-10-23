@@ -6,7 +6,7 @@
 dotnet run --project tools/MarketWatchSmoke -c Release
 ```
 
-链接正式 ViewModel、列布局及表头样式代码，以内存偏好和受控 HTTP 响应验证：列宽/顺序/显隐保存、跨视图同步、恢复默认、表头对齐，以及多个视图的共享刷新、最后视图关闭后的取消、重新打开后的冷却和快照保留。同时验证板块涨跌榜赋值、类型切换复用快照、关键词过滤、成分股北交所筛选及清空恢复。
+链接正式 ViewModel、列布局及表头样式代码，以内存偏好和受控 HTTP 响应验证：列宽/顺序/显隐保存、跨视图同步、恢复默认、表头对齐，以及多个视图的共享刷新、最后视图关闭后的取消、重新打开后的冷却和快照保留。全市场使用隔离目录缓存，并验证扩展请求阻塞时基础报价仍可再次刷新、扩展失败只更新独立状态。同时验证板块涨跌榜赋值、类型切换复用快照、关键词过滤、成分股北交所筛选及清空恢复。
 
 链接正式 TradeTapeView XAML/渲染代码，在有限尺寸下测量虚拟化列表，复现并回归验证历史补齐、顶部增量、仅滚动一行、显示参数变化、同条成交修订、连续刷新、用户导航优先、清空及顺序回放时的滚动位置。
 
@@ -16,4 +16,4 @@ dotnet run --project tools/MarketWatchSmoke -c Release
 
 不启动窗口、不调用真实接口、不读写用户配置。
 
-真实接口验证使用 `dotnet run --project tools/Smoke -- --market` 或 `--board-market`；海外三指数使用 `--us-indices`。
+真实接口验证使用 `dotnet run --project tools/Smoke -- --market` （加 `--market-repeat` 会间隔60秒再验证一轮目录复用后的报价）或 `--board-market`；海外三指数使用 `--us-indices`。

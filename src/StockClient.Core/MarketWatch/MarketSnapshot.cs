@@ -29,6 +29,7 @@ public sealed record MarketQuote
     public double? Speed { get; init; }
     public double? TotalCap { get; init; }
     public double? FloatCap { get; init; }
+    public double? PeTtm { get; init; }
     public double? Pe { get; init; }
     public double? Pb { get; init; }
     public double? MainInflow { get; init; }
@@ -38,12 +39,27 @@ public sealed record MarketQuote
     public double? MidInflow { get; init; }
     public double? SmallInflow { get; init; }
     public DateTimeOffset? QuoteTime { get; init; }
+    public DateTimeOffset? ReceivedAt { get; init; }
+    public bool RefreshFailed { get; init; }
+    public DateTimeOffset? ExtensionTime { get; init; }
+    public DateTimeOffset? ExtensionReceivedAt { get; init; }
+    public string ExtensionSource { get; init; } = "";
+    public bool ExtensionFailed { get; init; }
+    public string QuoteStatus => ReceivedAt is null ? (RefreshFailed ? "暂无报价" : "东方财富")
+        : RefreshFailed ? "更新失败 · 保留旧值" : "腾讯";
+    public string ExtensionStatus => ExtensionReceivedAt is null ? (ExtensionFailed ? "扩展更新失败" : "扩展待更新")
+        : $"{(ExtensionFailed ? "更新失败 · " : "")}{ExtensionSource} · 采集 {ExtensionReceivedAt.Value.ToOffset(TimeSpan.FromHours(8)):MM-dd HH:mm:ss}"
+            + (ExtensionTime is { } stamp ? $" · 行情 {stamp.ToOffset(TimeSpan.FromHours(8)):MM-dd HH:mm:ss}" : " · 上游时间缺失");
     public string TimeDisplay => QuoteTime?.ToOffset(TimeSpan.FromHours(8)).ToString("MM-dd HH:mm:ss") ?? "—";
 }
 
 public sealed record MarketSnapshot(IReadOnlyList<MarketQuote> Rows, DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt, string Host, int Pages)
 {
+    public int? UpdatedCount { get; init; }
+    public bool DirectoryUnconfirmed { get; init; }
+    public string DirectoryInfo { get; init; } = "";
+    public string ErrorDetail { get; init; } = "";
     public bool Delayed => Host.Contains("delay", StringComparison.Ordinal);
 }
 
@@ -72,6 +88,7 @@ public static class MarketFields
         new(nameof(MarketQuote.Speed), "涨速(%)", r => r.Speed),
         new(nameof(MarketQuote.TotalCap), "总市值(亿)", r => r.TotalCap),
         new(nameof(MarketQuote.FloatCap), "流通市值(亿)", r => r.FloatCap),
+        new(nameof(MarketQuote.PeTtm), "市盈率(TTM)", r => r.PeTtm),
         new(nameof(MarketQuote.Pe), "市盈率(动)", r => r.Pe),
         new(nameof(MarketQuote.Pb), "市净率", r => r.Pb),
         new(nameof(MarketQuote.MainInflow), "主力净流入(万)", r => r.MainInflow),
@@ -144,7 +161,8 @@ public sealed record MarketQuery
                 nameof(MarketQuote.Name) => r.Name, nameof(MarketQuote.MarketName) => r.MarketName,
                 nameof(MarketQuote.BoardName) => r.BoardName, nameof(MarketQuote.Industry) => r.Industry,
                 nameof(MarketQuote.Concepts) => r.Concepts, nameof(MarketQuote.Region) => r.Region,
-                nameof(MarketQuote.ListedOn) => r.ListedOn, _ => r.Code,
+                nameof(MarketQuote.ListedOn) => r.ListedOn, nameof(MarketQuote.QuoteStatus) => r.QuoteStatus,
+                nameof(MarketQuote.ExtensionStatus) => r.ExtensionStatus, _ => r.Code,
             };
             var present = filtered.OrderBy(r => Read(r).Length == 0);
             ordered = descending ? present.ThenByDescending(Read, StringComparer.CurrentCulture)

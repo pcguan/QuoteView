@@ -12,6 +12,7 @@ public sealed class EastMoneyMarketClient
     private const int PageSize = 100;
     private const string Filter = "m:1+t:2,m:1+t:23,m:0+t:6,m:0+t:80";
     private const string Fields = "f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f22,f23,f26,f62,f66,f72,f78,f84,f100,f102,f103,f124,f184";
+    private const string ExtensionFields = "f12,f13,f14,f9,f22,f26,f62,f66,f72,f78,f84,f100,f102,f103,f124,f184";
     private static readonly string[] Hosts = { "push2.eastmoney.com", "82.push2.eastmoney.com", "push2delay.eastmoney.com" };
     private readonly HttpClient _http;
     private readonly Func<CancellationToken, Task> _pace;
@@ -70,7 +71,8 @@ public sealed class EastMoneyMarketClient
                 {
                     var row = Parse(item, includeBeijing);
                     if (!seen.Add(row.Code)) throw new InvalidOperationException("行情分页含重复合约");
-                    rows.Add(row);
+                    rows.Add(row with { ExtensionTime = row.QuoteTime, ExtensionReceivedAt = DateTimeOffset.UtcNow,
+                        ExtensionSource = host.Contains("delay", StringComparison.Ordinal) ? "东财延迟源" : "东方财富" });
                 }
                 progress?.Report((page, pages));
             }
@@ -86,6 +88,54 @@ public sealed class EastMoneyMarketClient
             _hostIndex = (_hostIndex + 1) % Hosts.Length;
             throw;
         }
+    }
+
+    /// <summary>Best-effort enrichment, independent of basic quotes. Stop after three consecutive failed pages.</summary>
+    public async Task<MarketExtensions> FetchExtensionsAsync(CancellationToken cancellationToken)
+    {
+        var host = Hosts[_hostIndex];
+        var rows = new Dictionary<string, MarketQuote>(StringComparer.OrdinalIgnoreCase);
+        var errors = new List<string>();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(90));
+        int pages = 1, total = 0, consecutiveFailures = 0;
+        for (var page = 1; page <= pages; page++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (page > 1) await _pace(budget.Token).ConfigureAwait(false);
+                var url = $"https://{host}/api/qt/clist/get?pn={page}&pz={PageSize}&po=0&np=1&fltt=2&invt=2&fid=f12&fs={Filter}&fields={ExtensionFields}";
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Referrer = new Uri("https://quote.eastmoney.com/");
+                using var response = await _http.SendAsync(request, budget.Token).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(budget.Token).ConfigureAwait(false));
+                var data = json.RootElement.GetProperty("data");
+                var count = data.GetProperty("total").GetInt32();
+                if (count is < 1 or > 30000) throw new InvalidOperationException("扩展字段总数无效");
+                if (page == 1) { total = count; pages = (total + PageSize - 1) / PageSize; }
+                if (total != count) throw new InvalidOperationException("扩展字段目录数量变更");
+                var diff = data.GetProperty("diff");
+                if (diff.ValueKind != JsonValueKind.Array || diff.GetArrayLength() != Math.Min(PageSize, total - (page - 1) * PageSize))
+                    throw new InvalidOperationException("扩展字段分页不完整");
+                var received = DateTimeOffset.UtcNow;
+                var batch = diff.EnumerateArray().Select(r => Parse(r, false) with
+                    { ReceivedAt = received, ExtensionSource = host.Contains("delay", StringComparison.Ordinal) ? "东财延迟源" : "东方财富" }).ToArray();
+                if (batch.Select(r => r.Code).Distinct().Count() != batch.Length || batch.Any(r => rows.ContainsKey(r.Code)))
+                    throw new InvalidOperationException("扩展字段分页重复");
+                foreach (var row in batch) rows.Add(row.Code, row);
+                consecutiveFailures = 0;
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                errors.Add($"第 {page} 页：{MarketDataErrors.Describe(ex)}");
+                if (++consecutiveFailures >= 3 || budget.IsCancellationRequested) break;
+            }
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (errors.Count > 0) _hostIndex = (_hostIndex + 1) % Hosts.Length;
+        return new MarketExtensions(rows.Values.ToArray(), rows.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase), string.Join("\n", errors), host);
     }
 
     private static MarketQuote Parse(JsonElement row, bool includeBeijing)

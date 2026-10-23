@@ -27,10 +27,23 @@ namespace StockClient.App.Services
     }
     public sealed class PendingHandler : HttpMessageHandler
     {
+        public Func<HttpRequestMessage, CancellationToken, Task<string>>? ResponseAsync { get; set; }
         public Func<HttpRequestMessage, string>? Response { get; set; }
         public int Calls { get; private set; }
         public int Canceled { get; private set; }
         public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private static string? DefaultResponse(HttpRequestMessage request)
+        {
+            if (request.RequestUri!.Host.Contains("sina.com.cn"))
+                return request.RequestUri.AbsolutePath.EndsWith("Count") ? "\"1\"" : """[{"symbol":"sz000001","name":"平安银行"}]""";
+            if (request.RequestUri.Host == "qt.gtimg.cn")
+            {
+                var fields = Enumerable.Repeat("", 62).ToArray();
+                fields[1] = "PingAn"; fields[3] = "12.34"; fields[30] = "20261022140000";
+                return "v_sz000001=\"" + string.Join("~", fields) + "\";\n";
+            }
+            return null;
+        }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Calls++;
@@ -38,7 +51,7 @@ namespace StockClient.App.Services
             catch (OperationCanceledException) { Canceled++; throw; }
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(Response?.Invoke(request) ?? """{"data":{"total":1,"diff":[{"f12":"000001","f13":0,"f14":"平安银行","f2":12.34}]}}"""),
+                Content = new StringContent((ResponseAsync is null ? Response?.Invoke(request) : await ResponseAsync(request, ct)) ?? DefaultResponse(request) ?? """{"data":{"total":1,"diff":[{"f12":"000001","f13":0,"f14":"平安银行","f2":12.34}]}}"""),
             };
         }
     }
