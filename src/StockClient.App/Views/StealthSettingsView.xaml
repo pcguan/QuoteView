@@ -54,6 +54,7 @@
                  Foreground="#8B93A3" />
     </Grid>
     <Slider x:Name="ShadeSlider" Minimum="0" Maximum="10"
+            ToolTip="0档完全隐藏；低亮度精细调节，1/2/3档对应1%/4%/9%不透明度；10档完全显示"
             TickFrequency="1" IsSnapToTickEnabled="True" Margin="0,0,0,14" />
 
     <TextBlock Text="面板图表（当前合约）　Win+Alt+Delete 循环切换" Foreground="#EDF1F7"

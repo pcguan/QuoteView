@@ -79,7 +79,7 @@ public partial class StealthSettingsView : UserControl
         };
 
         BuildGapPreview();
-        GapPreview.Opacity = _editing.Shade / 10.0;
+        GapPreview.Opacity = PanelBrightness.ToOpacity(_editing.Shade);
 
         ShadeSlider.ValueChanged += (_, e) =>
         {
@@ -87,7 +87,7 @@ public partial class StealthSettingsView : UserControl
             var v = (int)e.NewValue;
             ShadeValue.Text = v.ToString();
             _editing.Shade = v;
-            GapPreview.Opacity = v / 10.0;   // the sample previews 透明度 live, like 行距
+            GapPreview.Opacity = PanelBrightness.ToOpacity(v);
             Apply();
         };
 
@@ -178,7 +178,7 @@ public partial class StealthSettingsView : UserControl
         RowGapValue.Text = _editing.RowGap.ToString();
         ShadeSlider.Value = _editing.Shade;
         ShadeValue.Text = _editing.Shade.ToString();
-        GapPreview.Opacity = _editing.Shade / 10.0;
+        GapPreview.Opacity = PanelBrightness.ToOpacity(_editing.Shade);
         FontSlider.Value = _editing.FontSize;
         FontValue.Text = _editing.FontSize.ToString();
         ChartNone.IsChecked = _editing.Chart == PanelChart.None;

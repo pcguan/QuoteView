@@ -89,7 +89,7 @@ public partial class StealthWindow : Window
     private const int WmHotkey = 0x0312;
     private const int WmMouseWheel = 0x020A;
 
-    private const int MaxShade = 10;
+    private const int MaxShade = PanelBrightness.MaxShade;
 
     private static readonly int[] AllHotkeys =
     {
@@ -1073,7 +1073,7 @@ public partial class StealthWindow : Window
     private void ApplyShade()
     {
         var shade = Math.Clamp(_config.Shade, 0, MaxShade);
-        var t = shade / (double)MaxShade;
+        var t = PanelBrightness.ToOpacity(shade);
 
         Opacity = 1;
         if (Root.Child is UIElement body) body.Opacity = t;
