@@ -53,7 +53,8 @@ public partial class TickDetailWindow : Window
     private List<TickRow> _view = new();     // filtered + ordered
     private long _minVolume;
     private int _page;
-    private string _pageSig = "";            // last-rendered page fingerprint; skip re-bind when unchanged
+    private List<TickRow>? _shownRows;
+    private int _shownLeftCount;
 
     public TickDetailWindow(KlineViewModel vm, int decimals, int bigTradeWan)
     {
@@ -342,16 +343,13 @@ public partial class TickDetailWindow : Window
         var count = Math.Max(0, Math.Min(pageSize, total - start));
         var pageRows = _view.GetRange(start, count);
         var leftN = Math.Min(per, pageRows.Count);                 // fill the left column first
-        // Only re-bind the (heavy) grids when the visible page actually differs — page,
-        // layout, or its first/last print. An auto-refresh that leaves the shown page
-        // unchanged (older page, or the user paged away from the newest) then doesn't
-        // tear the rows down and rebuild them, which is what made it blink every tick.
-        var sig = $"{_page}|{per}|{start}|{count}|{(count > 0 ? pageRows[0].Time + "~" + pageRows[^1].Time : "")}";
-        if (sig != _pageSig)
+        // A side confirmation can change a volume colour without changing either endpoint.
+        if (_shownRows is null || leftN != _shownLeftCount || !_shownRows.SequenceEqual(pageRows))
         {
             GridL.ItemsSource = pageRows.GetRange(0, leftN);
             GridR.ItemsSource = pageRows.GetRange(leftN, pageRows.Count - leftN);
-            _pageSig = sig;
+            _shownRows = pageRows;
+            _shownLeftCount = leftN;
         }
 
         CountText.Text = _all.Count == 0

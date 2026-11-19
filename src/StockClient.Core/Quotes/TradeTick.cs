@@ -34,6 +34,7 @@ public enum TradeSide
     Neutral = 0,
     Buy = 1,
     Sell = 2,
+    Pending = 3,   // Time, price and volume received; aggressor side not confirmed yet.
 }
 
 /// <summary>A contract's 逐笔成交 for one session, newest last, as returned.</summary>

@@ -17,6 +17,19 @@ public class TapeAccumulatorTests
         ticks.Select(t => t.Time).ToArray();
 
     [Fact]
+    public void Confirmed_side_replaces_pending_even_with_a_price_correction()
+    {
+        var acc = new TapeAccumulator();
+        var pending = T("13:00:02", 29.36, 123) with { Side = TradeSide.Pending };
+        var confirmed = T("13:00:02", 29.35, 120) with { Side = TradeSide.Sell };
+        Assert.Equal(pending, Assert.Single(acc.Add(new[] { pending })));
+        var before = acc.Revision;
+        Assert.Equal(confirmed, Assert.Single(acc.Add(new[] { confirmed })));
+        Assert.True(acc.Revision > before);
+        Assert.Equal(confirmed, Assert.Single(acc.Add(new[] { pending })));
+    }
+
+    [Fact]
     public void A_middle_print_a_later_edge_reports_is_recovered_not_lost()
     {
         var acc = new TapeAccumulator();

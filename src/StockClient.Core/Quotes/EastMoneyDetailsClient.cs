@@ -85,7 +85,7 @@ public sealed class EastMoneyDetailsClient
             // EastMoney details 方向: 2 主动买 / 1 主动卖 / 4 中性 — verified
             // 2026-09-02 against price-direction and the quote's 外/内盘 (the
             // one-line note in docs had 买/卖 swapped, hence the original bug).
-            Side = c[4] switch { "2" => TradeSide.Buy, "1" => TradeSide.Sell, _ => TradeSide.Neutral },
+            Side = c[4] switch { "2" => TradeSide.Buy, "1" => TradeSide.Sell, "P" => TradeSide.Pending, _ => TradeSide.Neutral },
         };
     }
 

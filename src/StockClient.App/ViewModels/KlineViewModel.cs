@@ -354,7 +354,16 @@ public sealed class KlineViewModel : ObservableObject
     /// 沪深 only (EastMoney details serves nothing else), best-effort like the
     /// book: a failed poll leaves the last tape in place.
     /// </summary>
+    private bool _tapeRequestInFlight;
     private async Task PollDetailsAsync()
+    {
+        if (_tapeRequestInFlight) return;
+        _tapeRequestInFlight = true;
+        try { await ReadDetailsAsync(); }
+        finally { _tapeRequestInFlight = false; }
+    }
+
+    private async Task ReadDetailsAsync()
     {
         if (!HasTape || !IsTrend) return;
 
@@ -383,7 +392,7 @@ public sealed class KlineViewModel : ObservableObject
         }
 
         if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
-        var before = Ticks.Count;
+        var before = _tape.Revision;
         var beforePre = TickPrePrice;
         Ticks = _tape.Add(snap.Ticks);
         TickPrePrice = snap.PrePrice;
@@ -391,7 +400,7 @@ public sealed class KlineViewModel : ObservableObject
         // Only signal a refresh when prints actually changed — the feed is 3s-sampled,
         // so at 1s most polls repeat; firing every poll would re-render (and flicker)
         // the tape for nothing.
-        if (Ticks.Count != before || !TickPrePrice.Equals(beforePre)) TicksUpdated?.Invoke();
+        if (_tape.Revision != before || !TickPrePrice.Equals(beforePre)) TicksUpdated?.Invoke();
         PersistTape(force: false);   // keep today's on-disk copy fresh (throttled)
     }
 

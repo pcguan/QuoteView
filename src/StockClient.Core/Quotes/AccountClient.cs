@@ -432,7 +432,7 @@ public sealed class AccountClient
         try
         {
             using var request = new HttpRequestMessage(
-                HttpMethod.Get, $"{Base}/livetape?code={Uri.EscapeDataString(code)}");
+                HttpMethod.Get, $"{Base}/livetape?pending=1&code={Uri.EscapeDataString(code)}");
             Stamp(request, token);
 
             using var response = await _http.SendAsync(request, ct);

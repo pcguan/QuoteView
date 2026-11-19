@@ -32,6 +32,7 @@ class TapeTests(unittest.TestCase):
                             ('_snapshot_stale', lambda rows: False), ('log', lambda text: None)]:
             p = patch.object(s, name, value); p.start(); self.addCleanup(p.stop)
         s.LIVE.clear(); s.LIVE_WANT.clear(); s._seed_active.clear()
+        s._poll_active.clear(); s._fast_active.clear()
         self.code = 'SZ001258'
         self.pages = []
 
@@ -51,6 +52,32 @@ class TapeTests(unittest.TestCase):
 
     def page(self, page, ids):
         return f'v_detail_data_sz001258=[{page},"' + '|'.join(row(i) for i in ids) + '"]'
+
+    def test_fast_tail_is_fresh_and_direction_waits_for_confirmation(self):
+        items = [{"minute": stamp, "change_vol_color": 1, "last_px": 29.36, "change_vol": 123}
+                 for stamp in ("130002", "125000", "150001", "bad")]
+        fast = s._fast_rows({"volume": items}, 13*3600+4)
+        self.assertEqual(fast, ["13:00:02,29.36,123,0,P"])
+        e = self.entry()
+        s._live_merge(e, fast, overwrite=False)
+        self.assertEqual(s.live_subscribe(self.code)["Details"], [])
+        self.assertEqual(s.live_subscribe(self.code, pending=True)["Details"], fast)
+        confirmed = ["13:00:02,29.36,123,8,1"]
+        s._live_merge(e, confirmed, overwrite=False)
+        s._live_merge(e, fast, overwrite=False)
+        self.assertEqual(s.live_subscribe(self.code)["Details"], confirmed)
+
+    def test_slow_poll_leaves_other_contract_due_without_queueing_duplicates(self):
+        for code in ("SH600001", "SZ000001", "SH600002"):
+            s.live_subscribe(code)
+        active = set()
+        a, b = s._claim_polls(100, active, 2, "poll_at")
+        self.assertEqual(s._claim_polls(103, active, 2, "poll_at"), [])
+        s._run_live_job(lambda *_: None, active, *b)
+        c, = s._claim_polls(103, active, 2, "poll_at")
+        self.assertNotIn(c[0], (a[0], b[0]))
+        s._run_live_job(lambda *_: None, active, *c)
+        self.assertEqual(s._claim_polls(106, active, 2, "poll_at")[0][0], b[0])
 
     def test_page_zero_and_exact_tail(self):
         result = self.fetch({0:self.page(0, range(70)), 1:self.page(1, range(70, 92))}, [(91, '10:04:33,10.05,10,0,2')])

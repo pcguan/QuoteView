@@ -32,6 +32,9 @@ public sealed class TapeAccumulator
     private const int ResetGapSecs = 2 * 60 * 60;
 
     private readonly Dictionary<(string Time, double Price), (TradeTick Tick, long Seq)> _acc = new();
+    private readonly Dictionary<string, TradeTick> _pending = new();
+    private readonly HashSet<string> _confirmed = new();
+    public long Revision { get; private set; }
     private long _seq;
     private int _newestSecs = -1;
 
@@ -40,16 +43,29 @@ public sealed class TapeAccumulator
         if (snapshot.Count == 0) return Current();
 
         var snapNewest = SecondsOfDay(snapshot[^1].Time);
-        if (_acc.Count > 0 && snapNewest >= 0 && _newestSecs - snapNewest > ResetGapSecs)
+        if (_newestSecs >= 0 && snapNewest >= 0 && _newestSecs - snapNewest > ResetGapSecs)
             Reset();
 
         foreach (var t in snapshot)
         {
+            if (t.Side == TradeSide.Pending)
+            {
+                if (!_confirmed.Contains(t.Time) && _pending.GetValueOrDefault(t.Time) != t)
+                {
+                    _pending[t.Time] = t;
+                    Revision++;
+                }
+                continue;
+            }
+            _confirmed.Add(t.Time);
+            _pending.Remove(t.Time);
             var key = (t.Time, t.Price);
             if (!_acc.TryGetValue(key, out var existing))
                 _acc[key] = (t, _seq++);
             else if (t.Volume > existing.Tick.Volume)
                 _acc[key] = (t, existing.Seq);   // same print, more of the second filled in
+            else continue;
+            Revision++;
         }
         if (snapNewest > _newestSecs) _newestSecs = snapNewest;
 
@@ -60,7 +76,7 @@ public sealed class TapeAccumulator
 
     /// <summary>Chronological (time, then first-seen order for the same second).</summary>
     private IReadOnlyList<TradeTick> Current() =>
-        _acc.Values
+        _acc.Values.Concat(_pending.Values.Select(t => (Tick: t, Seq: 0L)))
             .OrderBy(v => v.Tick.Time, StringComparer.Ordinal)
             .ThenBy(v => v.Seq)
             .Select(v => v.Tick)
@@ -69,6 +85,9 @@ public sealed class TapeAccumulator
     private void Reset()
     {
         _acc.Clear();
+        _pending.Clear();
+        _confirmed.Clear();
+        Revision++;
         _seq = 0;
         _newestSecs = -1;
     }

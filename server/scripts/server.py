@@ -934,7 +934,7 @@ def _live_validate_day(code, e):
         return True
 
 
-def live_subscribe(code):
+def live_subscribe(code, pending=False):
     """Resume history reconciliation on every new subscription, keeping old rows."""
     now = time.time()
     with _live_lock:
@@ -944,13 +944,14 @@ def live_subscribe(code):
         if resumed:
             e["check_at"] = 0.0
         return {"PrePrice": e["pre"], "Decimals": e["dec"],
-                "Details": [e["rows"][k] for k in sorted(e["rows"])]}
+                "Details": [r for _, r in sorted(e["rows"].items())
+                            if pending or not r.endswith(",P")]}
 
 
 def _live_merge(e, rows, overwrite):
     for row in rows:
         t = row.split(",", 1)[0]
-        if overwrite or t not in e["rows"]:
+        if overwrite or t not in e["rows"] or e["rows"][t].endswith(",P"):
             e["rows"][t] = row
 
 
@@ -1147,7 +1148,8 @@ def _live_fetch(code, e):
 # every other code. With the pool a sweep finishes in ~ceil(N/workers) × per-fetch,
 # and one slow code only ties up its own worker. (The hard ceiling above this is the
 # providers' per-IP rate — see LIVE_SOURCES; more than that needs more IPs.)
-_live_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="live")
+_LIVE_WORKERS = 8
+_live_pool = ThreadPoolExecutor(max_workers=_LIVE_WORKERS, thread_name_prefix="live")
 _seed_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="seed")   # keep concurrent stock.gtimg walks low
 
 
@@ -1180,17 +1182,84 @@ def _poll_one(code, e):
             e["at"] = time.time()
 
 
+# CLS publishes time, price and volume before dealinfo confirms aggressor side.
+# Never infer a side from change_vol_color. A later confirmed row supersedes P.
+def _fast_stock(code):
+    return code.startswith(("SH60", "SH68", "SZ00", "SZ30"))
+
+
+def _fast_session(sec):
+    return 33900 <= sec <= 41415 or 46800 <= sec <= 54015
+
+
+def _fast_rows(data, now):
+    rows = []
+    for item in data.get("volume") or []:
+        stamp = str(item.get("minute", "")).zfill(6)
+        if not re.fullmatch(r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d", stamp):
+            continue
+        hms = f"{stamp[:2]}:{stamp[2:4]}:{stamp[4:]}"
+        sec = _secs_of_day(hms)
+        # Undated feed: only today's fresh tail, after dated session validation.
+        if not _fast_session(sec) or not -2 <= now - sec <= 20:
+            continue
+        price, vol = item.get("last_px"), item.get("change_vol")
+        if type(price) not in (int, float) or not 0 < price < 1e8 or type(vol) is not int or vol <= 0:
+            continue
+        rows.append(f"{hms},{price},{vol},0,P")
+    return rows
+
+
+def _poll_fast(code, e):
+    url = ("https://x-quote.cls.cn/quote/stock/volume?field=vol&app=CailianpressWeb"
+           f"&os=web&sv=8.4.6&secu_code={code.lower()}")
+    with urllib.request.urlopen(url, timeout=2) as response:
+        doc = json.load(response)
+    if doc.get("code") == 200:
+        rows = _fast_rows(doc.get("data") or {}, _now_secs())
+        with _live_lock:
+            if _live_current(code, e):
+                _live_merge(e, rows, overwrite=False)
+
+
+_fast_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="live-fast")
+_poll_active, _fast_active = set(), set()
+
+
+def _claim_polls(now, active, limit, stamp, fast=False):
+    # Caller holds _live_lock. Oldest dispatch first, no executor backlog.
+    due = [(code, _live_entry(code)) for code in LIVE_WANT]
+    jobs = []
+    for code, e in sorted(due, key=lambda pair: pair[1].get(stamp, 0)):
+        if len(active) >= limit:
+            break
+        if code in active or now - e.get(stamp, 0) < LIVE_CADENCE_S:
+            continue
+        if fast and (not e["day_valid"] or not _fast_stock(code)):
+            continue
+        e[stamp] = now
+        active.add(code)
+        jobs.append((code, e))
+    return jobs
+
+
+def _run_live_job(fetch, active, code, e):
+    try:
+        fetch(code, e)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass  # Transient provider error. The other feed runs independently.
+    finally:
+        with _live_lock:
+            active.discard(code)
+
+
 def _live_schedule(now):
     """Claim bounded repair jobs fairly; separate from IO for deterministic tests."""
     polls, repairs = [], []
     with _live_lock:
         for c in [c for c, exp in LIVE_WANT.items() if exp <= now]:
             LIVE_WANT.pop(c, None)
-        for code in list(LIVE_WANT):
-            e = _live_entry(code)
-            if now - e["poll_at"] >= LIVE_CADENCE_S:
-                e["poll_at"] = now
-                polls.append((code, e))
+        polls = _claim_polls(now, _poll_active, _LIVE_WORKERS, "poll_at")
         candidates = [(c, e) for c, e in LIVE.items() if _live_current(c, e)
                       and (c in LIVE_WANT or (_live_after_close() and e["rows"]
                                             and not e["closed_checked"]))]
@@ -1212,9 +1281,14 @@ def live_poll_loop():
         polls, repairs = _live_schedule(time.time())
         for code, e in repairs:
             _seed_pool.submit(_seed_code, code, e)
-        if polls:
-            list(_live_pool.map(lambda ce: _poll_one(*ce), polls))
-        time.sleep(1.0)
+        for code, e in polls:
+            _live_pool.submit(_run_live_job, _poll_one, _poll_active, code, e)
+        if _fast_session(_now_secs()):
+            with _live_lock:
+                fast = _claim_polls(time.time(), _fast_active, 4, "fast_at", fast=True)
+            for code, e in fast:
+                _fast_pool.submit(_run_live_job, _poll_fast, _fast_active, code, e)
+        time.sleep(0.2)
 
 
 def fetch_tencent(code):
@@ -2999,7 +3073,7 @@ class Handler(BaseHTTPRequestHandler):
             code = (q.get("code") or [""])[0].upper()
             if not CODE_RE.match(code):
                 return self._bad("bad code")
-            return self._json(live_subscribe(code))
+            return self._json(live_subscribe(code, pending=q.get("pending") == ["1"]))
 
         if url.path == "/ticks":
             if self._auth() is None:
