@@ -63,6 +63,9 @@ public sealed class KlineViewModel : ObservableObject
     private DateTimeOffset _lastEastPoll;   // throttles the 东财-direct fallback to ~3s under the 1s timer
     private int _tapeDecimals = 2;
     private bool _tapeSeeded;
+    private int _detailReaders;
+    private bool _chartClosed;
+    private bool TapeWanted => HasTape && ((!_chartClosed && IsTrend) || _detailReaders > 0);
     private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _trendTimer;
     private readonly DispatcherTimer _detailTimer;
@@ -247,11 +250,9 @@ public sealed class KlineViewModel : ObservableObject
         if (IsTrend) return;
 
         IsTrend = true;
-        SeedTapeFromCache();   // show today's cached tape at once — a blocked first poll isn't blank
         _trendTimer.Start();
-        if (HasTape) _detailTimer.Start();   // only 沪深 have a 逐笔 tape to poll
+        UpdateTapePolling();
         _ = LoadTrendAsync();
-        _ = PollDetailsAsync();   // fill the tape at once rather than waiting a tick (self-guards)
     }
 
     private void LeaveTrend()
@@ -259,8 +260,38 @@ public sealed class KlineViewModel : ObservableObject
         if (!IsTrend) return;
         IsTrend = false;
         _trendTimer.Stop();
-        _detailTimer.Stop();
-        PersistTape(force: true);   // flush the latest tape before the poll stops
+        UpdateTapePolling();
+    }
+
+    // Each live detail window pins this contract, even after the chart switches
+    // to candles or detaches this VM to display a different contract.
+    public void AddDetailReader()
+    {
+        _detailReaders++;
+        UpdateTapePolling();
+    }
+
+    public void RemoveDetailReader()
+    {
+        _detailReaders--;
+        UpdateTapePolling();
+    }
+
+    private void UpdateTapePolling()
+    {
+        if (TapeWanted == _detailTimer.IsEnabled) return;
+        if (TapeWanted)
+        {
+            SeedTapeFromCache();
+            _detailTimer.Start();
+            _ = PollDetailsAsync();
+        }
+        else
+        {
+            _detailTimer.Stop();
+            PersistTape(force: true);
+            if (ReferenceEquals(ActiveTapeVm, this)) ActiveTapeVm = null;
+        }
     }
 
     /// <summary>
@@ -365,7 +396,7 @@ public sealed class KlineViewModel : ObservableObject
 
     private async Task ReadDetailsAsync()
     {
-        if (!HasTape || !IsTrend) return;
+        if (!TapeWanted) return;
 
         TradeTickSnapshot? snap;
         if (_session is { IsSignedIn: true })
@@ -391,7 +422,7 @@ public sealed class KlineViewModel : ObservableObject
             catch (Exception) { return; }
         }
 
-        if (!IsTrend || snap is null || snap.Ticks.Count == 0) return;
+        if (!TapeWanted || snap is null || snap.Ticks.Count == 0) return;
         var before = _tape.Revision;
         var beforePre = TickPrePrice;
         Ticks = _tape.Add(snap.Ticks);
@@ -574,13 +605,10 @@ public sealed class KlineViewModel : ObservableObject
 
     public void Dispose()
     {
-        PersistTape(force: true);   // final flush before the window/contract goes away
-        // Don't leave a disposed VM as the active poller — the remaining windows would
-        // stay gated off (frozen) until one regains focus. null = every window polls
-        // again until one re-claims, a safe fallback rather than a freeze.
-        if (ReferenceEquals(ActiveTapeVm, this)) ActiveTapeVm = null;
+        _chartClosed = true;
         _trendTimer.Stop();
-        _detailTimer.Stop();
+        UpdateTapePolling();
+        if (!TapeWanted && ReferenceEquals(ActiveTapeVm, this)) ActiveTapeVm = null;
         _klineTimer.Stop();
         _cts?.Cancel();
     }

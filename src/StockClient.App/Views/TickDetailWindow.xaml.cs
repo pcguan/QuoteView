@@ -72,6 +72,7 @@ public partial class TickDetailWindow : Window
         Title = $"成交明细 · {_contract.Name} {_contract.Code}";
         TitleText.Text = $"{_contract.Name}  {_contract.Code}";
 
+        ReverseBox.IsChecked = true;   // live page one follows the newest prints
         BuildFilters();
         Reload();   // seed from the panel's already-polled tape — no own request
 
@@ -80,7 +81,12 @@ public partial class TickDetailWindow : Window
         // preserved across the refresh (see Reload) so it flows instead of freezing
         // until a manual click, which is what made it feel tens-of-seconds stale.
         _vm.TicksUpdated += OnVmTicks;
-        Closed += (_, _) => _vm.TicksUpdated -= OnVmTicks;
+        _vm.AddDetailReader();
+        Closed += (_, _) =>
+        {
+            _vm.TicksUpdated -= OnVmTicks;
+            _vm.RemoveDetailReader();
+        };
         // Focusing this popup keeps its source VM the active poller, so the tape it
         // reads stays live even when the parent chart window is behind it.
         Activated += (_, _) => _vm.ClaimActiveTape();
